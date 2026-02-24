@@ -1,0 +1,19 @@
+# Mastermind Agent — example config (YAML or JSON)
+# Copy to /etc/mastermind-agent/config.yaml and set pairing_token for first run.
+
+control_plane_url: "https://cp.example.com"
+# Set once for initial pairing; remove or leave empty after key is stored
+pairing_token: ""
+# Where to store the signed agent key after successful pairing
+agent_key_path: "/var/lib/mastermind-agent/agent.key"
+
+heartbeat:
+  interval_sec: 5  # 5–10 recommended
+
+jobs:
+  poll_interval_sec: 5
+  long_poll_sec: 30   # 0 = short poll only
+  websocket: false     # future
+
+host:
+  name: ""   # optional; control plane may set display name

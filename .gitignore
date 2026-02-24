@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build / dist
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Go
+vendor/
+*.exe
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Env and secrets (never commit real secrets)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Prisma
+control-plane/prisma/*.db
+control-plane/prisma/*.db-journal
+
+# Misc
+*.local
+.cache/

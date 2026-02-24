@@ -1,0 +1,409 @@
+// Mastermind Control Plane — PostgreSQL schema (MVP)
+// Multi-tenant (org), server-scoped permissions, audit-ready, job history, multi-game ready.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Tenant & identity ─────────────────────────────────────────────────────
+model Org {
+  id                 String   @id @default(cuid())
+  name               String
+  slug               String   @unique
+  discordWebhookUrl   String?  @map("discord_webhook_url") // one webhook per org for MVP
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  userOrgs         UserOrg[]
+  hosts            Host[]
+  pairingTokens   PairingToken[]
+  serverInstances  ServerInstance[]
+  jobs             Job[]
+  jobBatches       JobBatch[]
+  events           Event[]
+  alertRules       AlertRule[]
+  orgBans          OrgBan[]
+  banEntries       BanEntry[]
+  auditLogs        AuditLog[]
+  modArtifacts     ModArtifact[]
+  commandMacros    CommandMacro[]
+  schedules        Schedule[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  userOrgs          UserOrg[]
+  userServerRoles   UserServerRole[]
+  jobsCreated       Job[]            @relation("JobCreatedBy")
+  jobBatchesCreated JobBatch[]       @relation("JobBatchCreatedBy")
+  orgBansCreated    OrgBan[]         @relation("OrgBanCreatedBy")
+  banEntriesCreated BanEntry[]       @relation("BanEntryCreatedBy")
+  auditLogs         AuditLog[]
+  pairingTokens     PairingToken[]
+  commandMacrosCreated CommandMacro[]
+  schedulesCreated    Schedule[]
+}
+
+model Role {
+  id   String @id @default(cuid())
+  name String @unique // admin | operator | viewer
+
+  userOrgs        UserOrg[]
+  userServerRoles UserServerRole[]
+}
+
+model UserOrg {
+  userId    String   @map("user_id")
+  orgId     String   @map("org_id")
+  roleId    String   @map("role_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Org  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@id([userId, orgId])
+  @@index([orgId])
+}
+
+// Server-scoped role override (optional; if missing, org role applies)
+model UserServerRole {
+  userId           String @map("user_id")
+  serverInstanceId String @map("server_instance_id")
+  roleId           String @map("role_id")
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  serverInstance ServerInstance @relation(fields: [serverInstanceId], references: [id], onDelete: Cascade)
+  role           Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@id([userId, serverInstanceId])
+  @@index([serverInstanceId])
+}
+
+// ─── Hosts & game servers ──────────────────────────────────────────────────
+model GameType {
+  id           String   @id @default(cuid())
+  slug         String   @unique // e.g. "7dtd", "minecraft"
+  name         String
+  configSchema Json?    @map("config_schema") // JSON schema for adapter config
+  capabilities Json?    // array of capability slugs: start, stop, restart, status, send_command, stream_chat, kick_player, ban_player, install_mod, get_log_path — UI renders only these
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  serverInstances ServerInstance[]
+  modArtifacts    ModArtifact[]
+}
+
+model Host {
+  id               String    @id @default(cuid())
+  orgId            String    @map("org_id")
+  name             String
+  lastHeartbeatAt  DateTime? @map("last_heartbeat_at")
+  agentVersion     String?   @map("agent_version")
+  agentKeyVersion  Int       @default(1) @map("agent_key_version") // incremented on rotation; JWT jti/version must match
+  status           String?   @default("unknown") // online | offline | degraded — updated on heartbeat or periodic sweep
+  lastMetrics      Json?     @map("last_metrics") // CPU, RAM, disk from last heartbeat (dashboard)
+  labels           Json?     // e.g. {"env":"prod","region":"us"} for filtering
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  org              Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  serverInstances  ServerInstance[]
+  jobRuns          JobRun[]
+  pairingTokenUsed PairingToken?     @relation("TokenUsedByHost")
+
+  @@index([orgId])
+  @@index([orgId, status])
+}
+
+model PairingToken {
+  id           String    @id @default(cuid())
+  orgId        String    @map("org_id")
+  tokenHash    String    @map("token_hash")   // SHA-256 of plaintext token; never store plaintext
+  expiresAt    DateTime  @map("expires_at")
+  usedAt       DateTime? @map("used_at")     // set when consumed → single-use
+  createdById  String    @map("created_by_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  usedByHostId String?   @unique @map("used_by_host_id") // set when paired; audit trail
+
+  org       Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy User   @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  usedByHost Host? @relation("TokenUsedByHost", fields: [usedByHostId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+}
+
+model ServerInstance {
+  id              String   @id @default(cuid())
+  orgId           String   @map("org_id")
+  hostId          String   @map("host_id")
+  gameTypeId      String   @map("game_type_id")
+  name            String
+  installPath     String?  @map("install_path")
+  startCommand    String?  @map("start_command")
+  telnetHost      String?  @map("telnet_host")
+  telnetPort      Int?     @map("telnet_port")
+  telnetPassword  String?  @map("telnet_password")
+  config          Json?    // game-adapter-specific config
+  port            Int?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  org             Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  host            Host             @relation(fields: [hostId], references: [id], onDelete: Restrict)
+  gameType        GameType         @relation(fields: [gameTypeId], references: [id], onDelete: Restrict)
+  userServerRoles UserServerRole[]
+  jobs            Job[]
+  banEntries      BanEntry[]
+  modArtifacts    ModArtifact[]
+  commandMacros   CommandMacro[]
+  schedules       Schedule[]
+
+  @@index([orgId])
+  @@index([hostId])
+}
+
+// ─── Schedules (cron, BullMQ delayed) ─────────────────────────────────────
+model Schedule {
+  id                   String    @id @default(cuid())
+  orgId                String    @map("org_id")
+  serverInstanceId     String    @map("server_instance_id")
+  name                 String
+  description          String?  @map("description")
+  cronExpression       String    @map("cron_expression") // e.g. "0 2 * * *"
+  jobType              String    @map("job_type")
+  payload              Json?    @map("payload")
+  enabled              Boolean   @default(true)
+  executionWindowStart String?   @map("execution_window_start") // "HH:mm" optional
+  executionWindowEnd   String?   @map("execution_window_end")   // "HH:mm" optional
+  retryPolicy          Json?     @map("retry_policy")   // { maxRetries, backoffMs?, backoffType? }
+  lastRunAt            DateTime? @map("last_run_at")
+  nextRunAt            DateTime? @map("next_run_at")
+  lastRunStatus        String?   @map("last_run_status") // success | failed | skipped | scheduler_failed
+  lastRunJobId         String?   @map("last_run_job_id")
+  runCount             Int       @default(0) @map("run_count")
+  failureCount         Int       @default(0) @map("failure_count")
+  createdById          String?   @map("created_by_id")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  org             Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  serverInstance  ServerInstance   @relation(fields: [serverInstanceId], references: [id], onDelete: Cascade)
+  createdBy       User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([serverInstanceId])
+  @@index([enabled, nextRunAt])
+}
+
+// ─── Jobs & history ────────────────────────────────────────────────────────
+model JobBatch {
+  id              String    @id @default(cuid())
+  orgId           String    @map("org_id")
+  type            String    @map("type") // restart_wave | update_wave | bulk_mod_install | custom
+  status          String    @default("running") // running | completed | completed_with_failures | cancelled
+  totalCount      Int       @map("total_count")
+  pendingCount    Int       @default(0) @map("pending_count")
+  runningCount    Int       @default(0) @map("running_count")
+  successCount    Int       @default(0) @map("success_count")
+  failedCount     Int       @default(0) @map("failed_count")
+  cancelledCount  Int       @default(0) @map("cancelled_count")
+  createdById     String?   @map("created_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  completedAt     DateTime? @map("completed_at")
+
+  org       Org   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("JobBatchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  jobs      Job[]
+
+  @@index([orgId])
+  @@index([orgId, createdAt(sort: Desc)])
+  @@index([status])
+}
+
+model Job {
+  id               String   @id @default(cuid())
+  orgId            String   @map("org_id")
+  batchId          String?  @map("batch_id") // when set: part of bulk operation
+  serverInstanceId String?  @map("server_instance_id") // null = org-wide job
+  type             String   // start | stop | update | rcon | custom
+  payload          Json?
+  createdById      String?  @map("created_by_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  org             Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  batch           JobBatch?        @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  serverInstance  ServerInstance?  @relation(fields: [serverInstanceId], references: [id], onDelete: SetNull)
+  createdBy       User?            @relation("JobCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  jobRuns         JobRun[]
+
+  @@index([orgId])
+  @@index([serverInstanceId])
+  @@index([batchId])
+  @@index([orgId, createdAt(sort: Desc)])
+}
+
+model JobRun {
+  id         String    @id @default(cuid())
+  jobId      String    @map("job_id")
+  hostId     String    @map("host_id")
+  status     String    // pending | running | success | failed | cancelled
+  startedAt  DateTime? @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  result     Json?
+  logRef     String?   @map("log_ref") // reference to log storage (e.g. S3 key or blob id)
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  job  Job  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  host Host @relation(fields: [hostId], references: [id], onDelete: Restrict)
+
+  @@index([jobId])
+  @@index([jobId, createdAt(sort: Desc)])
+  @@index([hostId])
+}
+
+// ─── Events & alerts ───────────────────────────────────────────────────────
+model Event {
+  id         String   @id @default(cuid())
+  orgId      String   @map("org_id")
+  sourceType String   @map("source_type") // host | server_instance | job_run | system
+  sourceId   String   @map("source_id")
+  eventType  String   @map("event_type")
+  payload    Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  org Org @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt(sort: Desc)])
+}
+
+model AlertRule {
+  id        String   @id @default(cuid())
+  orgId     String   @map("org_id")
+  name      String
+  condition Json     // e.g. { "type": "heartbeat_missed", "hostId": "..." }
+  channel   Json     // e.g. { "type": "discord", "webhookUrl": "..." }
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  org Org @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+// ─── Bans & audit ──────────────────────────────────────────────────────────
+model OrgBan {
+  id               String    @id @default(cuid())
+  orgId            String    @map("org_id")
+  identifierType   String    @map("identifier_type") // steam_id | ip | name (7DTD: steam_id, ip)
+  identifierValue  String    @map("identifier_value")
+  reason           String?
+  bannedAt         DateTime  @default(now()) @map("banned_at")
+  expiresAt        DateTime? @map("expires_at")
+  createdById      String?   @map("created_by_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  org        Org         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy  User?       @relation("OrgBanCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  banEntries BanEntry[]
+
+  @@unique([orgId, identifierType, identifierValue])
+  @@index([orgId])
+}
+
+model BanEntry {
+  id               String    @id @default(cuid())
+  orgId            String    @map("org_id")
+  orgBanId         String?   @map("org_ban_id") // when set: sync record for this central ban on this server
+  serverInstanceId String    @map("server_instance_id")
+  identifierType   String    @map("identifier_type")
+  identifierValue  String    @map("identifier_value")
+  reason           String?
+  bannedAt         DateTime  @default(now()) @map("banned_at")
+  expiresAt        DateTime? @map("expires_at")
+  createdById      String?   @map("created_by_id")
+  syncStatus       String?   @map("sync_status")   // pending | synced | failed
+  syncedAt         DateTime? @map("synced_at")
+  lastSyncError    String?   @map("last_sync_error")
+  lastSyncJobId    String?   @map("last_sync_job_id")
+
+  org             Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgBan          OrgBan?          @relation(fields: [orgBanId], references: [id], onDelete: Cascade)
+  serverInstance  ServerInstance   @relation(fields: [serverInstanceId], references: [id], onDelete: Cascade)
+  createdBy       User?            @relation("BanEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([serverInstanceId])
+  @@index([orgId, identifierType, identifierValue])
+  @@index([orgBanId])
+  @@index([serverInstanceId, syncStatus])
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  orgId        String   @map("org_id")
+  actorId      String?  @map("actor_id")
+  action       String   // create | update | delete | login | ...
+  resourceType String   @map("resource_type")
+  resourceId   String   @map("resource_id")
+  details      Json?
+  ip           String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  org  Org   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt(sort: Desc)])
+}
+
+// ─── Command macros (saved, parameterized, org/scoped) ─────────────────────
+model CommandMacro {
+  id                 String   @id @default(cuid())
+  orgId              String   @map("org_id")
+  name               String   // command palette label
+  description        String?  // optional tooltip
+  jobType            String   @map("job_type")   // SERVER_RESTART, RCON, custom, etc.
+  payloadTemplate    Json     @map("payload_template") // keys with {{paramName}} in string values
+  paramDefinitions   Json     @map("param_definitions") // [{ name, label?, default?, required? }]
+  serverInstanceId   String?  @map("server_instance_id") // null = org-wide; set = fixed server
+  allowedRoleNames   Json     @map("allowed_role_names") // ["admin","operator"] - who can execute
+  createdById        String?  @map("created_by_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  org             Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  serverInstance  ServerInstance?  @relation(fields: [serverInstanceId], references: [id], onDelete: SetNull)
+  createdBy       User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([serverInstanceId])
+}
+
+// ─── Mods (future-safe, minimal) ───────────────────────────────────────────
+model ModArtifact {
+  id          String   @id @default(cuid())
+  orgId       String   @map("org_id")
+  gameTypeId  String?  @map("game_type_id")
+  name        String
+  version     String?
+  fileRef     String?  @map("file_ref") // path or storage key
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  org      Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  gameType GameType?  @relation(fields: [gameTypeId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([gameTypeId])
+}

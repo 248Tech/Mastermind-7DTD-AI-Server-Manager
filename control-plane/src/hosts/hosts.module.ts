@@ -1,0 +1,2 @@
+// Host registration, heartbeat
+export {};

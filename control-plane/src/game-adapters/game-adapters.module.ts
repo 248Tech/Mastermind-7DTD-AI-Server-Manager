@@ -1,0 +1,2 @@
+// Game type registry
+export {};

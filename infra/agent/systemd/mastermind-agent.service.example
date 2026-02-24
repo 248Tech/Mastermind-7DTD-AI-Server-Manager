@@ -1,0 +1,13 @@
+[Unit]
+Description=Mastermind game server agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mastermind-agent
+Restart=on-failure
+Environment=MASTERMIND_CP_URL=https://cp.example.com
+Environment=MASTERMIND_HOST_TOKEN=...
+
+[Install]
+WantedBy=multi-user.target

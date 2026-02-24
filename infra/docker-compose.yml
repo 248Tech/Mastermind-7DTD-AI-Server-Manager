@@ -1,0 +1,86 @@
+# Local dev: Postgres, Redis; optionally Control Plane + Web (profile: full)
+# Ports: web 3000, control-plane 3001, postgres 5432, redis 6379
+# Usage: docker compose up -d  (postgres + redis only)
+#        docker compose --profile full up -d  (all four)
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mastermind
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: mastermind
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mastermind -d mastermind"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  control-plane:
+    profiles: ["full"]
+    build:
+      context: ../control-plane
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DATABASE_URL: postgresql://mastermind:changeme@postgres:5432/mastermind
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      JWT_SECRET: dev-user-secret
+      JWT_AGENT_SECRET: dev-agent-secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../control-plane/src:/app/src
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  web:
+    profiles: ["full"]
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_CONTROL_PLANE_URL: http://control-plane:3001
+    depends_on:
+      - control-plane
+    volumes:
+      - ../web/src:/app/src
+      - ../web/public:/app/public
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  postgres_data:

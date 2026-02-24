@@ -1,0 +1,9 @@
+# Default owners for everything in the repo
+*       @YOUR_ORG/mastermind-maintainers
+
+# Optional: per-area ownership
+# /control-plane/   @YOUR_ORG/cp-team
+# /agent/           @YOUR_ORG/agent-team
+# /web/             @YOUR_ORG/frontend-team
+# /infra/           @YOUR_ORG/infra-team
+# /docs/            @YOUR_ORG/docs-team
