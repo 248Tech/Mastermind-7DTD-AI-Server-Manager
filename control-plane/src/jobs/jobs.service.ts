@@ -52,7 +52,7 @@ export class JobsService {
 
     const orgId = run.job.orgId;
     if (run.job.batchId) {
-      await this.batchesService.recordJobRunCompleted(orgId, run.jobId, runStatus);
+      await this.batchesService.recordJobRunCompleted(orgId, run.jobId, runStatus, 'running');
     }
 
     return { ok: true };

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { AgentAuthGuard } from './agent-auth.guard';
 import { PairingController } from './pairing.controller';
 import { PairingService } from './pairing.service';
 import { PrismaService } from '../prisma.service';
@@ -14,7 +15,7 @@ import { PrismaService } from '../prisma.service';
     }),
   ],
   controllers: [PairingController],
-  providers: [PairingService, PrismaService],
-  exports: [PairingService],
+  providers: [PairingService, PrismaService, AgentAuthGuard],
+  exports: [PairingService, AgentAuthGuard],
 })
 export class PairingModule {}

@@ -184,11 +184,14 @@ export class BatchesService implements OnModuleDestroy {
     });
   }
 
-  /** Called when a job run completes (success/failed/cancelled). Updates batch counts and emits progress. */
+  /** Called when a job run completes (success/failed/cancelled). Updates batch counts and emits progress.
+   * @param priorRunStatus - Status of the run *before* completion (used to decrement the correct batch counter).
+   */
   async recordJobRunCompleted(
     orgId: string,
     jobId: string,
     runStatus: 'success' | 'failed' | 'cancelled',
+    priorRunStatus: 'pending' | 'running',
   ): Promise<void> {
     const job = await this.prisma.job.findFirst({
       where: { id: jobId, orgId },
@@ -215,11 +218,7 @@ export class BatchesService implements OnModuleDestroy {
       updates.cancelledCount = { increment: 1 };
     }
 
-    const run = await this.prisma.jobRun.findFirst({
-      where: { jobId },
-      orderBy: { createdAt: 'desc' },
-    });
-    if (run?.status === 'running') {
+    if (priorRunStatus === 'running') {
       updates.runningCount = { decrement: 1 };
     } else {
       updates.pendingCount = { decrement: 1 };

@@ -1,0 +1,7 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./control-plane/tsconfig.ref.json" },
+    { "path": "./web/tsconfig.ref.json" }
+  ]
+}

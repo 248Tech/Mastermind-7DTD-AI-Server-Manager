@@ -191,15 +191,26 @@ func (a *Adapter) StreamChat(ctx context.Context, cfg *agent.InstanceConfig, w i
 	return tailFile(ctx, logPath, w)
 }
 
+// sanitizeRCONArg removes metacharacters that could inject additional RCON/telnet commands.
+func sanitizeRCONArg(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r != ';' && r != '\n' && r != '\r' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 func (a *Adapter) KickPlayer(ctx context.Context, cfg *agent.InstanceConfig, playerID string) error {
-	_, err := a.SendCommand(ctx, cfg, "kick "+playerID)
+	_, err := a.SendCommand(ctx, cfg, "kick "+sanitizeRCONArg(playerID))
 	return err
 }
 
 func (a *Adapter) BanPlayer(ctx context.Context, cfg *agent.InstanceConfig, playerID string, reason string) error {
-	cmd := "ban add " + playerID
+	cmd := "ban add " + sanitizeRCONArg(playerID)
 	if reason != "" {
-		cmd += " " + reason
+		cmd += " " + sanitizeRCONArg(reason)
 	}
 	_, err := a.SendCommand(ctx, cfg, cmd)
 	return err

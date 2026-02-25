@@ -143,6 +143,27 @@ func (a *Adapter) withRCON(ctx context.Context, cfg *agent.InstanceConfig, fn fu
 	return fn(client)
 }
 
+// startAndCheck runs cmd.Start(), then waits briefly; if the process exits within that window, returns an error.
+func (a *Adapter) startAndCheck(ctx context.Context, cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	startupWindow := 2 * time.Second
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("process exited immediately: %w", err)
+		}
+		return fmt.Errorf("process exited immediately with code 0")
+	case <-time.After(startupWindow):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (a *Adapter) Start(ctx context.Context, cfg *agent.InstanceConfig) error {
 	if cfg.InstallPath == "" {
 		return fmt.Errorf("install_path required")
@@ -154,7 +175,7 @@ func (a *Adapter) Start(ctx context.Context, cfg *agent.InstanceConfig) error {
 		}
 		cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
 		cmd.Dir = cfg.InstallPath
-		return cmd.Start()
+		return a.startAndCheck(ctx, cmd)
 	}
 	// Default: java -jar server.jar (or common jar name)
 	jar := filepath.Join(cfg.InstallPath, "server.jar")
@@ -163,7 +184,7 @@ func (a *Adapter) Start(ctx context.Context, cfg *agent.InstanceConfig) error {
 	}
 	cmd := exec.CommandContext(ctx, "java", "-jar", "server.jar")
 	cmd.Dir = cfg.InstallPath
-	return cmd.Start()
+	return a.startAndCheck(ctx, cmd)
 }
 
 func (a *Adapter) Stop(ctx context.Context, cfg *agent.InstanceConfig) error {
@@ -225,15 +246,26 @@ func (a *Adapter) StreamChat(ctx context.Context, cfg *agent.InstanceConfig, w i
 	return agent.ErrUnsupported
 }
 
+// sanitizeRCONArg removes metacharacters that could inject additional RCON commands.
+func sanitizeRCONArg(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r != ';' && r != '\n' && r != '\r' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 func (a *Adapter) KickPlayer(ctx context.Context, cfg *agent.InstanceConfig, playerID string) error {
-	_, err := a.SendCommand(ctx, cfg, "kick "+playerID)
+	_, err := a.SendCommand(ctx, cfg, "kick "+sanitizeRCONArg(playerID))
 	return err
 }
 
 func (a *Adapter) BanPlayer(ctx context.Context, cfg *agent.InstanceConfig, playerID string, reason string) error {
-	cmd := "ban " + playerID
+	cmd := "ban " + sanitizeRCONArg(playerID)
 	if reason != "" {
-		cmd += " " + reason
+		cmd += " " + sanitizeRCONArg(reason)
 	}
 	_, err := a.SendCommand(ctx, cfg, cmd)
 	return err

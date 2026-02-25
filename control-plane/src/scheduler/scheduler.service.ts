@@ -154,7 +154,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         const delayMs = Math.max(0, nextRun.getTime() - Date.now());
         await this.schedulerQueue!.add(
           { scheduleId },
-          { jobId: `schedule:${scheduleId}:${Date.now()}`, delay: delayMs },
+          { jobId: `schedule:${scheduleId}:${nextRun.getTime()}`, delay: delayMs },
         );
       }
       throw err;
