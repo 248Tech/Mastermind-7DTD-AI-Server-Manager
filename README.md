@@ -1,6 +1,6 @@
 # Mastermind — 7DTD AI Server Manager
 
-**Control Plane + Host Agent** for managing 7 Days to Die (and other game) servers. Instead of SSH’ing into each box, you run a small agent on every host; the control plane sends jobs (start, stop, restart, RCON, etc.) and the agent runs them locally. This gives you a single dashboard, RBAC, audit logs, and optional Discord alerts.
+**Control Plane + Host Agent** for managing 7 Days to Die (and other game) servers. Instead of SSH’ing into each box, you run a small agent on every host; the control plane sends jobs (start, stop, restart, RCON, etc.) and the agent runs them locally.
 
 ---
 
@@ -21,8 +21,8 @@
     └─────────────────────────────────────────────────────────────────┘
 ```
 
-- **Control plane:** REST API, WebSocket, Postgres (orgs, hosts, server instances, jobs, schedules), Redis/BullMQ (job queues), Discord alerts, pairing tokens, RBAC.
-- **Web:** Next.js UI — dashboard, server list, pairing, jobs, alerts.
+- **Control plane:** REST API, Postgres (orgs, hosts, server instances, jobs), Redis/BullMQ (job queues), pairing tokens, auth, org membership guards.
+- **Web:** Next.js UI — login/register, dashboard, hosts, jobs, schedules/alerts/settings pages.
 - **Agent:** Go binary on each game host — pairs with a one-time token, heartbeats, polls for jobs, runs them via game adapters (7DTD, Minecraft, etc.).
 
 ---
@@ -57,6 +57,33 @@
 
 ---
 
+## Current known features (v0.0.1)
+
+### Implemented end-to-end
+
+- User auth: register, login, `GET /api/auth/me` (JWT).
+- Org management: create org, list my orgs, get org details.
+- Agent onboarding: generate pairing token, pair agent, rotate key, heartbeat ingestion.
+- Host inventory: list hosts, host details, online/offline status from heartbeat.
+- Server instances: CRUD for org-scoped server definitions.
+- Job dispatch: create/list jobs, queue-backed execution, job run status/result reporting from agents.
+- Agent polling loop: host fetches pending jobs and posts job results back.
+- Game type registry: `7dtd` and `minecraft` seeded with capabilities.
+- Web UI pages:
+  - Login/Register
+  - Dashboard (host + recent job summaries)
+  - Hosts (pair token generation, server registration)
+  - Jobs (create start/stop/restart/rcon/custom jobs + view output)
+  - Settings (org/account info display)
+
+### Present in UI but backend support still in progress
+
+- Schedules management page (`/schedules`) currently shows “API coming soon” if schedule endpoints are unavailable.
+- Alert rules page (`/alerts`) currently shows “API coming soon” if alerts endpoints are unavailable.
+- Discord webhook update from settings may show “API coming soon” where org update endpoint is not exposed yet.
+
+---
+
 ## Prerequisites
 
 - **Node.js** 20 LTS (or 20.x)
@@ -69,8 +96,8 @@
 ## Quickstart (copy-paste)
 
 ```bash
-git clone https://github.com/YOUR_ORG/mastermind-7dtd-ai-server-manager.git
-cd mastermind-7dtd-ai-server-manager
+git clone https://github.com/248Tech/Mastermind-7DTD-AI-Server-Manager.git
+cd Mastermind-7DTD-AI-Server-Manager
 
 # 1. Install tools check (optional)
 ./scripts/doctor.sh
@@ -84,16 +111,23 @@ make up
 # or: cd infra && docker compose up -d
 # (Optionally start control-plane + web in Docker: docker compose --profile full up -d)
 
-# 4. Run migrations (first time only)
-cd control-plane && pnpm prisma migrate deploy
-# If using raw SQL migrations, run them in order (see control-plane/prisma/migrations/README-migration-order.md)
+# 4. Run migrations + seed (first time only)
+cd control-plane
+pnpm prisma migrate deploy
+pnpm prisma:seed
+cd ..
 
 # 5. Start control plane and web (separate terminals)
 cd control-plane && pnpm dev    # → http://localhost:3001
 cd web && pnpm dev              # → http://localhost:3000
 ```
 
-Open **http://localhost:3000** — you should see the landing page and “Backend status: Connected” when the control plane is running. Health check: **http://localhost:3001/health**.
+Open **http://localhost:3000/login** and sign in with the seeded account:
+
+- `admin@mastermind.local`
+- `changeme`
+
+Health check: **http://localhost:3001/health**.
 
 ---
 
@@ -115,14 +149,17 @@ Copy `.env.example` to `.env` (and `control-plane/.env.example` to `control-plan
 
 ## First-run walkthrough
 
-1. **Start infra:** `make up` (Postgres + Redis). Run migrations (see Quickstart step 4).
-2. **Seed data (if you have a seed script):** e.g. create an org and a user. Otherwise create them via API or add a minimal seed.
-3. **Start control plane:** `cd control-plane && pnpm dev`. Start web: `cd web && pnpm dev`.
-4. **Generate pairing token:** Use the API (e.g. POST `/api/orgs/:orgId/pairing-tokens` with JWT) or a future UI. You get a one-time token.
-5. **Run agent locally:** Copy `agent/config.yaml.example` to `config.yaml`, set `control_plane_url` to `http://localhost:3001` and `pairing_token` to the token. Run `go run .` from `agent/` (or build and run the binary). Agent pairs, stores the key, then heartbeats.
-6. **Register a 7DTD server instance:** Via API (POST `/api/orgs/:orgId/server-instances`) with name, hostId, gameType `7dtd`, optional installPath, startCommand, telnet host/port/password. See `docs/api-server-instances-7dtd.md`.
-7. **Start / stop / restart:** Trigger jobs (e.g. SERVER_RESTART) via API or future UI; agent picks them up and runs the game adapter.
-8. **View logs:** Control plane stores job runs; log streaming is optional (see docs).
+1. **Start infra:** `make up` (Postgres + Redis).
+2. **Migrate + seed:** `cd control-plane && pnpm prisma migrate deploy && pnpm prisma:seed`.
+3. **Start services:** `cd control-plane && pnpm dev`, then `cd web && pnpm dev`.
+4. **Login:** open `http://localhost:3000/login` and sign in with seeded admin credentials.
+5. **Pair a host:** in **Hosts**, click **Pair New Host** and generate a token.
+6. **Start agent:** in `agent/`, copy `config.yaml.example` to `config.yaml`, set:
+   - `control_plane_url: "http://localhost:3001"`
+   - `pairing_token: "<token from UI>"`
+   - then run `go run .`
+7. **Register a server instance:** in **Hosts**, use the Register Server form (game type `7dtd` or `minecraft`).
+8. **Run jobs:** in **Jobs**, create `start` / `stop` / `restart` / `rcon` / `custom` jobs and monitor status/output.
 
 ---
 
@@ -133,7 +170,8 @@ Copy `.env.example` to `.env` (and `control-plane/.env.example` to `control-plan
 | Port 3000, 3001, 5432, or 6379 in use | Change ports in `.env` and `infra/docker-compose.yml`, or stop the process using the port. |
 | Migrations fail | Ensure Postgres is up and `DATABASE_URL` is correct. Run migrations in order (see `control-plane/prisma/migrations/README-migration-order.md`). |
 | Compose build fails | Run `make bootstrap` first. Ensure Docker has enough memory. For control-plane, run `pnpm prisma generate` locally if needed. |
-| Web shows “Not connected” | Ensure control plane is running on the URL in `NEXT_PUBLIC_CONTROL_PLANE_URL` and CORS allows the web origin. |
+| Login fails for default admin | Run `cd control-plane && pnpm prisma:seed` and try `admin@mastermind.local / changeme`. |
+| Web shows backend/API errors | Ensure control plane is running on the URL in `NEXT_PUBLIC_CONTROL_PLANE_URL` (default `http://localhost:3001`). |
 | Auth failures | Check `JWT_SECRET` and that the user is in the org. For agent, check `JWT_AGENT_SECRET` and that the host’s key version matches. |
 
 ---
