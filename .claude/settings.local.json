@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /c/Users/hangu/Cursor/Mastermind-7DTD-AI-Server-Manager/web && npx tsc --noEmit 2>&1 | head -60)"
+    ]
+  }
+}

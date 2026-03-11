@@ -1,12 +1,35 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, Req, UseGuards } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
+import { JobsService } from './jobs.service';
+import { CreateJobDto } from './dto/create-job.dto';
 import { JwtAuthGuard } from '../server-instances/guards/jwt-auth.guard';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
+import type { RequestWithUser } from '../server-instances/guards/jwt-auth.guard';
 
 @Controller('api/orgs/:orgId/jobs')
 @UseGuards(JwtAuthGuard, OrgMemberGuard)
 export class JobsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jobsService: JobsService,
+  ) {}
+
+  /** Create and enqueue a new job for a server instance. */
+  @Post()
+  async create(
+    @Param('orgId') orgId: string,
+    @Req() req: RequestWithUser,
+    @Body() dto: CreateJobDto,
+  ) {
+    const userId = req.user!.id;
+    return this.jobsService.createJob(
+      orgId,
+      userId,
+      dto.serverInstanceId,
+      dto.type,
+      dto.payload,
+    );
+  }
 
   /** List jobs (org-scoped, with latest JobRun). */
   @Get()
