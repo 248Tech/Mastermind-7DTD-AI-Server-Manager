@@ -4,52 +4,64 @@ import { api, Job, ServerInstance } from '../../../lib/api';
 import { getStoredOrgId } from '../../../lib/auth';
 import { usePoll } from '../../../hooks/useRealtime';
 
+// ─── Design tokens ────────────────────────────────────────────────────────────
 const card: React.CSSProperties = {
-  background: '#fff',
-  borderRadius: 8,
-  padding: '1.5rem',
-  boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-  marginBottom: '1rem',
+  background: '#111118', borderRadius: 10, padding: '1.5rem',
+  border: '1px solid #1e1e2a', marginBottom: '1rem',
 };
 
 const inputStyle: React.CSSProperties = {
-  padding: '0.5rem 0.75rem',
-  borderRadius: 6,
-  border: '1px solid #ddd',
-  fontSize: '0.9rem',
-  width: '100%',
-  boxSizing: 'border-box',
+  padding: '0.55rem 0.875rem', borderRadius: 7, border: '1px solid #252532',
+  fontSize: '0.875rem', background: '#0d0d14', color: '#f1f5f9',
+  width: '100%', outline: 'none', transition: 'border-color 0.15s, box-shadow 0.15s',
 };
 
 const btnPrimary: React.CSSProperties = {
-  padding: '0.5rem 1rem',
-  background: '#1a1a2e',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 6,
-  cursor: 'pointer',
-  fontSize: '0.9rem',
+  padding: '0.5rem 1.125rem', background: '#6366f1', color: '#fff', border: 'none',
+  borderRadius: 7, cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600,
+  boxShadow: '0 2px 8px rgba(99,102,241,0.25)',
 };
 
 const btnSecondary: React.CSSProperties = {
-  padding: '0.5rem 1rem',
-  background: '#fff',
-  color: '#1a1a2e',
-  border: '1px solid #ccc',
-  borderRadius: 6,
-  cursor: 'pointer',
-  fontSize: '0.9rem',
+  padding: '0.5rem 1.125rem', background: 'transparent', color: '#94a3b8',
+  border: '1px solid #252532', borderRadius: 7, cursor: 'pointer', fontSize: '0.875rem',
 };
 
-function jobStatusBadge(status: string | null) {
+const thStyle: React.CSSProperties = {
+  padding: '0.625rem 1rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600,
+  color: '#64748b', letterSpacing: '0.04em', textTransform: 'uppercase',
+  background: '#0d0d14', borderBottom: '1px solid #1e1e2a',
+};
+
+const tdStyle: React.CSSProperties = {
+  padding: '0.75rem 1rem', fontSize: '0.875rem', borderBottom: '1px solid #1a1a24', color: '#e2e8f0',
+};
+
+const labelStyle: React.CSSProperties = {
+  display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 500,
+};
+
+function Badge({ status }: { status: string | null }) {
   const s = (status || 'unknown').toLowerCase();
-  let style: React.CSSProperties = { display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: 12, fontSize: '0.8rem', fontWeight: 600 };
-  if (s === 'success' || s === 'completed') style = { ...style, background: '#e6f7ed', color: '#1e7e34' };
-  else if (s === 'failed' || s === 'error') style = { ...style, background: '#fde8e8', color: '#c00' };
-  else if (s === 'pending') style = { ...style, background: '#fff8e1', color: '#e65c00' };
-  else if (s === 'running') style = { ...style, background: '#e8f0fe', color: '#1a73e8' };
-  else style = { ...style, background: '#f0f0f0', color: '#666' };
-  return <span style={style}>{s}</span>;
+  const map: Record<string, { bg: string; color: string }> = {
+    success:   { bg: 'rgba(34,197,94,0.1)',  color: '#4ade80' },
+    completed: { bg: 'rgba(34,197,94,0.1)',  color: '#4ade80' },
+    failed:    { bg: 'rgba(239,68,68,0.1)',  color: '#f87171' },
+    error:     { bg: 'rgba(239,68,68,0.1)',  color: '#f87171' },
+    pending:   { bg: 'rgba(245,158,11,0.1)', color: '#fbbf24' },
+    running:   { bg: 'rgba(56,189,248,0.1)', color: '#38bdf8' },
+  };
+  const { bg, color } = map[s] || { bg: 'rgba(100,116,139,0.1)', color: '#64748b' };
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+      padding: '0.2rem 0.6rem', borderRadius: 20,
+      fontSize: '0.75rem', fontWeight: 600, background: bg, color,
+    }}>
+      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, display: 'inline-block' }} />
+      {s}
+    </span>
+  );
 }
 
 function formatDuration(startedAt: string | null, finishedAt: string | null): string {
@@ -73,14 +85,18 @@ function formatRelative(dateStr: string | null): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function resultSnippet(result: unknown): string {
-  if (!result) return '—';
-  const s = typeof result === 'string' ? result : JSON.stringify(result);
-  return s.length > 80 ? s.slice(0, 77) + '…' : s;
+function onFocus(e: React.FocusEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
+  e.target.style.borderColor = '#6366f1';
+  e.target.style.boxShadow = '0 0 0 3px rgba(99,102,241,0.12)';
+}
+function onBlur(e: React.FocusEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
+  e.target.style.borderColor = '#252532';
+  e.target.style.boxShadow = 'none';
 }
 
 const JOB_TYPES = ['start', 'stop', 'restart', 'rcon', 'custom'];
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
 export default function JobsPage() {
   const orgId = getStoredOrgId();
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -88,13 +104,10 @@ export default function JobsPage() {
   const [serversLoaded, setServersLoaded] = useState(false);
   const [error, setError] = useState('');
 
-  // Create job form
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ serverInstanceId: '', type: 'start', command: '', customPayload: '' });
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState('');
-
-  // Expanded job output
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
 
   const fetchJobs = useCallback(async () => {
@@ -108,29 +121,16 @@ export default function JobsPage() {
       const s = await api.get<ServerInstance[]>(`/api/orgs/${orgId}/server-instances`);
       setServers(s);
       setServersLoaded(true);
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }, [orgId]);
 
-  usePoll(
-    fetchJobs,
-    (data) => {
-      setJobs(data);
-      setError('');
-    },
-    5000,
-    !!orgId,
-  );
-
-  // Load servers once
+  usePoll(fetchJobs, (data) => { setJobs(data); setError(''); }, 5000, !!orgId);
   usePoll(fetchServers, () => {}, 60000, !!orgId && !serversLoaded);
 
   async function handleCreateJob(e: React.FormEvent) {
     e.preventDefault();
     if (!orgId) return;
-    setCreateLoading(true);
-    setCreateError('');
+    setCreateLoading(true); setCreateError('');
     try {
       let payload: Record<string, unknown> = {};
       if (form.type === 'rcon') {
@@ -146,12 +146,10 @@ export default function JobsPage() {
       }
       await api.post<Job>(`/api/orgs/${orgId}/jobs`, {
         serverInstanceId: form.serverInstanceId || undefined,
-        type: form.type,
-        payload,
+        type: form.type, payload,
       });
       setShowCreate(false);
       setForm({ serverInstanceId: '', type: 'start', command: '', customPayload: '' });
-      // Refresh jobs immediately
       const updated = await fetchJobs();
       setJobs(updated);
     } catch (err: unknown) {
@@ -163,56 +161,63 @@ export default function JobsPage() {
 
   return (
     <div>
-      <h1 style={{ margin: '0 0 1.5rem', fontSize: '1.6rem', color: '#1a1a2e' }}>Jobs</h1>
+      <div style={{ marginBottom: '2rem' }}>
+        <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: '#f1f5f9' }}>Jobs</h1>
+        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Queue and monitor server operations</p>
+      </div>
 
       {error && (
-        <div style={{ background: '#fde8e8', color: '#c00', padding: '0.75rem 1rem', borderRadius: 6, marginBottom: '1rem', fontSize: '0.9rem' }}>{error}</div>
+        <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1.25rem', fontSize: '0.875rem' }}>
+          {error}
+        </div>
       )}
 
       <div style={card}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#1a1a2e' }}>Job History</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+          <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>Job History</h2>
           <button style={btnPrimary} onClick={() => { setShowCreate(!showCreate); setCreateError(''); }}>
-            {showCreate ? 'Cancel' : 'Create Job'}
+            {showCreate ? 'Cancel' : '+ Create Job'}
           </button>
         </div>
 
         {showCreate && (
-          <form onSubmit={handleCreateJob} style={{ background: '#f8f9fa', border: '1px solid #eee', borderRadius: 8, padding: '1.25rem', marginBottom: '1.5rem' }}>
-            <h3 style={{ margin: '0 0 1rem', fontSize: '1rem' }}>Create Job</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+          <form onSubmit={handleCreateJob} style={{ background: '#0d0d14', border: '1px solid #1e1e2a', borderRadius: 8, padding: '1.25rem', marginBottom: '1.5rem' }}>
+            <h3 style={{ margin: '0 0 1rem', fontSize: '0.9rem', fontWeight: 600, color: '#f1f5f9' }}>New Job</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.875rem' }}>
               <div>
-                <label style={{ fontSize: '0.85rem', color: '#555', display: 'block', marginBottom: '0.25rem' }}>Server Instance</label>
-                <select style={inputStyle} value={form.serverInstanceId} onChange={e => setForm({ ...form, serverInstanceId: e.target.value })}>
+                <label style={labelStyle}>Server Instance</label>
+                <select style={inputStyle} value={form.serverInstanceId} onChange={e => setForm({ ...form, serverInstanceId: e.target.value })} onFocus={onFocus} onBlur={onBlur}>
                   <option value="">— Select Server (optional) —</option>
                   {servers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
               <div>
-                <label style={{ fontSize: '0.85rem', color: '#555', display: 'block', marginBottom: '0.25rem' }}>Job Type *</label>
-                <select style={inputStyle} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} required>
+                <label style={labelStyle}>Job Type *</label>
+                <select style={inputStyle} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} required onFocus={onFocus} onBlur={onBlur}>
                   {JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
               {form.type === 'rcon' && (
                 <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={{ fontSize: '0.85rem', color: '#555', display: 'block', marginBottom: '0.25rem' }}>RCON Command *</label>
-                  <input style={inputStyle} value={form.command} onChange={e => setForm({ ...form, command: e.target.value })} required={form.type === 'rcon'} placeholder="e.g. listplayers" />
+                  <label style={labelStyle}>RCON Command *</label>
+                  <input style={inputStyle} value={form.command} onChange={e => setForm({ ...form, command: e.target.value })} required={form.type === 'rcon'} placeholder="e.g. listplayers" onFocus={onFocus} onBlur={onBlur} />
                 </div>
               )}
               {form.type === 'custom' && (
                 <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={{ fontSize: '0.85rem', color: '#555', display: 'block', marginBottom: '0.25rem' }}>Payload (JSON)</label>
+                  <label style={labelStyle}>Payload (JSON)</label>
                   <textarea
                     style={{ ...inputStyle, fontFamily: 'monospace', minHeight: 80, resize: 'vertical' }}
                     value={form.customPayload}
                     onChange={e => setForm({ ...form, customPayload: e.target.value })}
                     placeholder='{}'
+                    onFocus={onFocus}
+                    onBlur={onBlur}
                   />
                 </div>
               )}
             </div>
-            {createError && <p style={{ color: '#c00', fontSize: '0.85rem', margin: '0.75rem 0 0' }}>{createError}</p>}
+            {createError && <p style={{ color: '#f87171', fontSize: '0.8rem', margin: '0.875rem 0 0' }}>{createError}</p>}
             <div style={{ marginTop: '1rem', display: 'flex', gap: 8 }}>
               <button type="submit" style={btnPrimary} disabled={createLoading}>
                 {createLoading ? 'Creating…' : 'Create Job'}
@@ -223,53 +228,57 @@ export default function JobsPage() {
         )}
 
         {jobs.length === 0 ? (
-          <p style={{ color: '#888', fontSize: '0.9rem' }}>No jobs yet.</p>
+          <p style={{ color: '#64748b', fontSize: '0.875rem' }}>No jobs yet.</p>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                {['Server', 'Type', 'Status', 'Created', 'Duration', 'Output'].map(h => (
-                  <th key={h} style={{ background: '#f0f0f0', padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.85rem', fontWeight: 600 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.map((job) => (
-                <React.Fragment key={job.id}>
-                  <tr>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: expandedJob === job.id ? 'none' : '1px solid #eee', fontSize: '0.9rem' }}>
-                      {job.serverName || (job.serverInstanceId ? servers.find(s => s.id === job.serverInstanceId)?.name || job.serverInstanceId : '—')}
-                    </td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: expandedJob === job.id ? 'none' : '1px solid #eee', fontSize: '0.9rem' }}>{job.type}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: expandedJob === job.id ? 'none' : '1px solid #eee' }}>{jobStatusBadge(job.latestRun?.status ?? null)}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: expandedJob === job.id ? 'none' : '1px solid #eee', fontSize: '0.85rem', color: '#666' }}>{formatRelative(job.createdAt)}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: expandedJob === job.id ? 'none' : '1px solid #eee', fontSize: '0.85rem', color: '#666' }}>{formatDuration(job.latestRun?.startedAt ?? null, job.latestRun?.finishedAt ?? null)}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: expandedJob === job.id ? 'none' : '1px solid #eee' }}>
-                      {job.latestRun?.result ? (
-                        <button
-                          style={{ background: 'none', border: 'none', color: '#4a6fa5', cursor: 'pointer', fontSize: '0.85rem', padding: 0 }}
-                          onClick={() => setExpandedJob(expandedJob === job.id ? null : job.id)}
-                        >
-                          {expandedJob === job.id ? 'Hide' : 'View'}
-                        </button>
-                      ) : (
-                        <span style={{ color: '#ccc', fontSize: '0.85rem' }}>—</span>
-                      )}
-                    </td>
-                  </tr>
-                  {expandedJob === job.id && job.latestRun?.result && (
+          <div style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid #1e1e2a' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Server', 'Type', 'Status', 'Created', 'Duration', 'Output'].map(h => (
+                    <th key={h} style={thStyle}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {jobs.map((job) => (
+                  <React.Fragment key={job.id}>
                     <tr>
-                      <td colSpan={6} style={{ padding: '0 0.75rem 0.75rem', borderBottom: '1px solid #eee' }}>
-                        <pre style={{ background: '#1a1a2e', color: '#e0e0ff', padding: '0.75rem', borderRadius: 6, fontSize: '0.8rem', overflow: 'auto', margin: 0, maxHeight: 200 }}>
-                          {typeof job.latestRun.result === 'string' ? job.latestRun.result : JSON.stringify(job.latestRun.result, null, 2)}
-                        </pre>
+                      <td style={{ ...tdStyle, fontWeight: 500, borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}>
+                        {job.serverName || (job.serverInstanceId ? servers.find(s => s.id === job.serverInstanceId)?.name || job.serverInstanceId : '—')}
+                      </td>
+                      <td style={{ ...tdStyle, borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}>
+                        <code style={{ background: '#1e1e2a', padding: '0.15rem 0.5rem', borderRadius: 4, fontSize: '0.8rem', color: '#94a3b8' }}>{job.type}</code>
+                      </td>
+                      <td style={{ ...tdStyle, borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}><Badge status={job.latestRun?.status ?? null} /></td>
+                      <td style={{ ...tdStyle, color: '#64748b', borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}>{formatRelative(job.createdAt)}</td>
+                      <td style={{ ...tdStyle, color: '#64748b', borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}>{formatDuration(job.latestRun?.startedAt ?? null, job.latestRun?.finishedAt ?? null)}</td>
+                      <td style={{ ...tdStyle, borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}>
+                        {job.latestRun?.result ? (
+                          <button
+                            style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontSize: '0.8rem', padding: 0, textDecoration: 'underline', textUnderlineOffset: 3 }}
+                            onClick={() => setExpandedJob(expandedJob === job.id ? null : job.id)}
+                          >
+                            {expandedJob === job.id ? 'Hide' : 'View'}
+                          </button>
+                        ) : (
+                          <span style={{ color: '#3f3f52', fontSize: '0.85rem' }}>—</span>
+                        )}
                       </td>
                     </tr>
-                  )}
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
+                    {expandedJob === job.id && Boolean(job.latestRun?.result) && (
+                      <tr>
+                        <td colSpan={6} style={{ padding: '0 1rem 1rem', borderBottom: '1px solid #1a1a24' }}>
+                          <pre style={{ background: '#0a0a0f', border: '1px solid #1e1e2a', color: '#94a3b8', padding: '0.875rem', borderRadius: 7, fontSize: '0.8rem', overflow: 'auto', margin: 0, maxHeight: 200 }}>
+                            {(() => { const r = job.latestRun?.result; return typeof r === 'string' ? r : JSON.stringify(r as Record<string, unknown>, null, 2); })()}
+                          </pre>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

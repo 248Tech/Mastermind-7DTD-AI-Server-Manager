@@ -4,52 +4,78 @@ import { api, Schedule, ServerInstance } from '../../../lib/api';
 import { getStoredOrgId } from '../../../lib/auth';
 import { usePoll } from '../../../hooks/useRealtime';
 
+// ─── Design tokens ────────────────────────────────────────────────────────────
 const card: React.CSSProperties = {
-  background: '#fff',
-  borderRadius: 8,
-  padding: '1.5rem',
-  boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-  marginBottom: '1rem',
+  background: '#111118', borderRadius: 10, padding: '1.5rem',
+  border: '1px solid #1e1e2a', marginBottom: '1rem',
 };
 
 const inputStyle: React.CSSProperties = {
-  padding: '0.5rem 0.75rem',
-  borderRadius: 6,
-  border: '1px solid #ddd',
-  fontSize: '0.9rem',
-  width: '100%',
-  boxSizing: 'border-box',
+  padding: '0.55rem 0.875rem', borderRadius: 7, border: '1px solid #252532',
+  fontSize: '0.875rem', background: '#0d0d14', color: '#f1f5f9',
+  width: '100%', outline: 'none', transition: 'border-color 0.15s, box-shadow 0.15s',
 };
 
 const btnPrimary: React.CSSProperties = {
-  padding: '0.5rem 1rem',
-  background: '#1a1a2e',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 6,
-  cursor: 'pointer',
-  fontSize: '0.9rem',
+  padding: '0.5rem 1.125rem', background: '#6366f1', color: '#fff', border: 'none',
+  borderRadius: 7, cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600,
+  boxShadow: '0 2px 8px rgba(99,102,241,0.25)',
 };
 
 const btnSecondary: React.CSSProperties = {
-  padding: '0.5rem 1rem',
-  background: '#fff',
-  color: '#1a1a2e',
-  border: '1px solid #ccc',
-  borderRadius: 6,
-  cursor: 'pointer',
-  fontSize: '0.9rem',
+  padding: '0.5rem 1.125rem', background: 'transparent', color: '#94a3b8',
+  border: '1px solid #252532', borderRadius: 7, cursor: 'pointer', fontSize: '0.875rem',
 };
 
-function statusBadge(status: string | null) {
-  if (!status) return <span style={{ color: '#999', fontSize: '0.85rem' }}>—</span>;
+const btnSmall: React.CSSProperties = {
+  padding: '0.25rem 0.625rem', background: 'transparent', color: '#94a3b8',
+  border: '1px solid #252532', borderRadius: 5, cursor: 'pointer', fontSize: '0.78rem',
+};
+
+const btnDangerSmall: React.CSSProperties = {
+  ...btnSmall, color: '#f87171', borderColor: 'rgba(239,68,68,0.3)',
+};
+
+const thStyle: React.CSSProperties = {
+  padding: '0.625rem 1rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600,
+  color: '#64748b', letterSpacing: '0.04em', textTransform: 'uppercase',
+  background: '#0d0d14', borderBottom: '1px solid #1e1e2a',
+};
+
+const tdStyle: React.CSSProperties = {
+  padding: '0.75rem 1rem', fontSize: '0.875rem', borderBottom: '1px solid #1a1a24', color: '#e2e8f0',
+};
+
+const labelStyle: React.CSSProperties = {
+  display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 500,
+};
+
+function StatusBadge({ status }: { status: string | null }) {
+  if (!status) return <span style={{ color: '#3f3f52' }}>—</span>;
   const s = status.toLowerCase();
-  let style: React.CSSProperties = { display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: 12, fontSize: '0.8rem', fontWeight: 600 };
-  if (s === 'success' || s === 'completed') style = { ...style, background: '#e6f7ed', color: '#1e7e34' };
-  else if (s === 'failed' || s === 'error') style = { ...style, background: '#fde8e8', color: '#c00' };
-  else if (s === 'running') style = { ...style, background: '#e8f0fe', color: '#1a73e8' };
-  else style = { ...style, background: '#f0f0f0', color: '#666' };
-  return <span style={style}>{s}</span>;
+  const map: Record<string, { bg: string; color: string }> = {
+    success:   { bg: 'rgba(34,197,94,0.1)',  color: '#4ade80' },
+    completed: { bg: 'rgba(34,197,94,0.1)',  color: '#4ade80' },
+    failed:    { bg: 'rgba(239,68,68,0.1)',  color: '#f87171' },
+    error:     { bg: 'rgba(239,68,68,0.1)',  color: '#f87171' },
+    running:   { bg: 'rgba(56,189,248,0.1)', color: '#38bdf8' },
+  };
+  const { bg, color } = map[s] || { bg: 'rgba(100,116,139,0.1)', color: '#64748b' };
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.6rem', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600, background: bg, color }}>
+      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, display: 'inline-block' }} />
+      {s}
+    </span>
+  );
+}
+
+function onFocus(e: React.FocusEvent<HTMLInputElement | HTMLSelectElement>) {
+  e.target.style.borderColor = '#6366f1';
+  e.target.style.boxShadow = '0 0 0 3px rgba(99,102,241,0.12)';
+}
+function onBlur(e: React.FocusEvent<HTMLInputElement | HTMLSelectElement>) {
+  e.target.style.borderColor = '#252532';
+  e.target.style.boxShadow = 'none';
 }
 
 function formatDateTime(dateStr: string | null): string {
@@ -59,6 +85,7 @@ function formatDateTime(dateStr: string | null): string {
 
 const JOB_TYPES = ['start', 'stop', 'restart', 'rcon', 'custom'];
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
 export default function SchedulesPage() {
   const orgId = getStoredOrgId();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -66,13 +93,10 @@ export default function SchedulesPage() {
   const [error, setError] = useState('');
   const [apiNotice, setApiNotice] = useState('');
 
-  // Create form
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ name: '', serverInstanceId: '', cronExpression: '', jobType: 'start', enabled: true });
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState('');
-
-  // Toggle/delete loading
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const fetchSchedules = useCallback(async () => {
@@ -85,33 +109,17 @@ export default function SchedulesPage() {
     return api.get<ServerInstance[]>(`/api/orgs/${orgId}/server-instances`);
   }, [orgId]);
 
-  usePoll(
-    fetchSchedules,
-    (data) => { setSchedules(data); setError(''); },
-    15000,
-    !!orgId,
-  );
-
-  usePoll(
-    fetchServers,
-    (data) => setServers(data),
-    60000,
-    !!orgId,
-  );
+  usePoll(fetchSchedules, (data) => { setSchedules(data); setError(''); }, 15000, !!orgId);
+  usePoll(fetchServers, (data) => setServers(data), 60000, !!orgId);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!orgId) return;
-    setCreateLoading(true);
-    setCreateError('');
-    setApiNotice('');
+    setCreateLoading(true); setCreateError(''); setApiNotice('');
     try {
       await api.post<Schedule>(`/api/orgs/${orgId}/schedules`, {
-        name: form.name,
-        serverInstanceId: form.serverInstanceId || undefined,
-        cronExpression: form.cronExpression,
-        jobType: form.jobType,
-        enabled: form.enabled,
+        name: form.name, serverInstanceId: form.serverInstanceId || undefined,
+        cronExpression: form.cronExpression, jobType: form.jobType, enabled: form.enabled,
       });
       setShowCreate(false);
       setForm({ name: '', serverInstanceId: '', cronExpression: '', jobType: 'start', enabled: true });
@@ -159,63 +167,70 @@ export default function SchedulesPage() {
 
   return (
     <div>
-      <h1 style={{ margin: '0 0 1.5rem', fontSize: '1.6rem', color: '#1a1a2e' }}>Schedules</h1>
+      <div style={{ marginBottom: '2rem' }}>
+        <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: '#f1f5f9' }}>Schedules</h1>
+        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Automate recurring server tasks with cron schedules</p>
+      </div>
 
       {error && (
-        <div style={{ background: '#fde8e8', color: '#c00', padding: '0.75rem 1rem', borderRadius: 6, marginBottom: '1rem', fontSize: '0.9rem' }}>{error}</div>
+        <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1.25rem', fontSize: '0.875rem' }}>
+          {error}
+        </div>
       )}
       {apiNotice && (
-        <div style={{ background: '#fff8e1', color: '#e65c00', padding: '0.75rem 1rem', borderRadius: 6, marginBottom: '1rem', fontSize: '0.9rem', border: '1px solid #ffe0a0' }}>
+        <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: '#fbbf24', padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1.25rem', fontSize: '0.875rem' }}>
           {apiNotice}
         </div>
       )}
 
       <div style={card}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#1a1a2e' }}>Scheduled Jobs</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+          <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>Scheduled Jobs</h2>
           <button style={btnPrimary} onClick={() => { setShowCreate(!showCreate); setCreateError(''); setApiNotice(''); }}>
-            {showCreate ? 'Cancel' : 'Add Schedule'}
+            {showCreate ? 'Cancel' : '+ Add Schedule'}
           </button>
         </div>
 
         {showCreate && (
-          <form onSubmit={handleCreate} style={{ background: '#f8f9fa', border: '1px solid #eee', borderRadius: 8, padding: '1.25rem', marginBottom: '1.5rem' }}>
-            <h3 style={{ margin: '0 0 1rem', fontSize: '1rem' }}>New Schedule</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+          <form onSubmit={handleCreate} style={{ background: '#0d0d14', border: '1px solid #1e1e2a', borderRadius: 8, padding: '1.25rem', marginBottom: '1.5rem' }}>
+            <h3 style={{ margin: '0 0 1rem', fontSize: '0.9rem', fontWeight: 600, color: '#f1f5f9' }}>New Schedule</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.875rem' }}>
               <div>
-                <label style={{ fontSize: '0.85rem', color: '#555', display: 'block', marginBottom: '0.25rem' }}>Name *</label>
-                <input style={inputStyle} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required placeholder="Daily restart" />
+                <label style={labelStyle}>Name *</label>
+                <input style={inputStyle} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required placeholder="Daily restart" onFocus={onFocus} onBlur={onBlur} />
               </div>
               <div>
-                <label style={{ fontSize: '0.85rem', color: '#555', display: 'block', marginBottom: '0.25rem' }}>Server Instance</label>
-                <select style={inputStyle} value={form.serverInstanceId} onChange={e => setForm({ ...form, serverInstanceId: e.target.value })}>
+                <label style={labelStyle}>Server Instance</label>
+                <select style={inputStyle} value={form.serverInstanceId} onChange={e => setForm({ ...form, serverInstanceId: e.target.value })} onFocus={onFocus} onBlur={onBlur}>
                   <option value="">— Select Server —</option>
                   {servers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
               <div>
-                <label style={{ fontSize: '0.85rem', color: '#555', display: 'block', marginBottom: '0.25rem' }}>Cron Expression *</label>
-                <input style={inputStyle} value={form.cronExpression} onChange={e => setForm({ ...form, cronExpression: e.target.value })} required placeholder="0 4 * * *" />
-                <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.2rem' }}>e.g. <code>0 4 * * *</code> = daily at 4 AM</div>
+                <label style={labelStyle}>Cron Expression *</label>
+                <input style={inputStyle} value={form.cronExpression} onChange={e => setForm({ ...form, cronExpression: e.target.value })} required placeholder="0 4 * * *" onFocus={onFocus} onBlur={onBlur} />
+                <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.3rem' }}>
+                  e.g. <code style={{ color: '#818cf8' }}>0 4 * * *</code> = daily at 4 AM
+                </div>
               </div>
               <div>
-                <label style={{ fontSize: '0.85rem', color: '#555', display: 'block', marginBottom: '0.25rem' }}>Job Type *</label>
-                <select style={inputStyle} value={form.jobType} onChange={e => setForm({ ...form, jobType: e.target.value })}>
+                <label style={labelStyle}>Job Type *</label>
+                <select style={inputStyle} value={form.jobType} onChange={e => setForm({ ...form, jobType: e.target.value })} onFocus={onFocus} onBlur={onBlur}>
                   {JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <input
                   type="checkbox"
                   id="enabled"
                   checked={form.enabled}
                   onChange={e => setForm({ ...form, enabled: e.target.checked })}
-                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                  style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#6366f1' }}
                 />
-                <label htmlFor="enabled" style={{ fontSize: '0.85rem', color: '#555', cursor: 'pointer' }}>Enabled</label>
+                <label htmlFor="enabled" style={{ ...labelStyle, marginBottom: 0, cursor: 'pointer' }}>Enabled</label>
               </div>
             </div>
-            {createError && <p style={{ color: '#c00', fontSize: '0.85rem', margin: '0.75rem 0 0' }}>{createError}</p>}
+            {createError && <p style={{ color: '#f87171', fontSize: '0.8rem', margin: '0.875rem 0 0' }}>{createError}</p>}
             <div style={{ marginTop: '1rem', display: 'flex', gap: 8 }}>
               <button type="submit" style={btnPrimary} disabled={createLoading}>
                 {createLoading ? 'Saving…' : 'Save Schedule'}
@@ -226,56 +241,55 @@ export default function SchedulesPage() {
         )}
 
         {schedules.length === 0 ? (
-          <p style={{ color: '#888', fontSize: '0.9rem' }}>No schedules configured.</p>
+          <p style={{ color: '#64748b', fontSize: '0.875rem' }}>No schedules configured.</p>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                {['Name', 'Server', 'Cron', 'Job Type', 'Enabled', 'Next Run', 'Last Run', 'Last Status', 'Actions'].map(h => (
-                  <th key={h} style={{ background: '#f0f0f0', padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.85rem', fontWeight: 600 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {schedules.map((sched) => {
-                const server = servers.find(s => s.id === sched.serverInstanceId);
-                return (
-                  <tr key={sched.id}>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #eee', fontWeight: 600, fontSize: '0.9rem' }}>{sched.name}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #eee', fontSize: '0.85rem', color: '#666' }}>{server?.name || sched.serverInstanceId || '—'}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #eee', fontSize: '0.85rem', fontFamily: 'monospace' }}>{sched.cronExpression}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #eee', fontSize: '0.85rem' }}>{sched.jobType}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #eee' }}>
-                      <span style={{ display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: 12, fontSize: '0.8rem', fontWeight: 600, background: sched.enabled ? '#e6f7ed' : '#f0f0f0', color: sched.enabled ? '#1e7e34' : '#666' }}>
-                        {sched.enabled ? 'Yes' : 'No'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #eee', fontSize: '0.8rem', color: '#666' }}>{formatDateTime(sched.nextRunAt)}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #eee', fontSize: '0.8rem', color: '#666' }}>{formatDateTime(sched.lastRunAt)}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #eee' }}>{statusBadge(sched.lastRunStatus)}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #eee' }}>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <button
-                          style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
-                          onClick={() => handleToggle(sched)}
-                          disabled={actionLoading === sched.id}
-                        >
-                          {sched.enabled ? 'Disable' : 'Enable'}
-                        </button>
-                        <button
-                          style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.25rem 0.5rem', borderColor: '#faa', color: '#c00' }}
-                          onClick={() => handleDelete(sched.id)}
-                          disabled={actionLoading === sched.id}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid #1e1e2a' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Name', 'Server', 'Cron', 'Type', 'Enabled', 'Next Run', 'Last Run', 'Status', 'Actions'].map(h => (
+                    <th key={h} style={thStyle}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {schedules.map((sched) => {
+                  const server = servers.find(s => s.id === sched.serverInstanceId);
+                  return (
+                    <tr key={sched.id}>
+                      <td style={{ ...tdStyle, fontWeight: 600 }}>{sched.name}</td>
+                      <td style={{ ...tdStyle, color: '#94a3b8' }}>{server?.name || sched.serverInstanceId || '—'}</td>
+                      <td style={tdStyle}>
+                        <code style={{ background: '#1e1e2a', padding: '0.15rem 0.5rem', borderRadius: 4, fontSize: '0.78rem', color: '#818cf8', fontFamily: 'monospace' }}>{sched.cronExpression}</code>
+                      </td>
+                      <td style={tdStyle}>
+                        <code style={{ background: '#1e1e2a', padding: '0.15rem 0.5rem', borderRadius: 4, fontSize: '0.78rem', color: '#94a3b8' }}>{sched.jobType}</code>
+                      </td>
+                      <td style={tdStyle}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.6rem', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600, background: sched.enabled ? 'rgba(34,197,94,0.1)' : 'rgba(100,116,139,0.1)', color: sched.enabled ? '#4ade80' : '#64748b' }}>
+                          <span style={{ width: 5, height: 5, borderRadius: '50%', background: sched.enabled ? '#4ade80' : '#64748b', display: 'inline-block' }} />
+                          {sched.enabled ? 'On' : 'Off'}
+                        </span>
+                      </td>
+                      <td style={{ ...tdStyle, color: '#64748b', fontSize: '0.8rem' }}>{formatDateTime(sched.nextRunAt)}</td>
+                      <td style={{ ...tdStyle, color: '#64748b', fontSize: '0.8rem' }}>{formatDateTime(sched.lastRunAt)}</td>
+                      <td style={tdStyle}><StatusBadge status={sched.lastRunStatus} /></td>
+                      <td style={tdStyle}>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button style={btnSmall} onClick={() => handleToggle(sched)} disabled={actionLoading === sched.id}>
+                            {sched.enabled ? 'Disable' : 'Enable'}
+                          </button>
+                          <button style={btnDangerSmall} onClick={() => handleDelete(sched.id)} disabled={actionLoading === sched.id}>
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

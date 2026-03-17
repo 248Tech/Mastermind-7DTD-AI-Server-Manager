@@ -1,0 +1,5 @@
+mastermind-agent
+*.exe
+agent.key
+host_id
+config.yaml

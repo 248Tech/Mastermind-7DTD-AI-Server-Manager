@@ -1,0 +1,25 @@
+# Dev overrides: hot-reload source mounts, dev commands, permissive secrets.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+services:
+  control-plane:
+    build:
+      target: dev
+    environment:
+      NODE_ENV: development
+      JWT_SECRET: dev-user-secret
+      JWT_AGENT_SECRET: dev-agent-secret
+    volumes:
+      - ../control-plane/src:/app/src
+    healthcheck:
+      # Give dev server more time to cold-start
+      start_period: 45s
+
+  web:
+    build:
+      target: dev
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ../web/src:/app/src
+      - ../web/public:/app/public

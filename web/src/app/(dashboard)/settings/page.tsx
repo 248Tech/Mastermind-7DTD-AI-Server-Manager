@@ -3,42 +3,47 @@ import { useState, useEffect } from 'react';
 import { api, User, Org } from '../../../lib/api';
 import { getStoredOrgId } from '../../../lib/auth';
 
+// ─── Design tokens ────────────────────────────────────────────────────────────
 const card: React.CSSProperties = {
-  background: '#fff',
-  borderRadius: 8,
-  padding: '1.5rem',
-  boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-  marginBottom: '1rem',
+  background: '#111118', borderRadius: 10, padding: '1.5rem',
+  border: '1px solid #1e1e2a', marginBottom: '1rem',
 };
 
 const inputStyle: React.CSSProperties = {
-  padding: '0.5rem 0.75rem',
-  borderRadius: 6,
-  border: '1px solid #ddd',
-  fontSize: '0.9rem',
-  width: '100%',
-  boxSizing: 'border-box',
+  padding: '0.55rem 0.875rem', borderRadius: 7, border: '1px solid #252532',
+  fontSize: '0.875rem', background: '#0d0d14', color: '#f1f5f9',
+  width: '100%', outline: 'none', transition: 'border-color 0.15s, box-shadow 0.15s',
 };
 
 const btnPrimary: React.CSSProperties = {
-  padding: '0.5rem 1rem',
-  background: '#1a1a2e',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 6,
-  cursor: 'pointer',
-  fontSize: '0.9rem',
+  padding: '0.5rem 1.125rem', background: '#6366f1', color: '#fff', border: 'none',
+  borderRadius: 7, cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600,
+  boxShadow: '0 2px 8px rgba(99,102,241,0.25)',
 };
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+const labelStyle: React.CSSProperties = {
+  display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 500,
+};
+
+function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div style={{ display: 'flex', gap: '1rem', padding: '0.6rem 0', borderBottom: '1px solid #f0f0f0', alignItems: 'baseline' }}>
-      <div style={{ width: 140, fontSize: '0.85rem', color: '#888', flexShrink: 0 }}>{label}</div>
-      <div style={{ fontSize: '0.9rem', fontFamily: value.startsWith('org_') || value.startsWith('usr_') ? 'monospace' : undefined }}>{value || '—'}</div>
+    <div style={{ display: 'flex', gap: '1rem', padding: '0.75rem 0', borderBottom: '1px solid #1a1a24', alignItems: 'baseline' }}>
+      <div style={{ width: 140, fontSize: '0.78rem', color: '#64748b', flexShrink: 0, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</div>
+      <div style={{ fontSize: '0.875rem', color: '#e2e8f0', fontFamily: mono ? 'monospace' : undefined, wordBreak: 'break-all' }}>{value || '—'}</div>
     </div>
   );
 }
 
+function onFocus(e: React.FocusEvent<HTMLInputElement>) {
+  e.target.style.borderColor = '#6366f1';
+  e.target.style.boxShadow = '0 0 0 3px rgba(99,102,241,0.12)';
+}
+function onBlur(e: React.FocusEvent<HTMLInputElement>) {
+  e.target.style.borderColor = '#252532';
+  e.target.style.boxShadow = 'none';
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 export default function SettingsPage() {
   const orgId = getStoredOrgId();
   const [user, setUser] = useState<User | null>(null);
@@ -46,7 +51,6 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // Discord webhook form
   const [webhookUrl, setWebhookUrl] = useState('');
   const [webhookLoading, setWebhookLoading] = useState(false);
   const [webhookError, setWebhookError] = useState('');
@@ -59,24 +63,14 @@ export default function SettingsPage() {
       api.get<User>('/api/auth/me'),
       api.get<Org[]>('/api/orgs').then(orgs => orgs.find(o => o.id === orgId) || null).catch(() => null),
     ])
-      .then(([u, o]) => {
-        setUser(u);
-        setOrg(o);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message);
-        setLoading(false);
-      });
+      .then(([u, o]) => { setUser(u); setOrg(o); setLoading(false); })
+      .catch((err) => { setError(err.message); setLoading(false); });
   }, [orgId]);
 
   async function handleUpdateWebhook(e: React.FormEvent) {
     e.preventDefault();
     if (!orgId) return;
-    setWebhookLoading(true);
-    setWebhookError('');
-    setWebhookSuccess('');
-    setWebhookApiNotice('');
+    setWebhookLoading(true); setWebhookError(''); setWebhookSuccess(''); setWebhookApiNotice('');
     try {
       await api.patch(`/api/orgs/${orgId}`, { discordWebhookUrl: webhookUrl });
       setWebhookSuccess('Discord webhook updated successfully.');
@@ -94,54 +88,61 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <h1 style={{ margin: '0 0 1.5rem', fontSize: '1.6rem', color: '#1a1a2e' }}>Settings</h1>
+      <div style={{ marginBottom: '2rem' }}>
+        <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: '#f1f5f9' }}>Settings</h1>
+        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Manage your organisation and account</p>
+      </div>
 
       {error && (
-        <div style={{ background: '#fde8e8', color: '#c00', padding: '0.75rem 1rem', borderRadius: 6, marginBottom: '1rem', fontSize: '0.9rem' }}>{error}</div>
+        <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1.25rem', fontSize: '0.875rem' }}>
+          {error}
+        </div>
       )}
 
       {/* Org Info */}
       <div style={card}>
-        <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem', color: '#1a1a2e' }}>Organisation Info</h2>
+        <h2 style={{ margin: '0 0 1rem', fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>Organisation</h2>
         {loading ? (
-          <p style={{ color: '#888', fontSize: '0.9rem' }}>Loading…</p>
+          <p style={{ color: '#64748b', fontSize: '0.875rem' }}>Loading…</p>
         ) : org ? (
           <div>
             <InfoRow label="Name" value={org.name} />
-            <InfoRow label="Slug" value={org.slug} />
-            <InfoRow label="Org ID" value={org.id} />
+            <InfoRow label="Slug" value={org.slug} mono />
+            <InfoRow label="Org ID" value={org.id} mono />
           </div>
         ) : (
-          <p style={{ color: '#888', fontSize: '0.9rem' }}>
-            Org ID: <code style={{ fontFamily: 'monospace' }}>{orgId || '—'}</code>
+          <p style={{ color: '#64748b', fontSize: '0.875rem' }}>
+            Org ID: <code style={{ fontFamily: 'monospace', color: '#818cf8' }}>{orgId || '—'}</code>
           </p>
         )}
       </div>
 
       {/* Discord Webhook */}
       <div style={card}>
-        <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem', color: '#1a1a2e' }}>Discord Webhook</h2>
-        <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: '#666' }}>
+        <h2 style={{ margin: '0 0 0.375rem', fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>Discord Webhook</h2>
+        <p style={{ margin: '0 0 1.25rem', fontSize: '0.8rem', color: '#64748b' }}>
           Set a Discord webhook URL to receive notifications for alerts and important events.
         </p>
         {webhookApiNotice && (
-          <div style={{ background: '#fff8e1', color: '#e65c00', padding: '0.6rem 0.75rem', borderRadius: 6, marginBottom: '0.75rem', fontSize: '0.85rem', border: '1px solid #ffe0a0' }}>
+          <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: '#fbbf24', padding: '0.625rem 0.875rem', borderRadius: 7, marginBottom: '0.875rem', fontSize: '0.8rem' }}>
             {webhookApiNotice}
           </div>
         )}
-        <form onSubmit={handleUpdateWebhook} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        <form onSubmit={handleUpdateWebhook} style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
           <div>
-            <label style={{ fontSize: '0.85rem', color: '#555', display: 'block', marginBottom: '0.25rem' }}>Webhook URL</label>
+            <label style={labelStyle}>Webhook URL</label>
             <input
               style={inputStyle}
               type="url"
               value={webhookUrl}
               onChange={e => setWebhookUrl(e.target.value)}
               placeholder="https://discord.com/api/webhooks/…"
+              onFocus={onFocus}
+              onBlur={onBlur}
             />
           </div>
-          {webhookError && <p style={{ color: '#c00', margin: 0, fontSize: '0.85rem' }}>{webhookError}</p>}
-          {webhookSuccess && <p style={{ color: '#1e7e34', margin: 0, fontSize: '0.85rem' }}>{webhookSuccess}</p>}
+          {webhookError && <p style={{ color: '#f87171', margin: 0, fontSize: '0.8rem' }}>{webhookError}</p>}
+          {webhookSuccess && <p style={{ color: '#4ade80', margin: 0, fontSize: '0.8rem' }}>{webhookSuccess}</p>}
           <div>
             <button type="submit" style={btnPrimary} disabled={webhookLoading}>
               {webhookLoading ? 'Saving…' : 'Save Webhook'}
@@ -152,31 +153,31 @@ export default function SettingsPage() {
 
       {/* Agent Pairing */}
       <div style={card}>
-        <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem', color: '#1a1a2e' }}>Agent Pairing</h2>
-        <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: '#666' }}>
+        <h2 style={{ margin: '0 0 0.375rem', fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>Agent Pairing</h2>
+        <p style={{ margin: '0 0 1.25rem', fontSize: '0.8rem', color: '#64748b' }}>
           To register a new host agent, generate a pairing token from the Hosts page.
         </p>
         <a href="/hosts" style={{ ...btnPrimary, textDecoration: 'none', display: 'inline-block' }}>
-          Go to Hosts
+          Go to Hosts →
         </a>
       </div>
 
       {/* Account */}
       <div style={card}>
-        <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem', color: '#1a1a2e' }}>Account</h2>
+        <h2 style={{ margin: '0 0 1rem', fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>Account</h2>
         {loading ? (
-          <p style={{ color: '#888', fontSize: '0.9rem' }}>Loading…</p>
+          <p style={{ color: '#64748b', fontSize: '0.875rem' }}>Loading…</p>
         ) : user ? (
           <div>
             <InfoRow label="Email" value={user.email} />
             {user.name && <InfoRow label="Name" value={user.name} />}
-            <InfoRow label="User ID" value={user.id} />
-            <p style={{ margin: '1rem 0 0', fontSize: '0.8rem', color: '#888' }}>
+            <InfoRow label="User ID" value={user.id} mono />
+            <p style={{ margin: '1rem 0 0', fontSize: '0.78rem', color: '#64748b' }}>
               Account changes are not supported in this version. Contact your administrator to update credentials.
             </p>
           </div>
         ) : (
-          <p style={{ color: '#888', fontSize: '0.9rem' }}>Could not load user info.</p>
+          <p style={{ color: '#64748b', fontSize: '0.875rem' }}>Could not load user info.</p>
         )}
       </div>
     </div>
