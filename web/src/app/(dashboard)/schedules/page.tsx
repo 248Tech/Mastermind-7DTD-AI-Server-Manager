@@ -169,7 +169,7 @@ export default function SchedulesPage() {
     <div>
       <div style={{ marginBottom: '2rem' }}>
         <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: '#f1f5f9' }}>Schedules</h1>
-        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Automate recurring server tasks with cron schedules</p>
+        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Automatically run jobs on a cron schedule — nightly restarts, daily backups, etc.</p>
       </div>
 
       {error && (

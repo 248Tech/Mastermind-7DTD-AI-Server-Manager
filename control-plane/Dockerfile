@@ -25,15 +25,14 @@ CMD ["sh", "-lc", "prisma db push && ts-node prisma/seed.ts && pnpm dev"]
 FROM node:20-alpine AS runner
 RUN apk add --no-cache openssl
 RUN npm install -g prisma@5.22.0 ts-node@10.9.2
-RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 ENV NODE_ENV=production
-COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install --frozen-lockfile --prod || pnpm install --prod
-COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
+# Copy pre-built artifacts from build stage (avoids re-running pnpm + prisma generate)
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
 COPY prisma ./prisma
 COPY tsconfig.json ./
-COPY --from=build /app/dist ./dist
+COPY package.json ./
 EXPOSE 3001
 ENV PORT=3001
-CMD ["sh", "-c", "prisma migrate deploy && ts-node prisma/seed.ts && node dist/main"]
+CMD ["sh", "-c", "prisma db push && ts-node prisma/seed.ts && node dist/src/main"]

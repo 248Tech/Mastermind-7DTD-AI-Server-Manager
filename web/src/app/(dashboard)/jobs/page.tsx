@@ -163,7 +163,7 @@ export default function JobsPage() {
     <div>
       <div style={{ marginBottom: '2rem' }}>
         <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: '#f1f5f9' }}>Jobs</h1>
-        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Queue and monitor server operations</p>
+        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Send one-off commands to your game servers — restart, stop, backup, or any custom script</p>
       </div>
 
       {error && (

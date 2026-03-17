@@ -57,13 +57,26 @@
 
 ---
 
-## Current known features (v0.0.1)
+## Release 0.0.2 (March 17, 2026)
+
+### Highlights
+
+- New host onboarding flow with guided setup in the Hosts page, including copy-ready one-liner / Docker / manual install commands.
+- New control-plane installer endpoint: `GET /install.sh` for tokenized agent bootstrap scripts.
+- Agent now supports `MASTERMIND_*` environment variable overrides and can start without a local config file when env vars are provided.
+- Stronger auth request validation for register/login payloads.
+- Container/runtime updates for control-plane and web deployment defaults.
+
+---
+
+## Current known features (v0.0.2)
 
 ### Implemented end-to-end
 
 - User auth: register, login, `GET /api/auth/me` (JWT).
 - Org management: create org, list my orgs, get org details.
 - Agent onboarding: generate pairing token, pair agent, rotate key, heartbeat ingestion.
+- Agent installer script endpoint for one-line setup: `GET /install.sh`.
 - Host inventory: list hosts, host details, online/offline status from heartbeat.
 - Server instances: CRUD for org-scoped server definitions.
 - Job dispatch: create/list jobs, queue-backed execution, job run status/result reporting from agents.
@@ -154,13 +167,12 @@ Copy `.env.example` to `.env` (and `control-plane/.env.example` to `control-plan
 2. **Initialize schema + seed:** `cd control-plane && pnpm prisma db push && pnpm prisma:seed`.
 3. **Start services:** `cd control-plane && pnpm dev`, then `cd web && pnpm dev`.
 4. **Login:** open `http://localhost:3000/login` and sign in with seeded admin credentials.
-5. **Pair a host:** in **Hosts**, click **Pair New Host** and generate a token.
-6. **Start agent:** in `agent/`, copy `config.yaml.example` to `config.yaml`, set:
-   - `control_plane_url: "http://localhost:3001"`
-   - `pairing_token: "<token from UI>"`
-   - then run `go run .`
-7. **Register a server instance:** in **Hosts**, use the Register Server form (game type `7dtd` or `minecraft`).
-8. **Run jobs:** in **Jobs**, create `start` / `stop` / `restart` / `rcon` / `custom` jobs and monitor status/output.
+5. **Pair a host:** in **Hosts**, click **Pair New Host**, set host name / control-plane URL, and generate a token.
+6. **Start agent (recommended):** run the generated one-liner from the Hosts page:
+   - `curl -sSL "http://<control-plane>:3001/install.sh?token=<token>&url=http://<control-plane>:3001&name=<host-name>" | sudo bash`
+7. **Manual fallback:** in `agent/`, copy `config.yaml.example` to `config.yaml`, set `control_plane_url` + `pairing_token`, then run `go run .`
+8. **Register a server instance:** in **Hosts**, use the Register Server form (game type `7dtd` or `minecraft`).
+9. **Run jobs:** in **Jobs**, create `start` / `stop` / `restart` / `rcon` / `custom` jobs and monitor status/output.
 
 ---
 

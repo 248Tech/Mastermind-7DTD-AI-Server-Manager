@@ -47,6 +47,23 @@ func Load(path string) (*Config, error) {
 	}
 }
 
+// Env overrides config fields from MASTERMIND_* environment variables.
+// Call after Load() and Defaults() so env vars always win.
+func (c *Config) Env() {
+	if v := os.Getenv("MASTERMIND_CP_URL"); v != "" {
+		c.ControlPlaneURL = v
+	}
+	if v := os.Getenv("MASTERMIND_PAIRING_TOKEN"); v != "" {
+		c.PairingToken = v
+	}
+	if v := os.Getenv("MASTERMIND_HOST_NAME"); v != "" {
+		c.Host.Name = v
+	}
+	if v := os.Getenv("MASTERMIND_KEY_PATH"); v != "" {
+		c.AgentKeyPath = v
+	}
+}
+
 // Defaults applies MVP defaults (heartbeat 5s, key path).
 func (c *Config) Defaults() {
 	if c.Heartbeat.IntervalSec <= 0 {

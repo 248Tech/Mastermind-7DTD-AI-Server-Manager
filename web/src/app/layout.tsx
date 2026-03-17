@@ -5,12 +5,12 @@ import { useRouter, usePathname } from 'next/navigation';
 import { isLoggedIn, clearAuth } from '../lib/auth';
 
 const NAV = [
-  { href: '/dashboard', label: 'Dashboard', icon: '◈' },
-  { href: '/hosts', label: 'Hosts', icon: '⬡' },
-  { href: '/jobs', label: 'Jobs', icon: '⚡' },
-  { href: '/schedules', label: 'Schedules', icon: '◷' },
-  { href: '/alerts', label: 'Alerts', icon: '◎' },
-  { href: '/settings', label: 'Settings', icon: '⚙' },
+  { href: '/dashboard', label: 'Dashboard', icon: '◈', title: 'Overview of all your servers and recent activity' },
+  { href: '/hosts', label: 'Hosts', icon: '⬡', title: 'Machines running the agent + game server processes on them' },
+  { href: '/jobs', label: 'Jobs', icon: '⚡', title: 'Send one-off commands to your servers (restart, backup, etc.)' },
+  { href: '/schedules', label: 'Schedules', icon: '◷', title: 'Run jobs automatically on a cron schedule' },
+  { href: '/alerts', label: 'Alerts', icon: '◎', title: 'Get notified via Discord when servers go offline' },
+  { href: '/settings', label: 'Settings', icon: '⚙', title: 'Organisation info and account settings' },
 ];
 
 const PUBLIC = ['/', '/login'];
@@ -85,6 +85,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <a
                     key={n.href}
                     href={n.href}
+                    title={n.title}
                     style={{
                       display: 'flex',
                       alignItems: 'center',

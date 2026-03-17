@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
 	"os"
@@ -31,10 +32,16 @@ func main() {
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		slog.Error("load config", "path", *configPath, "err", err)
-		os.Exit(1)
+		if errors.Is(err, os.ErrNotExist) {
+			// No config file — rely entirely on MASTERMIND_* env vars.
+			cfg = new(config.Config)
+		} else {
+			slog.Error("load config", "path", *configPath, "err", err)
+			os.Exit(1)
+		}
 	}
 	cfg.Defaults()
+	cfg.Env() // env vars always override file values
 
 	// Resolve agent key and host ID: if no key file yet, require pairing token and pair first
 	var agentKey, hostID string
