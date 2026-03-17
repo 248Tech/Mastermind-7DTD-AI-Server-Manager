@@ -2,8 +2,6 @@
 # Ports: web 3000, control-plane 3001, postgres 5432, redis 6379
 # Usage: docker compose up -d  (postgres + redis only)
 #        docker compose --profile full up -d  (all four)
-version: "3.9"
-
 services:
   postgres:
     image: postgres:16-alpine

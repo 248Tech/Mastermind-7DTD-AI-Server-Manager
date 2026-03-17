@@ -4,7 +4,8 @@ RUN apk add --no-cache openssl
 RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install --frozen-lockfile || pnpm install
+# Force devDependencies in this dev image so prisma/ts-node scripts always exist.
+RUN pnpm install --frozen-lockfile --prod=false || pnpm install --prod=false
 COPY . .
 RUN pnpm prisma generate
 EXPOSE 3001
