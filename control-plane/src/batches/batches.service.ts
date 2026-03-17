@@ -6,12 +6,14 @@ import {
   Optional,
   Inject,
 } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma.service';
 import { BATCH_PROGRESS } from '../websocket/events';
 import type { CreateBatchDto } from './dto/create-batch.dto';
 import type { BatchSummaryDto, BatchJobDto } from './dto/batch-response.dto';
 import { JOB_ATTEMPTS } from '../jobs/constants';
+import type { QueueJobData } from '../jobs/jobs-queue.service';
 
 export const BATCH_PROGRESS_EMITTER = Symbol('BATCH_PROGRESS_EMITTER');
 
@@ -34,7 +36,7 @@ export interface IBatchProgressEmitter {
 
 @Injectable()
 export class BatchesService implements OnModuleDestroy {
-  private orgQueues = new Map<string, Queue>();
+  private orgQueues = new Map<string, Queue<QueueJobData>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -46,11 +48,11 @@ export class BatchesService implements OnModuleDestroy {
     this.orgQueues.clear();
   }
 
-  private getOrgQueue(orgId: string): Queue {
+  private getOrgQueue(orgId: string): Queue<QueueJobData> {
     if (!this.orgQueues.has(orgId)) {
       this.orgQueues.set(
         orgId,
-        new Queue(`jobs:${orgId}`, { connection: REDIS_CONNECTION }),
+        new Queue<QueueJobData>(`jobs:${orgId}`, { connection: REDIS_CONNECTION }),
       );
     }
     return this.orgQueues.get(orgId)!;
@@ -100,7 +102,7 @@ export class BatchesService implements OnModuleDestroy {
           batchId: batch.id,
           serverInstanceId: si.id,
           type: jobType,
-          payload: dto.payload ?? undefined,
+          payload: dto.payload as Prisma.InputJsonValue | undefined,
           createdById: userId,
         },
       });
@@ -109,6 +111,7 @@ export class BatchesService implements OnModuleDestroy {
       });
 
       await queue.add(
+        jobType,
         {
           jobId: job.id,
           jobRunId: run.id,
@@ -365,7 +368,7 @@ export class BatchesService implements OnModuleDestroy {
         action,
         resourceType: 'job_batch',
         resourceId,
-        details,
+        details: details as Prisma.InputJsonValue,
       },
     });
   }
@@ -384,7 +387,7 @@ export class BatchesService implements OnModuleDestroy {
         action,
         resourceType: 'job',
         resourceId,
-        details,
+        details: details as Prisma.InputJsonValue,
       },
     });
   }

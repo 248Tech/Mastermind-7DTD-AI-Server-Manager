@@ -9,7 +9,7 @@ export interface QueueJobData {
   hostId: string;
   serverInstanceId?: string;
   type: string;
-  payload: Record<string, unknown>;
+  payload: unknown;
 }
 
 const REDIS_CONNECTION = {

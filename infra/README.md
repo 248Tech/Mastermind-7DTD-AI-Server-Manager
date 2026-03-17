@@ -18,6 +18,8 @@ make up
 cd infra && docker compose up -d
 
 # Start all four (control-plane + web in Docker)
+make up-full
+# or
 cd infra && docker compose --profile full up -d
 
 # Logs
@@ -34,8 +36,8 @@ cd infra && docker compose down
 ## First run
 
 1. From repo root: `make bootstrap` (installs deps, copies .env files).
-2. Run migrations for the control plane (see main README).
-3. `make up` to start Postgres, Redis, Control Plane, and Web.
+2. Initialize control-plane schema with `cd control-plane && pnpm prisma db push` (or let `make up-full` do it automatically in Docker, including seed).
+3. `make up-full` to start Postgres, Redis, Control Plane, and Web.
 
 ## Hot reload
 

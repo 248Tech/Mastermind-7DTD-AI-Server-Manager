@@ -1,11 +1,14 @@
 # Mastermind — root Makefile (simple wrappers)
-.PHONY: bootstrap up down logs test doctor
+.PHONY: bootstrap up up-full down logs test doctor
 
 bootstrap:
-	./scripts/bootstrap.sh
+	bash ./scripts/bootstrap.sh
 
 up:
 	cd infra && docker compose up -d
+
+up-full:
+	cd infra && docker compose --profile full up -d
 
 down:
 	cd infra && docker compose down
@@ -19,4 +22,4 @@ test:
 	cd agent && go test ./... 2>/dev/null || true
 
 doctor:
-	./scripts/doctor.sh
+	bash ./scripts/doctor.sh

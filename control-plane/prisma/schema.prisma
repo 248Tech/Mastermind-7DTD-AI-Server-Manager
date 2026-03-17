@@ -166,7 +166,6 @@ model ServerInstance {
   userServerRoles UserServerRole[]
   jobs            Job[]
   banEntries      BanEntry[]
-  modArtifacts    ModArtifact[]
   commandMacros   CommandMacro[]
   schedules       Schedule[]
 

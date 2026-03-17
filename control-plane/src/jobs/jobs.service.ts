@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { BatchesService } from '../batches/batches.service';
 import { JobsQueueService } from './jobs-queue.service';
@@ -39,7 +40,7 @@ export class JobsService {
         orgId,
         serverInstanceId,
         type: jobType,
-        payload: payload ?? undefined,
+        payload: payload as Prisma.InputJsonValue | undefined,
         createdById: userId,
       },
     });

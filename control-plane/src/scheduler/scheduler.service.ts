@@ -1,8 +1,9 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { Queue, Worker, Job } from 'bullmq';
 import { PrismaService } from '../prisma.service';
 import { getNextCronRun, clampToExecutionWindow } from './cron-next';
 import type { ScheduleJobData } from './scheduler.types';
+import type { QueueJobData } from '../jobs/jobs-queue.service';
 
 const SCHEDULER_QUEUE_NAME = 'scheduler';
 const REDIS_CONNECTION = {
@@ -12,9 +13,10 @@ const REDIS_CONNECTION = {
 
 @Injectable()
 export class SchedulerService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(SchedulerService.name);
   private schedulerQueue: Queue<ScheduleJobData> | null = null;
   private worker: Worker<ScheduleJobData> | null = null;
-  private orgQueues = new Map<string, Queue>();
+  private orgQueues = new Map<string, Queue<QueueJobData>>();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -28,7 +30,12 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       { connection: REDIS_CONNECTION, concurrency: 5 },
     );
     this.worker.on('failed', (job, err) => this.handleWorkerFailure(job, err));
-    await this.hydrateSchedules();
+    try {
+      await this.hydrateSchedules();
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Skipping initial schedule hydration: ${reason}`);
+    }
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -49,6 +56,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       if (!nextRun) continue;
       const delayMs = Math.max(0, nextRun.getTime() - now.getTime());
       await this.schedulerQueue!.add(
+        'schedule_fire',
         { scheduleId: s.id },
         {
           jobId: `schedule:${s.id}:${nextRun.getTime()}`,
@@ -108,6 +116,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
 
       const orgQueue = this.getOrgQueue(orgId);
       await orgQueue.add(
+        schedule.jobType,
         {
           jobId: createdJob.id,
           jobRunId: run.id,
@@ -134,6 +143,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       if (nextRun) {
         const delayMs = Math.max(0, nextRun.getTime() - Date.now());
         await this.schedulerQueue!.add(
+          'schedule_fire',
           { scheduleId },
           { jobId: `schedule:${scheduleId}:${nextRun.getTime()}`, delay: delayMs },
         );
@@ -153,6 +163,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       if (nextRun) {
         const delayMs = Math.max(0, nextRun.getTime() - Date.now());
         await this.schedulerQueue!.add(
+          'schedule_fire',
           { scheduleId },
           { jobId: `schedule:${scheduleId}:${nextRun.getTime()}`, delay: delayMs },
         );
@@ -173,11 +184,11 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private getOrgQueue(orgId: string): Queue {
+  private getOrgQueue(orgId: string): Queue<QueueJobData> {
     if (!this.orgQueues.has(orgId)) {
       this.orgQueues.set(
         orgId,
-        new Queue(`jobs:${orgId}`, { connection: REDIS_CONNECTION }),
+        new Queue<QueueJobData>(`jobs:${orgId}`, { connection: REDIS_CONNECTION }),
       );
     }
     return this.orgQueues.get(orgId)!;

@@ -109,11 +109,12 @@ make bootstrap
 # 3. Start Postgres + Redis (required for control plane)
 make up
 # or: cd infra && docker compose up -d
-# (Optionally start control-plane + web in Docker: docker compose --profile full up -d)
+# (Or start full stack in Docker: make up-full)
+#   control-plane container auto-runs prisma db push + seed on startup.
 
-# 4. Run migrations + seed (first time only)
+# 4. Initialize schema + seed (first time only)
 cd control-plane
-pnpm prisma migrate deploy
+pnpm prisma db push
 pnpm prisma:seed
 cd ..
 
@@ -149,8 +150,8 @@ Copy `.env.example` to `.env` (and `control-plane/.env.example` to `control-plan
 
 ## First-run walkthrough
 
-1. **Start infra:** `make up` (Postgres + Redis).
-2. **Migrate + seed:** `cd control-plane && pnpm prisma migrate deploy && pnpm prisma:seed`.
+1. **Start infra:** `make up` (Postgres + Redis), or `make up-full` (Postgres + Redis + control-plane + web in Docker).
+2. **Initialize schema + seed:** `cd control-plane && pnpm prisma db push && pnpm prisma:seed`.
 3. **Start services:** `cd control-plane && pnpm dev`, then `cd web && pnpm dev`.
 4. **Login:** open `http://localhost:3000/login` and sign in with seeded admin credentials.
 5. **Pair a host:** in **Hosts**, click **Pair New Host** and generate a token.
@@ -168,7 +169,7 @@ Copy `.env.example` to `.env` (and `control-plane/.env.example` to `control-plan
 | Issue | What to do |
 |-------|------------|
 | Port 3000, 3001, 5432, or 6379 in use | Change ports in `.env` and `infra/docker-compose.yml`, or stop the process using the port. |
-| Migrations fail | Ensure Postgres is up and `DATABASE_URL` is correct. Run migrations in order (see `control-plane/prisma/migrations/README-migration-order.md`). |
+| Schema sync fails | Ensure Postgres is up and `DATABASE_URL` is correct, then run `cd control-plane && pnpm prisma db push`. |
 | Compose build fails | Run `make bootstrap` first. Ensure Docker has enough memory. For control-plane, run `pnpm prisma generate` locally if needed. |
 | Login fails for default admin | Run `cd control-plane && pnpm prisma:seed` and try `admin@mastermind.local / changeme`. |
 | Web shows backend/API errors | Ensure control plane is running on the URL in `NEXT_PUBLIC_CONTROL_PLANE_URL` (default `http://localhost:3001`). |

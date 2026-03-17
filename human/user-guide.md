@@ -129,14 +129,14 @@ PORT=3001
 
 > **Security:** Change `JWT_SECRET` and `JWT_AGENT_SECRET` to random strings before any real use. Never leave them as defaults.
 
-### Step 4 — Run database migrations
+### Step 4 — Initialize database schema
 
 ```bash
 cd control-plane
-pnpm prisma migrate deploy
+pnpm prisma db push
 ```
 
-This creates all tables. Run once on first setup and again after pulling updates.
+This creates all tables. Run once on first setup and again after schema changes.
 
 ### Step 5 — Seed the database
 
@@ -190,7 +190,7 @@ To run everything in Docker (control plane + web + dependencies):
 ```bash
 cd infra && docker compose --profile full up -d
 ```
-This uses the Dockerfiles in `control-plane/` and `web/`. Run migrations separately after the control-plane container is up.
+This uses the Dockerfiles in `control-plane/` and `web/`. The control-plane container runs `prisma db push` and seed on startup to initialize schema and default data automatically.
 
 ---
 
@@ -745,7 +745,7 @@ Every user belongs to an org and has one of three roles:
 
 - Ensure Postgres is running and healthy: `docker compose -f infra/docker-compose.yml ps`
 - Check `DATABASE_URL` in `control-plane/.env` matches the Compose credentials (`mastermind`/`changeme`/`mastermind`)
-- Run migrations in order — check `control-plane/prisma/migrations/README-migration-order.md`
+- Re-sync schema: `cd control-plane && pnpm prisma db push`
 
 ### Login fails with "Invalid email or password"
 
@@ -886,8 +886,8 @@ Here is the full sequence from zero to a working managed server:
 # 1. Start infrastructure
 cd infra && docker compose up -d
 
-# 2. Run migrations + seed
-cd control-plane && pnpm prisma migrate deploy && npx ts-node prisma/seed.ts
+# 2. Initialize schema + seed
+cd control-plane && pnpm prisma db push && npx ts-node prisma/seed.ts
 
 # 3. Start control plane and web
 cd control-plane && pnpm dev &

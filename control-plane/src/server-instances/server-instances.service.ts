@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { CreateServerInstanceDto } from './dto/create-server-instance.dto';
 import { UpdateServerInstanceDto } from './dto/update-server-instance.dto';
@@ -203,7 +204,7 @@ export class ServerInstancesService {
         action,
         resourceType: 'server_instance',
         resourceId,
-        details,
+        details: details as Prisma.InputJsonValue,
         ip,
       },
     });

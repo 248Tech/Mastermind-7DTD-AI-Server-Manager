@@ -69,7 +69,8 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: development
-      NEXT_PUBLIC_CONTROL_PLANE_URL: http://control-plane:3001
+      # Browser clients must call a host-reachable URL, not the Docker service name.
+      NEXT_PUBLIC_CONTROL_PLANE_URL: http://localhost:3001
     depends_on:
       - control-plane
     volumes:

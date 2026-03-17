@@ -15,7 +15,7 @@ if [ -f "package.json" ]; then
   pnpm install
 fi
 if [ -d "control-plane" ] && [ -f "control-plane/package.json" ]; then
-  (cd control-plane && pnpm install)
+  (cd control-plane && pnpm install && pnpm prisma generate)
 fi
 if [ -d "web" ] && [ -f "web/package.json" ]; then
   (cd web && pnpm install)
@@ -36,5 +36,9 @@ for f in .env.example control-plane/.env.example web/.env.example; do
 done
 
 echo ""
-echo "==> Bootstrap done. Next: make up   (or: cd infra && docker compose up -d)"
-echo "    Then open http://localhost:3000 (web) and http://localhost:3001/health (control plane)."
+echo "==> Bootstrap done."
+echo "    Option A (full Docker stack): make up-full"
+echo "      Then open http://localhost:3000 (web) and http://localhost:3001/health (control plane)."
+echo "    Option B (DB + Redis only): make up"
+echo "      Then run: cd control-plane && pnpm dev"
+echo "                cd web && pnpm dev"

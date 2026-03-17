@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 
 export interface HeartbeatMetrics {
@@ -79,7 +80,9 @@ export class HostsService {
       data: {
         lastHeartbeatAt: new Date(),
         status: 'online',
-        lastMetrics: Object.keys(metricsData).length > 0 ? metricsData : undefined,
+        lastMetrics: Object.keys(metricsData).length > 0
+          ? (metricsData as Prisma.InputJsonValue)
+          : undefined,
         ...(metrics?.agentVersion !== undefined && { agentVersion: metrics.agentVersion }),
       },
     });
