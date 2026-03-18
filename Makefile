@@ -1,8 +1,12 @@
 # Mastermind — root Makefile (simple wrappers)
-.PHONY: bootstrap setup migrate up up-dev up-prod down logs test doctor
+.PHONY: bootstrap start setup migrate up up-dev up-prod down logs test doctor
 
 bootstrap:
 	bash ./scripts/bootstrap.sh
+
+## One-command: install, build agent, start infra, migrate, launch everything
+start:
+	bash ./scripts/start.sh
 
 ## One-command first-time setup: install deps → start Docker → migrate + seed
 setup:

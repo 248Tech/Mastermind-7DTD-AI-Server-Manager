@@ -100,6 +100,36 @@ export class OrgsService {
     }));
   }
 
+  /**
+   * Update org settings. Only members can update their own org.
+   */
+  async updateOrg(
+    orgId: string,
+    userId: string,
+    data: { discordWebhookUrl?: string | null },
+  ): Promise<{ id: string; name: string; slug: string; discordWebhookUrl: string | null }> {
+    const userOrg = await this.prisma.userOrg.findUnique({
+      where: { userId_orgId: { userId, orgId } },
+    });
+    if (!userOrg) {
+      throw new ForbiddenException('Not a member of this org');
+    }
+
+    const updated = await this.prisma.org.update({
+      where: { id: orgId },
+      data: {
+        ...(data.discordWebhookUrl !== undefined && { discordWebhookUrl: data.discordWebhookUrl }),
+      },
+    });
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      slug: updated.slug,
+      discordWebhookUrl: updated.discordWebhookUrl,
+    };
+  }
+
   private async resolveRole(name: string): Promise<{ id: string; name: string }> {
     let role = await this.prisma.role.findUnique({ where: { name } });
     if (!role) {

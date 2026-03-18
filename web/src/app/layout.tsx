@@ -108,6 +108,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               })}
             </div>
 
+            {/* Setup Guide */}
+            <div style={{ padding: '0 0.75rem 0.5rem' }}>
+              <a
+                href="/hosts"
+                onClick={() => localStorage.setItem('mm_tutorial_open', '1')}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.5rem',
+                  padding: '0.5rem 0.75rem', borderRadius: 6, textDecoration: 'none',
+                  fontSize: '0.8rem', fontWeight: 600, color: '#818cf8',
+                  background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.18)',
+                  transition: 'background 0.15s',
+                }}
+              >
+                <span style={{ fontSize: '0.75rem' }}>▶</span> Setup Guide
+              </a>
+            </div>
+
             {/* Logout */}
             <div style={{ padding: '0.75rem', borderTop: '1px solid #1e1e2a' }}>
               <button

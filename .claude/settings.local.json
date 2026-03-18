@@ -5,7 +5,9 @@
       "Bash(cd:*)",
       "Bash(docker compose:*)",
       "Bash(docker run:*)",
-      "Bash(find web/app -name *.tsx)"
+      "Bash(find web/app -name *.tsx)",
+      "Bash(find . -maxdepth 2 -type d ! -path */node_modules* ! -path */.git* ! -path */dist* ! -path */.next*)",
+      "Bash(pnpm prisma:generate)"
     ]
   }
 }

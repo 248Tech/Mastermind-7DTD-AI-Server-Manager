@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Param,
   Body,
   UseGuards,
@@ -38,5 +39,16 @@ export class OrgsController {
   @UseGuards(OrgMemberGuard)
   async getOrg(@Param('orgId') orgId: string, @Req() req: RequestWithUser) {
     return this.orgsService.getOrg(orgId, req.user!.id);
+  }
+
+  /** Update org settings (e.g. discordWebhookUrl). User must be a member. */
+  @Patch(':orgId')
+  @UseGuards(OrgMemberGuard)
+  async updateOrg(
+    @Param('orgId') orgId: string,
+    @Body() body: { discordWebhookUrl?: string | null },
+    @Req() req: RequestWithUser,
+  ) {
+    return this.orgsService.updateOrg(orgId, req.user!.id, body);
   }
 }

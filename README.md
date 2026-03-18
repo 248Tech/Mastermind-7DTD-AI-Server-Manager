@@ -48,28 +48,29 @@
 ├── infra/            # Docker Compose for local dev
 ├── docs/             # Architecture, security, design docs
 ├── prompts/          # Prompt library
-├── scripts/          # bootstrap.sh, dev.sh, doctor.sh
+├── scripts/          # bootstrap.sh, start.sh, dev.sh, doctor.sh
 ├── .github/          # Issue/PR templates
-├── Makefile          # make bootstrap, up, down, logs, test
+├── Makefile          # make start, bootstrap, up, down, logs, test
 ├── pnpm-workspace.yaml
 └── README.md
 ```
 
 ---
 
-## Release 0.0.2 (March 17, 2026)
+## Release 0.0.3 (March 18, 2026)
 
 ### Highlights
 
-- New host onboarding flow with guided setup in the Hosts page, including copy-ready one-liner / Docker / manual install commands.
-- New control-plane installer endpoint: `GET /install.sh` for tokenized agent bootstrap scripts.
-- Agent now supports `MASTERMIND_*` environment variable overrides and can start without a local config file when env vars are provided.
-- Stronger auth request validation for register/login payloads.
-- Container/runtime updates for control-plane and web deployment defaults.
+- New one-line startup flow: `make start` (or `bash scripts/start.sh`) installs deps, builds agent binaries, starts infra, migrates/seeds DB, and launches control-plane + web.
+- New downloadable prebuilt agent endpoints from control-plane: `GET /agent/download/:platform`.
+- Schedules API is now implemented: list/create/update/delete under `/api/orgs/:orgId/schedules`.
+- Alerts API is now implemented: list/create/update/delete under `/api/orgs/:orgId/alerts`.
+- Org settings update endpoint added: `PATCH /api/orgs/:orgId` (including `discordWebhookUrl`).
+- Hosts page now includes a setup wizard and an agent download/build helper panel.
 
 ---
 
-## Current known features (v0.0.2)
+## Current known features (v0.0.3)
 
 ### Implemented end-to-end
 
@@ -82,18 +83,17 @@
 - Job dispatch: create/list jobs, queue-backed execution, job run status/result reporting from agents.
 - Agent polling loop: host fetches pending jobs and posts job results back.
 - Game type registry: `7dtd` and `minecraft` seeded with capabilities.
+- Schedules CRUD API + queue integration.
+- Alert rule CRUD API.
+- Org settings update API (Discord webhook supported).
 - Web UI pages:
   - Login/Register
   - Dashboard (host + recent job summaries)
   - Hosts (pair token generation, server registration)
   - Jobs (create start/stop/restart/rcon/custom jobs + view output)
-  - Settings (org/account info display)
-
-### Present in UI but backend support still in progress
-
-- Schedules management page (`/schedules`) currently shows “API coming soon” if schedule endpoints are unavailable.
-- Alert rules page (`/alerts`) currently shows “API coming soon” if alerts endpoints are unavailable.
-- Discord webhook update from settings may show “API coming soon” where org update endpoint is not exposed yet.
+  - Schedules (create/list/edit/delete schedule rules)
+  - Alerts (create/list/edit/delete alert rules)
+  - Settings (org/account + Discord webhook update)
 
 ---
 
@@ -112,28 +112,9 @@
 git clone https://github.com/248Tech/Mastermind-7DTD-AI-Server-Manager.git
 cd Mastermind-7DTD-AI-Server-Manager
 
-# 1. Install tools check (optional)
-./scripts/doctor.sh
-
-# 2. Bootstrap: install deps, copy .env files
-make bootstrap
-# or: ./scripts/bootstrap.sh
-
-# 3. Start Postgres + Redis (required for control plane)
-make up
-# or: cd infra && docker compose up -d
-# (Or start full stack in Docker: make up-full)
-#   control-plane container auto-runs prisma db push + seed on startup.
-
-# 4. Initialize schema + seed (first time only)
-cd control-plane
-pnpm prisma db push
-pnpm prisma:seed
-cd ..
-
-# 5. Start control plane and web (separate terminals)
-cd control-plane && pnpm dev    # → http://localhost:3001
-cd web && pnpm dev              # → http://localhost:3000
+# Recommended one-line start (v0.0.3)
+make start
+# or: bash scripts/start.sh
 ```
 
 Open **http://localhost:3000/login** and sign in with the seeded account:
@@ -142,6 +123,10 @@ Open **http://localhost:3000/login** and sign in with the seeded account:
 - `changeme`
 
 Health check: **http://localhost:3001/health**.
+
+The `make start` command handles dependency install, agent binary builds, Postgres/Redis startup, Prisma push/seed, and starts both app services.
+
+Detailed setup options (full Docker, local dev, API reference): see **[QUICKSTART.md](QUICKSTART.md)**.
 
 ---
 
@@ -163,16 +148,14 @@ Copy `.env.example` to `.env` (and `control-plane/.env.example` to `control-plan
 
 ## First-run walkthrough
 
-1. **Start infra:** `make up` (Postgres + Redis), or `make up-full` (Postgres + Redis + control-plane + web in Docker).
-2. **Initialize schema + seed:** `cd control-plane && pnpm prisma db push && pnpm prisma:seed`.
-3. **Start services:** `cd control-plane && pnpm dev`, then `cd web && pnpm dev`.
-4. **Login:** open `http://localhost:3000/login` and sign in with seeded admin credentials.
-5. **Pair a host:** in **Hosts**, click **Pair New Host**, set host name / control-plane URL, and generate a token.
-6. **Start agent (recommended):** run the generated one-liner from the Hosts page:
+1. **Run one command:** `make start` (or `bash scripts/start.sh`).
+2. **Login:** open `http://localhost:3000/login` and sign in with seeded admin credentials.
+3. **Pair a host:** in **Hosts**, click **Pair New Host**, set host name / control-plane URL, and generate a token.
+4. **Start agent (recommended):** run the generated one-liner from the Hosts page:
    - `curl -sSL "http://<control-plane>:3001/install.sh?token=<token>&url=http://<control-plane>:3001&name=<host-name>" | sudo bash`
-7. **Manual fallback:** in `agent/`, copy `config.yaml.example` to `config.yaml`, set `control_plane_url` + `pairing_token`, then run `go run .`
-8. **Register a server instance:** in **Hosts**, use the Register Server form (game type `7dtd` or `minecraft`).
-9. **Run jobs:** in **Jobs**, create `start` / `stop` / `restart` / `rcon` / `custom` jobs and monitor status/output.
+5. **Manual fallback:** in `agent/`, copy `config.yaml.example` to `config.yaml`, set `control_plane_url` + `pairing_token`, then run `go run .`
+6. **Register a server instance:** in **Hosts**, use the Register Server form (game type `7dtd` or `minecraft`).
+7. **Run jobs:** in **Jobs**, create `start` / `stop` / `restart` / `rcon` / `custom` jobs and monitor status/output.
 
 ---
 

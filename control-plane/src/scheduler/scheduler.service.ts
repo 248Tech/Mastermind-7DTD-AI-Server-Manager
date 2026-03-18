@@ -1,5 +1,6 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { Queue, Worker, Job } from 'bullmq';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { getNextCronRun, clampToExecutionWindow } from './cron-next';
 import type { ScheduleJobData } from './scheduler.types';
@@ -182,6 +183,130 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         failureCount: { increment: 1 },
       },
     });
+  }
+
+  // ─── CRUD ──────────────────────────────────────────────────────────────────
+
+  async listSchedules(orgId: string) {
+    const rows = await this.prisma.schedule.findMany({
+      where: { orgId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((s) => this.toDto(s));
+  }
+
+  async createSchedule(
+    orgId: string,
+    userId: string,
+    data: {
+      name: string;
+      serverInstanceId: string;
+      cronExpression: string;
+      jobType: string;
+      payload?: unknown;
+      enabled?: boolean;
+    },
+  ) {
+    const now = new Date();
+    let nextRunAt: Date | null = null;
+    try {
+      nextRunAt = getNextCronRun(data.cronExpression, now);
+    } catch {
+      throw new Error(`Invalid cron expression: ${data.cronExpression}`);
+    }
+
+    const schedule = await this.prisma.schedule.create({
+      data: {
+        orgId,
+        serverInstanceId: data.serverInstanceId,
+        name: data.name,
+        cronExpression: data.cronExpression,
+        jobType: data.jobType,
+        payload: data.payload !== undefined ? (data.payload as Prisma.InputJsonValue) : undefined,
+        enabled: data.enabled ?? true,
+        nextRunAt,
+        createdById: userId,
+      },
+    });
+
+    if (schedule.enabled && nextRunAt && this.schedulerQueue) {
+      const delayMs = Math.max(0, nextRunAt.getTime() - now.getTime());
+      await this.schedulerQueue.add(
+        'schedule_fire',
+        { scheduleId: schedule.id },
+        { jobId: `schedule:${schedule.id}:${nextRunAt.getTime()}`, delay: delayMs },
+      );
+    }
+
+    return this.toDto(schedule);
+  }
+
+  async updateSchedule(
+    orgId: string,
+    scheduleId: string,
+    data: { enabled?: boolean; name?: string; cronExpression?: string; jobType?: string },
+  ) {
+    const existing = await this.prisma.schedule.findFirst({ where: { id: scheduleId, orgId } });
+    if (!existing) throw new Error('Schedule not found');
+
+    const cronExpression = data.cronExpression ?? existing.cronExpression;
+    let nextRunAt = existing.nextRunAt;
+    if (data.cronExpression) {
+      try {
+        nextRunAt = getNextCronRun(cronExpression, new Date());
+      } catch {
+        throw new Error(`Invalid cron expression: ${cronExpression}`);
+      }
+    }
+
+    const updated = await this.prisma.schedule.update({
+      where: { id: scheduleId },
+      data: {
+        ...(data.name !== undefined && { name: data.name }),
+        ...(data.cronExpression !== undefined && { cronExpression, nextRunAt }),
+        ...(data.jobType !== undefined && { jobType: data.jobType }),
+        ...(data.enabled !== undefined && { enabled: data.enabled }),
+      },
+    });
+
+    // Re-enqueue if enabled (BullMQ dedupes by jobId)
+    if (updated.enabled && updated.nextRunAt && this.schedulerQueue) {
+      const delayMs = Math.max(0, updated.nextRunAt.getTime() - Date.now());
+      await this.schedulerQueue.add(
+        'schedule_fire',
+        { scheduleId: updated.id },
+        { jobId: `schedule:${updated.id}:${updated.nextRunAt.getTime()}`, delay: delayMs },
+      );
+    }
+
+    return this.toDto(updated);
+  }
+
+  async deleteSchedule(orgId: string, scheduleId: string): Promise<void> {
+    const existing = await this.prisma.schedule.findFirst({ where: { id: scheduleId, orgId } });
+    if (!existing) throw new Error('Schedule not found');
+    await this.prisma.schedule.delete({ where: { id: scheduleId } });
+  }
+
+  private toDto(s: {
+    id: string; orgId: string; serverInstanceId: string; name: string;
+    cronExpression: string; jobType: string; enabled: boolean;
+    nextRunAt: Date | null; lastRunAt: Date | null; lastRunStatus: string | null;
+    createdAt: Date; updatedAt: Date;
+  }) {
+    return {
+      id: s.id,
+      orgId: s.orgId,
+      serverInstanceId: s.serverInstanceId,
+      name: s.name,
+      cronExpression: s.cronExpression,
+      jobType: s.jobType,
+      enabled: s.enabled,
+      nextRunAt: s.nextRunAt?.toISOString() ?? null,
+      lastRunAt: s.lastRunAt?.toISOString() ?? null,
+      lastRunStatus: s.lastRunStatus,
+      createdAt: s.createdAt.toISOString(),
+    };
   }
 
   private getOrgQueue(orgId: string): Queue<QueueJobData> {
