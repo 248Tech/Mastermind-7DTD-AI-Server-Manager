@@ -45,6 +45,8 @@ type Job struct {
 	Type             string                 `json:"type"`
 	ServerInstanceID string                 `json:"server_instance_id,omitempty"`
 	Payload          map[string]interface{} `json:"payload,omitempty"`
+	// ScheduleID is set when this job was dispatched by the scheduler.
+	ScheduleID       string                 `json:"schedule_id,omitempty"`
 }
 
 // JobResultPayload is sent when submitting a job result.

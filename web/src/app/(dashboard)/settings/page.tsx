@@ -55,7 +55,6 @@ export default function SettingsPage() {
   const [webhookLoading, setWebhookLoading] = useState(false);
   const [webhookError, setWebhookError] = useState('');
   const [webhookSuccess, setWebhookSuccess] = useState('');
-  const [webhookApiNotice, setWebhookApiNotice] = useState('');
 
   useEffect(() => {
     if (!orgId) return;
@@ -70,17 +69,12 @@ export default function SettingsPage() {
   async function handleUpdateWebhook(e: React.FormEvent) {
     e.preventDefault();
     if (!orgId) return;
-    setWebhookLoading(true); setWebhookError(''); setWebhookSuccess(''); setWebhookApiNotice('');
+    setWebhookLoading(true); setWebhookError(''); setWebhookSuccess('');
     try {
       await api.patch(`/api/orgs/${orgId}`, { discordWebhookUrl: webhookUrl });
       setWebhookSuccess('Discord webhook updated successfully.');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to update webhook';
-      if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
-        setWebhookApiNotice('Org update API coming soon — this feature is not yet available on the server.');
-      } else {
-        setWebhookError(msg);
-      }
+      setWebhookError(err instanceof Error ? err.message : 'Failed to update webhook');
     } finally {
       setWebhookLoading(false);
     }
@@ -123,11 +117,6 @@ export default function SettingsPage() {
         <p style={{ margin: '0 0 1.25rem', fontSize: '0.8rem', color: '#64748b' }}>
           Set a Discord webhook URL to receive notifications for alerts and important events.
         </p>
-        {webhookApiNotice && (
-          <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: '#fbbf24', padding: '0.625rem 0.875rem', borderRadius: 7, marginBottom: '0.875rem', fontSize: '0.8rem' }}>
-            {webhookApiNotice}
-          </div>
-        )}
         <form onSubmit={handleUpdateWebhook} style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
           <div>
             <label style={labelStyle}>Webhook URL</label>

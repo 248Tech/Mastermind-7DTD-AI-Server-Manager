@@ -1,4 +1,13 @@
-const CP = () => process.env.NEXT_PUBLIC_CONTROL_PLANE_URL || 'http://localhost:3001';
+const CP = (): string => {
+  const url = process.env.NEXT_PUBLIC_CONTROL_PLANE_URL;
+  if (!url) {
+    if (typeof window !== 'undefined' && process.env.NODE_ENV === 'production') {
+      console.warn('[mastermind] NEXT_PUBLIC_CONTROL_PLANE_URL is not set — falling back to http://localhost:3001');
+    }
+    return 'http://localhost:3001';
+  }
+  return url;
+};
 
 function getToken(): string | null {
   if (typeof window === 'undefined') return null;

@@ -1,6 +1,6 @@
 {
   "name": "mastermind-web",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,7 +8,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "next start",
     "lint": "next lint",
-    "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\""
+    "lint:ci": "next lint --max-warnings 0",
+    "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "check-env": "node -e \"if (!process.env.NEXT_PUBLIC_CONTROL_PLANE_URL) { console.error('NEXT_PUBLIC_CONTROL_PLANE_URL is not set'); process.exit(1); } console.log('env ok');\""
   },
   "dependencies": {
     "next": "^14.0.0",

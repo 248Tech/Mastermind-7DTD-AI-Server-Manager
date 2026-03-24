@@ -3,7 +3,7 @@ import * as path from 'path';
 import { Controller, Get, NotFoundException, Param, Query, Res } from '@nestjs/common';
 import { Response } from 'express';
 
-const pkg = { name: 'mastermind-control-plane', version: '0.0.3' };
+const pkg = { name: 'mastermind-control-plane', version: '0.0.4' };
 
 @Controller()
 export class HealthController {

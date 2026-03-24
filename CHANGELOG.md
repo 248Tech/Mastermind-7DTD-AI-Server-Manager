@@ -41,6 +41,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Host onboarding docs now align with available schedules/alerts/org settings APIs.
 
+## [0.0.4] - 2026-03-24
+
+### Added
+
+- A Windows bootstrap + start flow (`scripts/setup.ps1`, `scripts/start.ps1`) that mirrors the Linux one-command experience and builds Go binaries.
+- `scripts/doctor.sh` now validates Node 20+, pnpm 9+, Go 1.22+, Docker Compose v2 and reports Postgres/Redis reachability.
+- Scheduler/fire-and-forget jobs now annotate `scheduleId` from the control plane through `QueueJobData`, `client.Job`, and the agent executor.
+- Alerts, schedules, and settings dashboards drop the “API coming soon” notices and use the backend job/alert enum values.
+- `web/package.json` gains `lint:ci` and `check-env` helpers for CI/production validation.
+
+### Changed
+
+- Control-plane package/health version bump to `0.0.4`; README now reflects the latest release notes.
+- Alert rule creation defaults to `SERVER_DOWN` and scheduler job form defaults to `SERVER_START`.
+
 ## [0.0.1] - 2026-03-11
 
 ### Added

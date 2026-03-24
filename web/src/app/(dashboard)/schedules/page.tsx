@@ -83,7 +83,7 @@ function formatDateTime(dateStr: string | null): string {
   return new Date(dateStr).toLocaleString();
 }
 
-const JOB_TYPES = ['start', 'stop', 'restart', 'rcon', 'custom'];
+const JOB_TYPES = ['SERVER_START', 'SERVER_STOP', 'SERVER_RESTART'];
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function SchedulesPage() {
@@ -91,10 +91,9 @@ export default function SchedulesPage() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [servers, setServers] = useState<ServerInstance[]>([]);
   const [error, setError] = useState('');
-  const [apiNotice, setApiNotice] = useState('');
 
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: '', serverInstanceId: '', cronExpression: '', jobType: 'start', enabled: true });
+  const [form, setForm] = useState({ name: '', serverInstanceId: '', cronExpression: '', jobType: 'SERVER_START', enabled: true });
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -115,23 +114,18 @@ export default function SchedulesPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!orgId) return;
-    setCreateLoading(true); setCreateError(''); setApiNotice('');
+    setCreateLoading(true); setCreateError('');
     try {
       await api.post<Schedule>(`/api/orgs/${orgId}/schedules`, {
         name: form.name, serverInstanceId: form.serverInstanceId || undefined,
         cronExpression: form.cronExpression, jobType: form.jobType, enabled: form.enabled,
       });
       setShowCreate(false);
-      setForm({ name: '', serverInstanceId: '', cronExpression: '', jobType: 'start', enabled: true });
+      setForm({ name: '', serverInstanceId: '', cronExpression: '', jobType: 'SERVER_START', enabled: true });
       const updated = await fetchSchedules();
       setSchedules(updated);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to create schedule';
-      if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
-        setApiNotice('Schedules API coming soon — this feature is not yet available on the server.');
-      } else {
-        setCreateError(msg);
-      }
+      setCreateError(err instanceof Error ? err.message : 'Failed to create schedule');
     } finally {
       setCreateLoading(false);
     }
@@ -177,16 +171,10 @@ export default function SchedulesPage() {
           {error}
         </div>
       )}
-      {apiNotice && (
-        <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: '#fbbf24', padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1.25rem', fontSize: '0.875rem' }}>
-          {apiNotice}
-        </div>
-      )}
-
       <div style={card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>Scheduled Jobs</h2>
-          <button style={btnPrimary} onClick={() => { setShowCreate(!showCreate); setCreateError(''); setApiNotice(''); }}>
+          <button style={btnPrimary} onClick={() => { setShowCreate(!showCreate); setCreateError(''); }}>
             {showCreate ? 'Cancel' : '+ Add Schedule'}
           </button>
         </div>

@@ -12,6 +12,8 @@ type Job struct {
 	Type             string                 `json:"type"`
 	ServerInstanceID string                 `json:"server_instance_id,omitempty"`
 	Payload          map[string]interface{} `json:"payload,omitempty"`
+	// ScheduleID is non-empty when this job was dispatched by the scheduler.
+	ScheduleID       string                 `json:"schedule_id,omitempty"`
 }
 
 // JobResult is returned after executing a job.

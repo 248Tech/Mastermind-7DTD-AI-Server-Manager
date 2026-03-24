@@ -57,20 +57,18 @@
 
 ---
 
-## Release 0.0.3 (March 18, 2026)
+## Release 0.0.4 (March 24, 2026)
 
 ### Highlights
 
-- New one-line startup flow: `make start` (or `bash scripts/start.sh`) installs deps, builds agent binaries, starts infra, migrates/seeds DB, and launches control-plane + web.
-- New downloadable prebuilt agent endpoints from control-plane: `GET /agent/download/:platform`.
-- Schedules API is now implemented: list/create/update/delete under `/api/orgs/:orgId/schedules`.
-- Alerts API is now implemented: list/create/update/delete under `/api/orgs/:orgId/alerts`.
-- Org settings update endpoint added: `PATCH /api/orgs/:orgId` (including `discordWebhookUrl`).
-- Hosts page now includes a setup wizard and an agent download/build helper panel.
+- Windows onboarding now matches the Linux flow (`scripts/setup.ps1` + `scripts/start.ps1`) with Go cross-compiles and infra/start automation.
+- Alerts, schedules, and settings dashboards no longer show “API coming soon” banners after the backend CRUD work went live and the pages now use the `SERVER_*` job/alert types.
+- `scripts/doctor.sh` enforces Node 20+, pnpm 9+, Go 1.22+, Docker Compose v2 plus Postgres/Redis reachability hints; the agent/scheduler propagate `scheduleId` through `QueueJobData`.
+- Control-plane health endpoint and packages are versioned `0.0.4`, and `web/package.json` now exposes `lint:ci` + `check-env` helpers for production builds.
 
 ---
 
-## Current known features (v0.0.3)
+## Current known features (v0.0.4)
 
 ### Implemented end-to-end
 
@@ -91,8 +89,8 @@
   - Dashboard (host + recent job summaries)
   - Hosts (pair token generation, server registration)
   - Jobs (create start/stop/restart/rcon/custom jobs + view output)
-  - Schedules (create/list/edit/delete schedule rules)
-  - Alerts (create/list/edit/delete alert rules)
+  - Schedules (create/list/edit/delete schedule rules, job types aligned to SERVER_START/STOP/RESTART)
+  - Alerts (create/list/edit/delete alert rules annotated with SERVER_DOWN / SERVER_RESTART / AGENT_OFFLINE)
   - Settings (org/account + Discord webhook update)
 
 ---

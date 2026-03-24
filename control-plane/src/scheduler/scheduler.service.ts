@@ -125,6 +125,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
           serverInstanceId,
           type: schedule.jobType,
           payload: schedule.payload ?? {},
+          scheduleId: schedule.id,
         },
         { jobId: run.id, attempts, backoff: { type: 'fixed' as const, delay: backoff } },
       );

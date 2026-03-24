@@ -85,10 +85,9 @@ export default function AlertsPage() {
   const orgId = getStoredOrgId();
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [error, setError] = useState('');
-  const [apiNotice, setApiNotice] = useState('');
 
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: '', type: 'heartbeat_missed', webhookUrl: '', enabled: true });
+  const [form, setForm] = useState({ name: '', type: 'SERVER_DOWN', webhookUrl: '', enabled: true });
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -103,7 +102,7 @@ export default function AlertsPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!orgId) return;
-    setCreateLoading(true); setCreateError(''); setApiNotice('');
+    setCreateLoading(true); setCreateError('');
     try {
       await api.post<AlertRule>(`/api/orgs/${orgId}/alerts`, {
         name: form.name,
@@ -112,16 +111,11 @@ export default function AlertsPage() {
         enabled: form.enabled,
       });
       setShowCreate(false);
-      setForm({ name: '', type: 'heartbeat_missed', webhookUrl: '', enabled: true });
+      setForm({ name: '', type: 'SERVER_DOWN', webhookUrl: '', enabled: true });
       const updated = await fetchRules();
       setRules(updated);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to create alert rule';
-      if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
-        setApiNotice('Alert Rules API coming soon — this feature is not yet available on the server.');
-      } else {
-        setCreateError(msg);
-      }
+      setCreateError(err instanceof Error ? err.message : 'Failed to create alert rule');
     } finally {
       setCreateLoading(false);
     }
@@ -167,16 +161,10 @@ export default function AlertsPage() {
           {error}
         </div>
       )}
-      {apiNotice && (
-        <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: '#fbbf24', padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1.25rem', fontSize: '0.875rem' }}>
-          {apiNotice}
-        </div>
-      )}
-
       <div style={card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>Alert Rules</h2>
-          <button style={btnPrimary} onClick={() => { setShowCreate(!showCreate); setCreateError(''); setApiNotice(''); }}>
+          <button style={btnPrimary} onClick={() => { setShowCreate(!showCreate); setCreateError(''); }}>
             {showCreate ? 'Cancel' : '+ Add Alert Rule'}
           </button>
         </div>
@@ -192,11 +180,10 @@ export default function AlertsPage() {
               <div>
                 <label style={labelStyle}>Alert Type *</label>
                 <select style={inputStyle} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} onFocus={onFocus} onBlur={onBlur}>
-                  <option value="heartbeat_missed">Heartbeat Missed (host offline)</option>
+                  <option value="SERVER_DOWN">Server Down</option>
+                  <option value="SERVER_RESTART">Server Restart</option>
+                  <option value="AGENT_OFFLINE">Agent Offline</option>
                 </select>
-                <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.3rem' }}>
-                  Triggers when a host has not sent a heartbeat for an extended period.
-                </div>
               </div>
               <div>
                 <label style={labelStyle}>Discord Webhook URL *</label>

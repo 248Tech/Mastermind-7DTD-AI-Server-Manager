@@ -10,6 +10,8 @@ export interface QueueJobData {
   serverInstanceId?: string;
   type: string;
   payload: unknown;
+  /** Set when this job was dispatched by the scheduler. */
+  scheduleId?: string;
 }
 
 const REDIS_CONNECTION = {

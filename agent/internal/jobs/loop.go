@@ -39,6 +39,7 @@ func runOne(ctx context.Context, c client.Client, hostID string, j client.Job, e
 		Type:             j.Type,
 		ServerInstanceID: j.ServerInstanceID,
 		Payload:          j.Payload,
+		ScheduleID:       j.ScheduleID,
 	}
 	result, err := exec.Execute(ctx, job)
 	if err != nil {
