@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsObject, IsOptional, ValidateNested } from 'class-validator';
+import { IsString, IsObject, IsOptional, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 /** Host metadata sent by agent at pairing (and heartbeat). */
@@ -34,13 +34,25 @@ export class HostMetadataDto {
  * No auth; token is the credential.
  */
 export class PairRequestDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  pairingToken: string;
+  pairingToken?: string;
+
+  /** Legacy snake_case alias accepted for backward compatibility. */
+  @IsOptional()
+  @IsString()
+  pairing_token?: string;
 
   @IsOptional()
   @IsObject()
   @ValidateNested()
   @Type(() => HostMetadataDto)
   hostMetadata?: HostMetadataDto;
+
+  /** Legacy snake_case alias accepted for backward compatibility. */
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => HostMetadataDto)
+  host_metadata?: HostMetadataDto;
 }

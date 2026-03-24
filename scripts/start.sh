@@ -51,7 +51,7 @@ find_port() {
 
 # ─── 1. Doctor check ──────────────────────────────────────────────────────────
 info "Checking required tools..."
-"$SCRIPT_DIR/doctor.sh" || die "Install missing tools and re-run."
+"$SCRIPT_DIR/doctor.sh" --require-docker-daemon || die "Install missing tools/start Docker and re-run."
 
 # ─── 2. Install JS dependencies ───────────────────────────────────────────────
 info "Installing Node dependencies..."
@@ -75,7 +75,7 @@ if [ $SKIP_BUILD -eq 0 ]; then
   # Always build native binary first (used by local install.sh)
   (
     cd agent
-    CGO_ENABLED=0 go build -ldflags="-s -w" -o "$AGENTS_OUT/mastermind-agent-${HOST_OS}-${HOST_ARCH}" ./...
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o "$AGENTS_OUT/mastermind-agent-${HOST_OS}-${HOST_ARCH}" .
   ) && ok "Built native agent (${HOST_OS}/${HOST_ARCH})" || warn "Native agent build failed"
 
   # Cross-compile for every target; failure is non-fatal
@@ -95,7 +95,7 @@ if [ $SKIP_BUILD -eq 0 ]; then
     (
       cd agent
       CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" \
-        go build -ldflags="-s -w" -o "$AGENTS_OUT/$outfile" ./...
+        go build -ldflags="-s -w" -o "$AGENTS_OUT/$outfile" .
     ) && ok "Built $outfile" \
       || warn "Cross-compile skipped for ${target_os}/${target_arch} (non-fatal)"
   done
@@ -145,6 +145,9 @@ fi
 # ─── 8. Find available ports ──────────────────────────────────────────────────
 CP_PORT=$(find_port 3001)
 WEB_PORT=$(find_port 3000)
+if [ "$WEB_PORT" = "$CP_PORT" ]; then
+  WEB_PORT=$(find_port $((CP_PORT + 1)))
+fi
 [ "$CP_PORT" != "3001" ] && warn "Port 3001 in use — control plane will use :$CP_PORT"
 [ "$WEB_PORT" != "3000" ] && warn "Port 3000 in use — web UI will use :$WEB_PORT"
 

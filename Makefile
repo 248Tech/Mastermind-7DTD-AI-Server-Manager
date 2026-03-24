@@ -1,14 +1,29 @@
 # Mastermind — root Makefile (simple wrappers)
 .PHONY: bootstrap start setup migrate up up-dev up-prod down logs test doctor
 
+ifeq ($(OS),Windows_NT)
+BOOTSTRAP_CMD = powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\bootstrap.ps1
+START_CMD = powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\start.ps1
+DOCTOR_CMD = powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\doctor.ps1
+SETUP_CMD = powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\setup.ps1
+else
+BOOTSTRAP_CMD = bash ./scripts/bootstrap.sh
+START_CMD = bash ./scripts/start.sh
+DOCTOR_CMD = bash ./scripts/doctor.sh
+endif
+
 bootstrap:
-	bash ./scripts/bootstrap.sh
+	$(BOOTSTRAP_CMD)
 
 ## One-command: install, build agent, start infra, migrate, launch everything
 start:
-	bash ./scripts/start.sh
+	$(START_CMD)
 
 ## One-command first-time setup: install deps → start Docker → migrate + seed
+ifeq ($(OS),Windows_NT)
+setup:
+	$(SETUP_CMD)
+else
 setup:
 	bash ./scripts/bootstrap.sh
 	cd infra && docker compose up -d postgres redis
@@ -21,6 +36,7 @@ setup:
 	@echo "  Terminal 2: cd web && pnpm dev"
 	@echo "  Then open: http://localhost:3000"
 	@echo "  Login:      admin@mastermind.local / changeme"
+endif
 
 ## Run Prisma migration + seed (requires Postgres to be running)
 migrate:
@@ -50,4 +66,4 @@ test:
 	cd agent && go test ./... 2>/dev/null || true
 
 doctor:
-	bash ./scripts/doctor.sh
+	$(DOCTOR_CMD)

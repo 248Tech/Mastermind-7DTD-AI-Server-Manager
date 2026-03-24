@@ -65,7 +65,12 @@ export class PairingService {
    * Agent: validate token and complete pairing. Creates host, issues signed agent key, marks token used, audits.
    */
   async pair(dto: PairRequestDto, clientIp?: string): Promise<{ hostId: string; agentKey: string }> {
-    const tokenHash = this.hashToken(dto.pairingToken.trim());
+    const pairingToken = dto.pairingToken?.trim();
+    if (!pairingToken) {
+      throw new BadRequestException('pairingToken is required');
+    }
+
+    const tokenHash = this.hashToken(pairingToken);
 
     const tokenRecord = await this.prisma.pairingToken.findFirst({
       where: { tokenHash },

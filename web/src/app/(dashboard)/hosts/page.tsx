@@ -87,12 +87,23 @@ function onBlur(e: React.FocusEvent<HTMLInputElement | HTMLSelectElement>) {
 }
 
 // ─── Agent download panel ─────────────────────────────────────────────────────
-function AgentDownloadPanel() {
+function AgentDownloadPanel({
+  pairingToken = '',
+  agentCpUrl,
+  hostName = 'my-server',
+}: {
+  pairingToken?: string;
+  agentCpUrl?: string;
+  hostName?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [targetPlatform, setTargetPlatform] = useState('linux-amd64');
 
-  const cpUrl = (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_CONTROL_PLANE_URL)
-    || 'http://localhost:3001';
+  const cpUrl = (
+    agentCpUrl || (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_CONTROL_PLANE_URL)
+      || 'http://localhost:3001'
+  ).replace(/\/$/, '');
 
   function copy(text: string, key: string) {
     navigator.clipboard.writeText(text);
@@ -106,16 +117,37 @@ function AgentDownloadPanel() {
     color: '#818cf8', whiteSpace: 'pre', overflowX: 'auto', margin: 0,
   };
 
-  const PLATFORMS: { label: string; platform: string; os: string }[] = [
-    { label: 'Linux x64',           platform: 'linux-amd64',   os: 'linux' },
-    { label: 'Linux ARM64',          platform: 'linux-arm64',   os: 'linux' },
-    { label: 'macOS Intel',          platform: 'darwin-amd64',  os: 'darwin' },
-    { label: 'macOS Apple Silicon',  platform: 'darwin-arm64',  os: 'darwin' },
-    { label: 'Windows x64',          platform: 'windows-amd64', os: 'windows' },
+  const PLATFORMS: { label: string; platform: string; fileName: string; binaryName: string; os: 'unix' | 'windows' }[] = [
+    { label: 'Linux x64', platform: 'linux-amd64', fileName: 'mastermind-agent-linux-amd64', binaryName: 'mastermind-agent', os: 'unix' },
+    { label: 'Linux ARM64', platform: 'linux-arm64', fileName: 'mastermind-agent-linux-arm64', binaryName: 'mastermind-agent', os: 'unix' },
+    { label: 'macOS Intel', platform: 'darwin-amd64', fileName: 'mastermind-agent-darwin-amd64', binaryName: 'mastermind-agent', os: 'unix' },
+    { label: 'macOS Apple Silicon', platform: 'darwin-arm64', fileName: 'mastermind-agent-darwin-arm64', binaryName: 'mastermind-agent', os: 'unix' },
+    { label: 'Windows x64', platform: 'windows-amd64', fileName: 'mastermind-agent-windows-amd64.exe', binaryName: 'mastermind-agent.exe', os: 'windows' },
   ];
 
-  const buildLinux = `# Requires Go 1.22+ — https://go.dev/dl/\ngit clone https://github.com/mastermind-manager/agent\ncd agent\ngo build -o mastermind-agent -ldflags="-s -w" .\n\n# Verify\n./mastermind-agent --version`;
-  const buildDocker = `git clone https://github.com/mastermind-manager/agent\ncd agent\ndocker build -t mastermind-agent .`;
+  const selected = PLATFORMS.find((p) => p.platform === targetPlatform) || PLATFORMS[0];
+  const downloadBinaryUrl = `${cpUrl}/agent/download/${selected.platform}`;
+  const downloadZipUrl = `${cpUrl}/agent/download/${selected.platform}/zip`;
+
+  const buildDistUnix = `# On the control-plane machine (repo root)\nmake bootstrap\n\n# Verify binaries available for download\nls -lah control-plane/public/agents`;
+  const buildDistWindows = `# On the control-plane machine (PowerShell, repo root)\nmake bootstrap\n# Equivalent: powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\bootstrap.ps1\n\nGet-ChildItem .\\control-plane\\public\\agents`;
+  const buildSingleBinary = `# Build one local binary from source (advanced)\ncd agent\ngo build -o mastermind-agent .`;
+
+  const pullBinaryCmd = selected.os === 'windows'
+    ? `Invoke-WebRequest "${downloadBinaryUrl}" -OutFile ${selected.binaryName}`
+    : `curl -fL "${downloadBinaryUrl}" -o ${selected.binaryName}\nchmod +x ${selected.binaryName}`;
+
+  const pullZipCmd = selected.os === 'windows'
+    ? `Invoke-WebRequest "${downloadZipUrl}" -OutFile mastermind-agent-${selected.platform}.zip\nExpand-Archive .\\mastermind-agent-${selected.platform}.zip -DestinationPath . -Force`
+    : `curl -fL "${downloadZipUrl}" -o mastermind-agent-${selected.platform}.zip\nunzip -o mastermind-agent-${selected.platform}.zip\nchmod +x ${selected.binaryName}`;
+
+  const scpCmd = selected.os === 'windows'
+    ? `scp ./control-plane/public/agents/${selected.fileName} Administrator@your-host:C:/Mastermind/${selected.binaryName}`
+    : `scp ./control-plane/public/agents/${selected.fileName} user@your-host:/tmp/${selected.binaryName}\nssh user@your-host "chmod +x /tmp/${selected.binaryName} && sudo mv /tmp/${selected.binaryName} /usr/local/bin/${selected.binaryName}"`;
+
+  const rsyncCmd = selected.os === 'windows'
+    ? `rsync -avP ./control-plane/public/agents/${selected.fileName} Administrator@your-host:/cygdrive/c/Mastermind/${selected.binaryName}`
+    : `rsync -avP ./control-plane/public/agents/${selected.fileName} user@your-host:/tmp/${selected.binaryName}\nssh user@your-host "chmod +x /tmp/${selected.binaryName} && sudo mv /tmp/${selected.binaryName} /usr/local/bin/${selected.binaryName}"`;
 
   return (
     <div style={{ marginBottom: '1.25rem', background: '#0d0d14', border: '1px solid #1e1e2a', borderRadius: 8, overflow: 'hidden' }}>
@@ -133,62 +165,155 @@ function AgentDownloadPanel() {
       {open && (
         <div style={{ padding: '0 1rem 1rem', borderTop: '1px solid #1e1e2a' }}>
           <p style={{ margin: '0.875rem 0 1rem', fontSize: '0.84rem', color: '#94a3b8', lineHeight: 1.65 }}>
-            The agent is a single static Go binary (~5 MB) with no runtime dependencies.
-            Download a pre-built binary below, or build from source.
+            Download pre-built binaries directly from this control plane, including ZIP packages.
+            Then install via one-line script, or transfer with scp/rsync.
           </p>
 
           {/* ── Pre-built downloads ── */}
           <div style={{ marginBottom: '1rem' }}>
             <div style={{ fontSize: '0.73rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
-              Pre-built binaries
+              Pre-built downloads
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div style={{ display: 'grid', gap: '0.5rem' }}>
               {PLATFORMS.map(({ label, platform }) => (
-                <a
-                  key={platform}
-                  href={`${cpUrl}/agent/download/${platform}`}
-                  download
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
-                    padding: '0.4rem 0.875rem', background: 'rgba(99,102,241,0.12)',
-                    border: '1px solid rgba(99,102,241,0.25)', borderRadius: 7,
-                    color: '#818cf8', fontSize: '0.8rem', fontWeight: 600,
-                    textDecoration: 'none', cursor: 'pointer',
-                    transition: 'background 0.15s',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(99,102,241,0.22)')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'rgba(99,102,241,0.12)')}
-                >
-                  ↓ {label}
-                </a>
+                <div key={platform} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', background: '#0a0a0f', border: '1px solid #1e1e2a', borderRadius: 7, padding: '0.5rem 0.625rem' }}>
+                  <span style={{ fontSize: '0.82rem', color: '#e2e8f0', fontWeight: 600 }}>{label}</span>
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                    <a
+                      href={`${cpUrl}/agent/download/${platform}`}
+                      download
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                        padding: '0.35rem 0.625rem', background: 'rgba(99,102,241,0.12)',
+                        border: '1px solid rgba(99,102,241,0.25)', borderRadius: 7,
+                        color: '#818cf8', fontSize: '0.78rem', fontWeight: 600,
+                        textDecoration: 'none', cursor: 'pointer',
+                      }}
+                    >
+                      Download Binary
+                    </a>
+                    <a
+                      href={`${cpUrl}/agent/download/${platform}/zip`}
+                      download
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                        padding: '0.35rem 0.625rem', background: 'rgba(16,185,129,0.12)',
+                        border: '1px solid rgba(16,185,129,0.25)', borderRadius: 7,
+                        color: '#34d399', fontSize: '0.78rem', fontWeight: 600,
+                        textDecoration: 'none', cursor: 'pointer',
+                      }}
+                    >
+                      Download ZIP
+                    </a>
+                    <a
+                      href={`${cpUrl}/agent/download/${platform}/bundle.zip?token=${encodeURIComponent(pairingToken)}&url=${encodeURIComponent(cpUrl)}&name=${encodeURIComponent(hostName)}`}
+                      download
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                        padding: '0.35rem 0.625rem', background: 'rgba(245,158,11,0.12)',
+                        border: '1px solid rgba(245,158,11,0.25)', borderRadius: 7,
+                        color: '#f59e0b', fontSize: '0.78rem', fontWeight: 600,
+                        textDecoration: 'none', cursor: 'pointer',
+                      }}
+                    >
+                      Full Bundle ZIP
+                    </a>
+                  </div>
+                </div>
               ))}
             </div>
             <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#475569' }}>
-              Binaries are built from source on this machine during setup. Run{' '}
-              <code style={{ color: '#818cf8' }}>bash scripts/start.sh</code> to (re)build them.
+              Full bundle ZIP includes binary, sample config.yaml, systemd unit, and quick install README.
             </div>
           </div>
 
-          {/* ── Build from source ── */}
+          {/* ── Build distributable binaries ── */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.875rem', marginBottom: '0.875rem' }}>
             <div>
-              <div style={{ fontSize: '0.73rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>Linux / macOS — Build from source</div>
+              <div style={{ fontSize: '0.73rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>Build all download binaries (Linux/macOS shell)</div>
               <div style={{ position: 'relative' }}>
-                <pre style={codeBox}>{buildLinux}</pre>
+                <pre style={codeBox}>{buildDistUnix}</pre>
                 <button
-                  onClick={() => copy(buildLinux, 'linux')}
+                  onClick={() => copy(buildDistUnix, 'build-unix')}
                   style={{ position: 'absolute', top: 7, right: 7, background: '#1e1e2a', border: '1px solid #252532', color: '#94a3b8', borderRadius: 5, padding: '0.2rem 0.5rem', fontSize: '0.72rem', cursor: 'pointer' }}
-                >{copied === 'linux' ? '✓' : 'Copy'}</button>
+                >{copied === 'build-unix' ? '✓' : 'Copy'}</button>
               </div>
             </div>
             <div>
-              <div style={{ fontSize: '0.73rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>Docker — Build image</div>
+              <div style={{ fontSize: '0.73rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>Build all download binaries (PowerShell)</div>
               <div style={{ position: 'relative' }}>
-                <pre style={codeBox}>{buildDocker}</pre>
+                <pre style={codeBox}>{buildDistWindows}</pre>
                 <button
-                  onClick={() => copy(buildDocker, 'docker')}
+                  onClick={() => copy(buildDistWindows, 'build-win')}
                   style={{ position: 'absolute', top: 7, right: 7, background: '#1e1e2a', border: '1px solid #252532', color: '#94a3b8', borderRadius: 5, padding: '0.2rem 0.5rem', fontSize: '0.72rem', cursor: 'pointer' }}
-                >{copied === 'docker' ? '✓' : 'Copy'}</button>
+                >{copied === 'build-win' ? '✓' : 'Copy'}</button>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: '0.875rem' }}>
+            <div style={{ fontSize: '0.73rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
+              Build one local binary (advanced)
+            </div>
+            <div style={{ position: 'relative' }}>
+              <pre style={codeBox}>{buildSingleBinary}</pre>
+              <button
+                onClick={() => copy(buildSingleBinary, 'build-single')}
+                style={{ position: 'absolute', top: 7, right: 7, background: '#1e1e2a', border: '1px solid #252532', color: '#94a3b8', borderRadius: 5, padding: '0.2rem 0.5rem', fontSize: '0.72rem', cursor: 'pointer' }}
+              >{copied === 'build-single' ? '✓' : 'Copy'}</button>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: '0.875rem' }}>
+            <div style={{ fontSize: '0.73rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
+              Transfer options (choose target platform)
+            </div>
+            <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.625rem', alignItems: 'center' }}>
+              <label style={{ fontSize: '0.78rem', color: '#94a3b8' }}>Platform</label>
+              <select
+                style={{ ...inputStyle, maxWidth: 220, padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                value={targetPlatform}
+                onChange={(e) => setTargetPlatform(e.target.value)}
+              >
+                {PLATFORMS.map((p) => <option key={p.platform} value={p.platform}>{p.label}</option>)}
+              </select>
+            </div>
+
+            <div style={{ display: 'grid', gap: '0.75rem' }}>
+              <div style={{ position: 'relative' }}>
+                <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.35rem' }}>Pull direct binary from control plane</div>
+                <pre style={codeBox}>{pullBinaryCmd}</pre>
+                <button
+                  onClick={() => copy(pullBinaryCmd, 'pull-binary')}
+                  style={{ position: 'absolute', top: 26, right: 7, background: '#1e1e2a', border: '1px solid #252532', color: '#94a3b8', borderRadius: 5, padding: '0.2rem 0.5rem', fontSize: '0.72rem', cursor: 'pointer' }}
+                >{copied === 'pull-binary' ? '✓' : 'Copy'}</button>
+              </div>
+
+              <div style={{ position: 'relative' }}>
+                <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.35rem' }}>Pull ZIP package from control plane</div>
+                <pre style={codeBox}>{pullZipCmd}</pre>
+                <button
+                  onClick={() => copy(pullZipCmd, 'pull-zip')}
+                  style={{ position: 'absolute', top: 26, right: 7, background: '#1e1e2a', border: '1px solid #252532', color: '#94a3b8', borderRadius: 5, padding: '0.2rem 0.5rem', fontSize: '0.72rem', cursor: 'pointer' }}
+                >{copied === 'pull-zip' ? '✓' : 'Copy'}</button>
+              </div>
+
+              <div style={{ position: 'relative' }}>
+                <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.35rem' }}>Push with scp</div>
+                <pre style={codeBox}>{scpCmd}</pre>
+                <button
+                  onClick={() => copy(scpCmd, 'scp')}
+                  style={{ position: 'absolute', top: 26, right: 7, background: '#1e1e2a', border: '1px solid #252532', color: '#94a3b8', borderRadius: 5, padding: '0.2rem 0.5rem', fontSize: '0.72rem', cursor: 'pointer' }}
+                >{copied === 'scp' ? '✓' : 'Copy'}</button>
+              </div>
+
+              <div style={{ position: 'relative' }}>
+                <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.35rem' }}>Push with rsync</div>
+                <pre style={codeBox}>{rsyncCmd}</pre>
+                <button
+                  onClick={() => copy(rsyncCmd, 'rsync')}
+                  style={{ position: 'absolute', top: 26, right: 7, background: '#1e1e2a', border: '1px solid #252532', color: '#94a3b8', borderRadius: 5, padding: '0.2rem 0.5rem', fontSize: '0.72rem', cursor: 'pointer' }}
+                >{copied === 'rsync' ? '✓' : 'Copy'}</button>
               </div>
             </div>
           </div>
@@ -234,7 +359,7 @@ function TutorialWizard({
       icon: '↓',
       title: 'Step 1 — Get the Agent',
       desc: 'The agent is a small Go binary you install on the machine running your game server. It connects here, sends heartbeats, and executes commands you dispatch from this dashboard.',
-      detail: 'Build from source with Go 1.22+ or use Docker. Expand "First time? Get the agent binary" in the pairing panel to see build commands.',
+      detail: 'Expand "First time? Download or build the agent binary" in the pairing panel. You can download binary or ZIP packages, build all binaries on the control-plane machine, and transfer using curl/scp/rsync.',
       actionLabel: 'I have the agent — continue',
     },
     {
@@ -670,7 +795,11 @@ export default function HostsPage() {
               {pairingToken && (
                 <>
                   {/* Agent download */}
-                  <AgentDownloadPanel />
+                  <AgentDownloadPanel
+                    pairingToken={token}
+                    agentCpUrl={cpUrl}
+                    hostName={name}
+                  />
 
                   {/* Token row */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '1.25rem', background: '#0a0a0f', border: '1px solid #1e1e2a', borderRadius: 8, padding: '0.625rem 0.875rem' }}>

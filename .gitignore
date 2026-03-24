@@ -8,6 +8,7 @@ build/
 .next/
 out/
 *.tsbuildinfo
+control-plane/public/agents/
 
 # Go
 vendor/

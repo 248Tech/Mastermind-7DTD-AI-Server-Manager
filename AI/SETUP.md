@@ -43,19 +43,78 @@ echo "NEXT_PUBLIC_CONTROL_PLANE_URL=http://localhost:3001" > .env.local
 pnpm dev
 ```
 
-### 4. Agent (Go)
+### 4. Agent Installation (Game Host Machine)
+
+After the control plane is running, go to **Hosts → Pair New Host** in the web UI and generate a pairing token.
+
+Use one of these install paths on the game server host.
+
+#### Option A (recommended for most users, Linux): one-line installer
+
 ```bash
-cd agent
+CP_URL="http://<control-plane-ip>:3001"
+TOKEN="<pairing-token-from-ui>"
+HOST_NAME="my-game-host"
 
-# Copy and edit config
-cp config.yaml.example config.yaml
-# Edit: controlPlaneUrl, pairingToken (get from web UI → Hosts → Pair New Host)
+curl -fsSL "$CP_URL/install.sh?token=$TOKEN&url=$CP_URL&name=$HOST_NAME" | sudo bash
+```
 
-# Build
-go build -o mastermind-agent ./...
+What this does:
+- writes `/etc/mastermind-agent/config.yaml`
+- starts a `mastermind-agent` container if Docker is installed
+- otherwise attempts a local Go build fallback
 
-# Run
-./mastermind-agent
+#### Option B: download a prebuilt agent binary
+
+Available endpoints:
+- `GET /agent/download/linux-amd64`
+- `GET /agent/download/linux-arm64`
+- `GET /agent/download/darwin-amd64`
+- `GET /agent/download/darwin-arm64`
+- `GET /agent/download/windows-amd64`
+
+Linux example:
+
+```bash
+CP_URL="http://<control-plane-ip>:3001"
+TOKEN="<pairing-token-from-ui>"
+
+curl -fL "$CP_URL/agent/download/linux-amd64" -o mastermind-agent
+chmod +x mastermind-agent
+sudo mv mastermind-agent /usr/local/bin/mastermind-agent
+sudo mkdir -p /etc/mastermind-agent /var/lib/mastermind-agent
+
+sudo tee /etc/mastermind-agent/config.yaml > /dev/null <<EOF
+control_plane_url: "$CP_URL"
+pairing_token: "$TOKEN"
+agent_key_path: "/var/lib/mastermind-agent/agent.key"
+heartbeat:
+  interval_sec: 5
+jobs:
+  poll_interval_sec: 5
+  long_poll_sec: 30
+host:
+  name: "my-game-host"
+EOF
+
+sudo /usr/local/bin/mastermind-agent -config /etc/mastermind-agent/config.yaml
+```
+
+#### Option C: build from source (advanced)
+
+```bash
+git clone <repo-url>
+cd Mastermind-7DTD-AI-Server-Manager/agent
+go build -o mastermind-agent .
+./mastermind-agent -config /path/to/config.yaml
+```
+
+Minimum config:
+
+```yaml
+control_plane_url: "http://<control-plane-ip>:3001"
+pairing_token: "<pairing-token-from-ui>"
+agent_key_path: "/var/lib/mastermind-agent/agent.key"
 ```
 
 ## Default Credentials

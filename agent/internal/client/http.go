@@ -35,8 +35,8 @@ func NewHTTPClient(baseURL string, agentKey string) *HTTPClient {
 func (c *HTTPClient) Pair(ctx context.Context, pairingToken string, meta *HostMetadata) (*PairResponse, error) {
 	meta.ReportedAt = time.Now().UTC()
 	body, err := json.Marshal(map[string]interface{}{
-		"pairing_token": pairingToken,
-		"host_metadata": meta,
+		"pairingToken": pairingToken,
+		"hostMetadata": meta,
 	})
 	if err != nil {
 		return nil, err
@@ -64,7 +64,12 @@ func (c *HTTPClient) Pair(ctx context.Context, pairingToken string, meta *HostMe
 // Heartbeat implements Client.
 func (c *HTTPClient) Heartbeat(ctx context.Context, hostID string, meta *HostMetadata) error {
 	meta.ReportedAt = time.Now().UTC()
-	body, _ := json.Marshal(meta)
+	heartbeat := map[string]interface{}{
+		"metrics": map[string]interface{}{
+			"agentVersion": meta.AgentVersion,
+		},
+	}
+	body, _ := json.Marshal(heartbeat)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/agent/hosts/"+url.PathEscape(hostID)+"/heartbeat", bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -101,17 +106,46 @@ func (c *HTTPClient) PollJobs(ctx context.Context, hostID string, longPollSec in
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("poll jobs: %s", resp.Status)
 	}
-	var list []Job
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
-	return list, nil
+	trimmed := bytes.TrimSpace(rawBody)
+	if len(trimmed) == 0 {
+		return nil, nil
+	}
+
+	// Backward/forward compatibility:
+	// - legacy: [job, ...]
+	// - current: { "job": { ... } } or { "jobs": [ ... ] }
+	if trimmed[0] == '[' {
+		var list []Job
+		if err := json.Unmarshal(trimmed, &list); err != nil {
+			return nil, err
+		}
+		return list, nil
+	}
+
+	var envelope struct {
+		Job  *Job  `json:"job"`
+		Jobs []Job `json:"jobs"`
+	}
+	if err := json.Unmarshal(trimmed, &envelope); err != nil {
+		return nil, err
+	}
+	if envelope.Job != nil {
+		return []Job{*envelope.Job}, nil
+	}
+	if len(envelope.Jobs) > 0 {
+		return envelope.Jobs, nil
+	}
+	return nil, nil
 }
 
 // SubmitJobResult implements Client.
-func (c *HTTPClient) SubmitJobResult(ctx context.Context, hostID string, jobID string, result *JobResultPayload) error {
+func (c *HTTPClient) SubmitJobResult(ctx context.Context, hostID string, runID string, result *JobResultPayload) error {
 	body, _ := json.Marshal(result)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/agent/hosts/"+hostID+"/jobs/"+jobID+"/result", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/agent/hosts/"+hostID+"/jobs/"+runID+"/result", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

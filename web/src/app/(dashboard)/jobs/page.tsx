@@ -145,7 +145,7 @@ export default function JobsPage() {
         }
       }
       await api.post<Job>(`/api/orgs/${orgId}/jobs`, {
-        serverInstanceId: form.serverInstanceId || undefined,
+        serverInstanceId: form.serverInstanceId,
         type: form.type, payload,
       });
       setShowCreate(false);
@@ -186,8 +186,8 @@ export default function JobsPage() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.875rem' }}>
               <div>
                 <label style={labelStyle}>Server Instance</label>
-                <select style={inputStyle} value={form.serverInstanceId} onChange={e => setForm({ ...form, serverInstanceId: e.target.value })} onFocus={onFocus} onBlur={onBlur}>
-                  <option value="">— Select Server (optional) —</option>
+                <select style={inputStyle} value={form.serverInstanceId} required onChange={e => setForm({ ...form, serverInstanceId: e.target.value })} onFocus={onFocus} onBlur={onBlur}>
+                  <option value="">— Select Server —</option>
                   {servers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>

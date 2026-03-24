@@ -30,7 +30,15 @@ export class AgentJobsController {
     // Mark the job run as running now that the agent has claimed it
     await this.jobsService.markJobRunStarted(hostId, jobData.jobRunId);
 
-    return { job: jobData };
+    return {
+      job: {
+        id: jobData.jobId,
+        runId: jobData.jobRunId,
+        type: jobData.type,
+        serverInstanceId: jobData.serverInstanceId ?? undefined,
+        payload: jobData.payload ?? {},
+      },
+    };
   }
 
   /** Report job run completion. Call BatchesService when job is part of a batch. Host identity from verified agent JWT. */

@@ -118,7 +118,7 @@ export default function AlertsPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to create alert rule';
       if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
-        setApiNotice('Alert Rules API coming soon — this feature is not yet available on the server.');
+        setApiNotice('Alert Rules endpoint not found on the control plane. Verify backend version and API URL in settings.');
       } else {
         setCreateError(msg);
       }

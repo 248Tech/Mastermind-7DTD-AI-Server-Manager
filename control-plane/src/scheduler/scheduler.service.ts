@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma.service';
 import { getNextCronRun, clampToExecutionWindow } from './cron-next';
 import type { ScheduleJobData } from './scheduler.types';
 import type { QueueJobData } from '../jobs/jobs-queue.service';
+import { normalizeJobType } from '../jobs/constants';
 
 const SCHEDULER_QUEUE_NAME = 'scheduler';
 const REDIS_CONNECTION = {
@@ -49,7 +50,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   async hydrateSchedules(): Promise<void> {
     const schedules = await this.prisma.schedule.findMany({
       where: { enabled: true },
-      include: { serverInstance: { include: { host: true } } },
+      include: { serverInstance: { include: { host: true, gameType: { select: { slug: true } } } } },
     });
     const now = new Date();
     for (const s of schedules) {
@@ -88,7 +89,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     const { scheduleId } = job.data;
     const schedule = await this.prisma.schedule.findUnique({
       where: { id: scheduleId },
-      include: { serverInstance: { include: { host: true } } },
+      include: { serverInstance: { include: { host: true, gameType: { select: { slug: true } } } } },
     });
     if (!schedule || !schedule.enabled) return;
     const hostId = schedule.serverInstance.hostId;
@@ -114,6 +115,10 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       const retryPolicy = (schedule.retryPolicy as { maxRetries?: number; backoffMs?: number }) ?? {};
       const attempts = (retryPolicy.maxRetries ?? 2) + 1;
       const backoff = retryPolicy.backoffMs ?? 2000;
+      const queuePayload = buildScheduleAgentPayload(
+        schedule.serverInstance,
+        (schedule.payload as Record<string, unknown> | null) ?? undefined,
+      );
 
       const orgQueue = this.getOrgQueue(orgId);
       await orgQueue.add(
@@ -124,7 +129,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
           hostId,
           serverInstanceId,
           type: schedule.jobType,
-          payload: schedule.payload ?? {},
+          payload: queuePayload,
         },
         { jobId: run.id, attempts, backoff: { type: 'fixed' as const, delay: backoff } },
       );
@@ -215,13 +220,15 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       throw new Error(`Invalid cron expression: ${data.cronExpression}`);
     }
 
+    const normalizedJobType = normalizeJobType(data.jobType);
+
     const schedule = await this.prisma.schedule.create({
       data: {
         orgId,
         serverInstanceId: data.serverInstanceId,
         name: data.name,
         cronExpression: data.cronExpression,
-        jobType: data.jobType,
+        jobType: normalizedJobType,
         payload: data.payload !== undefined ? (data.payload as Prisma.InputJsonValue) : undefined,
         enabled: data.enabled ?? true,
         nextRunAt,
@@ -250,6 +257,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     if (!existing) throw new Error('Schedule not found');
 
     const cronExpression = data.cronExpression ?? existing.cronExpression;
+    const normalizedJobType = data.jobType !== undefined ? normalizeJobType(data.jobType) : undefined;
     let nextRunAt = existing.nextRunAt;
     if (data.cronExpression) {
       try {
@@ -264,7 +272,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       data: {
         ...(data.name !== undefined && { name: data.name }),
         ...(data.cronExpression !== undefined && { cronExpression, nextRunAt }),
-        ...(data.jobType !== undefined && { jobType: data.jobType }),
+        ...(normalizedJobType !== undefined && { jobType: normalizedJobType }),
         ...(data.enabled !== undefined && { enabled: data.enabled }),
       },
     });
@@ -318,4 +326,32 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     }
     return this.orgQueues.get(orgId)!;
   }
+}
+
+function buildScheduleAgentPayload(
+  serverInstance: {
+    id: string;
+    installPath: string | null;
+    startCommand: string | null;
+    telnetHost: string | null;
+    telnetPort: number | null;
+    telnetPassword: string | null;
+    gameType?: { slug: string };
+  },
+  payload?: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (payload) Object.assign(out, payload);
+
+  out.server_instance_id = serverInstance.id;
+  if (serverInstance.gameType?.slug) out.game_type = serverInstance.gameType.slug;
+  if (serverInstance.installPath) out.install_path = serverInstance.installPath;
+  if (serverInstance.startCommand) out.start_command = serverInstance.startCommand;
+  if (serverInstance.telnetHost) out.telnet_host = serverInstance.telnetHost;
+  if (serverInstance.telnetPort !== null && serverInstance.telnetPort !== undefined) {
+    out.telnet_port = serverInstance.telnetPort;
+  }
+  if (serverInstance.telnetPassword) out.telnet_password = serverInstance.telnetPassword;
+
+  return out;
 }

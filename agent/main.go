@@ -15,6 +15,9 @@ import (
 
 	"github.com/mastermind/agent/internal/client"
 	"github.com/mastermind/agent/internal/config"
+	"github.com/mastermind/agent/internal/games"
+	sevendtd "github.com/mastermind/agent/internal/games/7dtd"
+	"github.com/mastermind/agent/internal/games/minecraft"
 	"github.com/mastermind/agent/internal/heartbeat"
 	"github.com/mastermind/agent/internal/jobs"
 	"github.com/mastermind/agent/internal/pairing"
@@ -80,10 +83,18 @@ func main() {
 	interval := time.Duration(cfg.Heartbeat.IntervalSec) * time.Second
 	go heartbeat.Run(ctx, cl, hostID, cfg.Host.Name, interval, "")
 
-	// Job executor: default runner (allowlist + timeout); future: dispatch by game type via Registry
-	exec := &runner.Runner{
-		AllowedCommands: []string{"start", "stop", "update", "exec"},
-		Timeout:          10 * time.Minute,
+	// Job executor: route by game_type when available, otherwise fallback to command runner.
+	registry := games.NewRegistry()
+	registry.Register(sevendtd.NewAdapter())
+	registry.Register(minecraft.NewAdapter())
+
+	fallbackRunner := &runner.Runner{
+		AllowedCommands: []string{"start", "stop", "restart", "update", "exec", "rcon", "custom"},
+		Timeout:         10 * time.Minute,
+	}
+	exec := &jobs.DispatchExecutor{
+		Registry: registry,
+		Fallback: fallbackRunner,
 	}
 
 	// Job polling loop (long-poll if configured)

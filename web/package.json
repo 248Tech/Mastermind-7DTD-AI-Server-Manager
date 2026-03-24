@@ -3,12 +3,12 @@
   "version": "0.0.3",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "next start",
-    "lint": "next lint",
-    "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\""
+    "dev": "node ./node_modules/next/dist/bin/next dev",
+    "build": "node ./node_modules/next/dist/bin/next build",
+    "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "start": "node ./node_modules/next/dist/bin/next start",
+    "lint": "node ./node_modules/next/dist/bin/next lint",
+    "format": "node ./node_modules/prettier/bin/prettier.cjs --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\""
   },
   "dependencies": {
     "next": "^14.0.0",

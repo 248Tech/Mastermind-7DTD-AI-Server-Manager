@@ -3,21 +3,21 @@
   "version": "0.0.3",
   "private": true,
   "scripts": {
-    "build": "nest build",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dev": "nest start --watch",
+    "build": "node ./node_modules/@nestjs/cli/bin/nest.js build",
+    "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "dev": "node ./node_modules/@nestjs/cli/bin/nest.js start --watch",
     "start": "node dist/main",
-    "start:dev": "nest start --watch",
-    "test": "jest",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
-    "format": "prettier --write \"src/**/*.ts\"",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate deploy",
-    "prisma:studio": "prisma studio",
-    "prisma:seed": "ts-node prisma/seed.ts"
+    "start:dev": "node ./node_modules/@nestjs/cli/bin/nest.js start --watch",
+    "test": "node ./node_modules/jest/bin/jest.js",
+    "lint": "node ./node_modules/eslint/bin/eslint.js \"{src,apps,libs,test}/**/*.ts\"",
+    "format": "node ./node_modules/prettier/bin/prettier.cjs --write \"src/**/*.ts\"",
+    "prisma:generate": "node ./node_modules/prisma/build/index.js generate",
+    "prisma:migrate": "node ./node_modules/prisma/build/index.js migrate deploy",
+    "prisma:studio": "node ./node_modules/prisma/build/index.js studio",
+    "prisma:seed": "node ./node_modules/ts-node/dist/bin.js prisma/seed.ts"
   },
   "prisma": {
-    "seed": "ts-node prisma/seed.ts"
+    "seed": "node ./node_modules/ts-node/dist/bin.js prisma/seed.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",

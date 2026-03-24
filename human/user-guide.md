@@ -229,57 +229,111 @@ Before you can manage a game server, you need to connect the machine it runs on.
 
 The token is stored as a SHA-256 hash; the plaintext is never saved on the server.
 
-### Part B: Install and configure the agent (on the game host machine)
+### Part B: Install the agent on the game host (pick one method)
 
-**Build the agent** (from the repo root, or cross-compile for the target OS):
+You have 3 supported install methods. Most users should use **Method 1**.
+
+### Method 1 (recommended): One-line installer from control plane (Linux)
+
+From the **Hosts** page, copy the generated install command and run it on the game host.
+
+If you need to build it manually, use this template:
+
 ```bash
-cd agent
-go build -o mastermind-agent ./...
+CP_URL="http://<control-plane-ip>:3001"
+TOKEN="<pairing-token>"
+HOST_NAME="my-game-host"
+
+curl -fsSL "$CP_URL/install.sh?token=$TOKEN&url=$CP_URL&name=$HOST_NAME" | sudo bash
 ```
 
-Copy the binary to the game host machine.
+What this script does:
+1. Writes `/etc/mastermind-agent/config.yaml`.
+2. Starts a `mastermind-agent` container if Docker is available.
+3. Falls back to local Go build when Docker is not available.
 
-**Create the config file** on the game host:
+### Method 2: Download prebuilt binary from control plane
+
+Supported download platforms:
+- `linux-amd64`
+- `linux-arm64`
+- `darwin-amd64`
+- `darwin-arm64`
+- `windows-amd64`
+
+Linux example:
+
 ```bash
-cp config.yaml.example /etc/mastermind-agent/config.yaml
-# or any path you prefer; pass with --config flag
-```
+CP_URL="http://<control-plane-ip>:3001"
+TOKEN="<pairing-token>"
 
-Edit `/etc/mastermind-agent/config.yaml`:
-```yaml
-control_plane_url: "http://YOUR_CONTROL_PLANE_IP:3001"
-pairing_token: "PASTE_THE_TOKEN_HERE"
+curl -fL "$CP_URL/agent/download/linux-amd64" -o mastermind-agent
+chmod +x mastermind-agent
+sudo mv mastermind-agent /usr/local/bin/mastermind-agent
+sudo mkdir -p /etc/mastermind-agent /var/lib/mastermind-agent
+
+sudo tee /etc/mastermind-agent/config.yaml > /dev/null <<EOF
+control_plane_url: "$CP_URL"
+pairing_token: "$TOKEN"
 agent_key_path: "/var/lib/mastermind-agent/agent.key"
-
 heartbeat:
   interval_sec: 5
-
 jobs:
   poll_interval_sec: 5
   long_poll_sec: 30
-
 host:
-  name: "my-game-server-host"   # optional display name
+  name: "my-game-host"
+EOF
 ```
 
-> In production, `control_plane_url` should use HTTPS.
+Windows PowerShell example:
 
-### Part C: Run the agent
+```powershell
+$cpUrl = "http://<control-plane-ip>:3001"
+$token = "<pairing-token>"
+New-Item -ItemType Directory -Force -Path C:\Mastermind | Out-Null
+Invoke-WebRequest "$cpUrl/agent/download/windows-amd64" -OutFile C:\Mastermind\mastermind-agent.exe
+@"
+control_plane_url: "$cpUrl"
+pairing_token: "$token"
+agent_key_path: "C:\\Mastermind\\agent.key"
+heartbeat:
+  interval_sec: 5
+jobs:
+  poll_interval_sec: 5
+  long_poll_sec: 30
+host:
+  name: "my-game-host"
+"@ | Set-Content -Path C:\Mastermind\config.yaml
+```
+
+### Method 3: Build from source (advanced)
 
 ```bash
-./mastermind-agent --config /etc/mastermind-agent/config.yaml
+git clone <your-repo-url>
+cd mastermind-7dtd-ai-server-manager/agent
+go build -o mastermind-agent .
+./mastermind-agent -config /path/to/config.yaml
 ```
 
-**What happens on first run:**
-1. Agent sends the `pairing_token` to `POST /api/agent/pair`.
-2. Control plane validates the token (checks it is unused and not expired), creates a **Host** record, and returns a signed agent JWT.
-3. Agent saves the JWT to `agent_key_path` and removes the token from config.
-4. Agent begins sending **heartbeats** every 5 seconds (`POST /api/agent/hosts/:hostId/heartbeat`).
-5. Agent starts polling for jobs every 5 seconds (`GET /api/agent/hosts/:hostId/jobs/poll`).
+### Part C: Run and verify the agent
 
-After a few seconds, go to **Hosts** in the UI — you should see the host listed with status **Online** and a green indicator.
+If you used Method 1, the agent may already be running. If not, start it manually:
 
-### Running the agent as a service (Linux/systemd)
+```bash
+/usr/local/bin/mastermind-agent -config /etc/mastermind-agent/config.yaml
+```
+
+First-run behavior:
+1. Agent sends `pairing_token` to `POST /api/agent/pair`.
+2. Control plane validates the token and creates a **Host** record.
+3. Control plane returns `hostId` + signed `agentKey`.
+4. Agent stores the key at `agent_key_path`.
+5. Agent starts heartbeat (`POST /api/agent/hosts/:hostId/heartbeat`) and job polling (`GET /api/agent/hosts/:hostId/jobs/poll`).
+
+After 5-10 seconds, open **Hosts** in the UI and confirm status is **Online**.
+
+### Part D: Run the agent as a service (Linux/systemd)
 
 Create `/etc/systemd/system/mastermind-agent.service`:
 ```ini
@@ -721,6 +775,12 @@ Every user belongs to an org and has one of three roles:
 - Check the control plane logs for the specific error (`pnpm dev` output)
 - Make sure the token was not already used (single-use; each run generates a new one)
 
+### Installer script or binary download fails
+
+- Verify the control plane URL is reachable from the game host (`curl http://<cp-ip>:3001/health`)
+- If `/agent/download/<platform>` returns "not available yet", build binaries on the control-plane host with `make bootstrap` or `make start`
+- If `install.sh` is blocked by policy, use Method 2 (manual binary download + config) from Section 5
+
 ### Agent pairs but shows Offline in UI
 
 - Heartbeats are sent every 5 seconds — check agent logs for heartbeat errors
@@ -765,7 +825,6 @@ Change the port in `control-plane/.env` (`PORT=XXXX`) and update `NEXT_PUBLIC_CO
 
 The default setup is **not production-safe**:
 - JWT secrets are hardcoded fallbacks (`change-me-user-secret`, `change-me-agent-secret`)
-- The pairing controller guards are stubs that allow any request
 - No rate limiting on the pairing endpoint
 
 This is intentional for local development. Do not expose the control plane to the internet without addressing the items below.
@@ -778,7 +837,7 @@ This is intentional for local development. Do not expose the control plane to th
 
 2. **Use HTTPS** — agent communication, pairing tokens, and agent keys must travel over TLS. Put the control plane behind a reverse proxy (nginx, Caddy) with a certificate.
 
-3. **Implement real pairing guards** — the `pairing.controller.ts` stubs (`JwtAuthGuard`, `OrgAdminGuard`) always return `true`. Replace them with the real guards from `server-instances/guards/` before exposing the create-token and rotate-key endpoints.
+3. **Enforce pairing route authorization** — keep `JwtAuthGuard` + org role guards enabled on token generation and key rotation routes, and test these paths after auth changes.
 
 4. **Add rate limiting** on `POST /api/agent/pair` — e.g. 10 requests per minute per IP — to prevent token brute-force.
 
@@ -902,19 +961,14 @@ TOKEN=$(curl -s -X POST http://localhost:3001/api/orgs/YOUR_ORG_ID/pairing-token
   -H "Content-Type: application/json" \
   -d '{}' | jq -r '.token')
 
-# 6. Configure agent on the game host
-cat > /etc/mastermind-agent/config.yaml << EOF
-control_plane_url: "http://CONTROL_PLANE_IP:3001"
-pairing_token: "$TOKEN"
-agent_key_path: "/var/lib/mastermind-agent/agent.key"
-heartbeat:
-  interval_sec: 5
-jobs:
-  poll_interval_sec: 5
-EOF
+# 6. Install and start agent on the game host (recommended path)
+CP_URL="http://CONTROL_PLANE_IP:3001"
+HOST_NAME="my-game-host"
+curl -fsSL "$CP_URL/install.sh?token=$TOKEN&url=$CP_URL&name=$HOST_NAME" | sudo bash
 
-# 7. Run agent (pairs automatically on first run)
-./mastermind-agent
+# 7. Verify the host is online
+curl http://localhost:3001/api/orgs/YOUR_ORG_ID/hosts \
+  -H "Authorization: Bearer YOUR_JWT"
 
 # 8. Register a server instance (UI: Hosts → Register Server)
 #    or via API:
@@ -946,4 +1000,4 @@ curl http://localhost:3001/api/orgs/YOUR_ORG_ID/jobs \
 
 ---
 
-*Guide generated from: docs/, control-plane source, agent source, and AI/SETUP.md — 2026-03-11*
+*Guide generated from: docs/, control-plane source, agent source, and AI/SETUP.md — updated 2026-03-19*

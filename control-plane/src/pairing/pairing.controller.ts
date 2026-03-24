@@ -7,36 +7,15 @@ import {
   Req,
   HttpCode,
   HttpStatus,
-  CanActivate,
-  ExecutionContext,
-  Injectable,
 } from '@nestjs/common';
 import { PairingService } from './pairing.service';
 import { CreatePairingTokenDto } from './dto/create-pairing-token.dto';
 import { PairRequestDto } from './dto/pair-request.dto';
 import { PairResponseDto } from './dto/pair-response.dto';
 import { PairingTokenResponseDto } from './dto/pairing-token-response.dto';
-
-/** Stub: replace with your JWT strategy + org admin check (e.g. RolesGuard + orgId from param). */
-@Injectable()
-class JwtAuthGuard implements CanActivate {
-  canActivate(_ctx: ExecutionContext): boolean {
-    return true;
-  }
-}
-
-@Injectable()
-class OrgAdminGuard implements CanActivate {
-  canActivate(_ctx: ExecutionContext): boolean {
-    return true;
-  }
-}
-
-/** Request with optional user and org from auth */
-interface RequestWithOrg {
-  user?: { id: string };
-  orgId?: string;
-}
+import { JwtAuthGuard, RequestWithUser } from '../server-instances/guards/jwt-auth.guard';
+import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
+import { RequireOrgRoleGuard, RequireOrgRoles } from '../server-instances/guards/require-org-role.guard';
 
 /**
  * Pairing controller:
@@ -50,14 +29,15 @@ export class PairingController {
 
   /**
    * Admin: create a pairing token for the org.
-   * Require: JWT + org membership + admin/operator role.
+   * Require: JWT + org membership + admin role.
    */
   @Post('api/orgs/:orgId/pairing-tokens')
-  @UseGuards(JwtAuthGuard, OrgAdminGuard)
+  @UseGuards(JwtAuthGuard, OrgMemberGuard, RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
   async createToken(
     @Param('orgId') orgId: string,
     @Body() dto: CreatePairingTokenDto,
-    @Req() req: RequestWithOrg,
+    @Req() req: RequestWithUser,
   ): Promise<PairingTokenResponseDto> {
     const userId = req.user!.id;
     const result = await this.pairingService.createToken(orgId, userId, dto);
@@ -80,7 +60,12 @@ export class PairingController {
     @Req() req: { ip?: string; headers?: { 'x-forwarded-for'?: string } },
   ): Promise<PairResponseDto> {
     const clientIp = (req.headers?.['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip;
-    const result = await this.pairingService.pair(dto, clientIp);
+    const normalizedDto: PairRequestDto = {
+      ...dto,
+      pairingToken: dto.pairingToken || dto.pairing_token || '',
+      hostMetadata: dto.hostMetadata || dto.host_metadata,
+    };
+    const result = await this.pairingService.pair(normalizedDto, clientIp);
     return {
       hostId: result.hostId,
       agentKey: result.agentKey,
@@ -91,7 +76,8 @@ export class PairingController {
    * Admin: rotate agent key for a host. Returns new key (display once; agent must re-fetch or use new key from separate channel).
    */
   @Post('api/orgs/:orgId/hosts/:hostId/rotate-key')
-  @UseGuards(JwtAuthGuard, OrgAdminGuard)
+  @UseGuards(JwtAuthGuard, OrgMemberGuard, RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
   async rotateKey(
     @Param('orgId') orgId: string,
     @Param('hostId') hostId: string,

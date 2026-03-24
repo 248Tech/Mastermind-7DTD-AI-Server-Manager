@@ -8,7 +8,7 @@ A distributed game server manager with a NestJS control plane, Next.js web UI, a
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Docker Desktop | 24+ | Required for Postgres + Redis |
+| Docker Desktop | 24+ | Required for Postgres + Redis (daemon must be running) |
 | Node.js | 20+ | For local dev |
 | pnpm | 9+ | `npm install -g pnpm` |
 | Go | 1.22+ | Only if building the agent locally |
@@ -20,6 +20,8 @@ A distributed game server manager with a NestJS control plane, Next.js web UI, a
 ```bash
 git clone <repo-url> && cd Mastermind-7DTD-AI-Server-Manager
 make start
+# Windows PowerShell alternative:
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start.ps1
 ```
 
 `make start` runs the full flow: checks tools, installs dependencies, builds agent binaries, starts Postgres/Redis, runs Prisma push + seed, and launches control-plane/web.
@@ -136,7 +138,18 @@ After logging in, go to **Hosts → Pair New Host**:
 2. Copy the install command for your target machine.
 3. Choose an install method:
 
-### Docker (recommended)
+### One-line installer (recommended for most users)
+
+```bash
+CP_URL="http://<your-cp-ip>:3001"
+TOKEN="<token>"
+HOST_NAME="my-server"
+curl -fsSL "$CP_URL/install.sh?token=$TOKEN&url=$CP_URL&name=$HOST_NAME" | sudo bash
+```
+
+This writes config and starts the agent (Docker path first, Go fallback).
+
+### Docker (manual)
 
 ```bash
 docker run -d \

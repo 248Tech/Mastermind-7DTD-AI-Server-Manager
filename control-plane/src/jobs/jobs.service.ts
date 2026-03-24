@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma.service';
 import { BatchesService } from '../batches/batches.service';
 import { JobsQueueService } from './jobs-queue.service';
 import type { ReportResultDto } from './dto/report-result.dto';
+import { normalizeJobType } from './constants';
 
 @Injectable()
 export class JobsService {
@@ -27,19 +28,26 @@ export class JobsService {
     jobType: string,
     payload?: Record<string, unknown>,
   ): Promise<{ jobId: string; jobRunId: string }> {
+    const normalizedJobType = normalizeJobType(jobType);
+
     const serverInstance = await this.prisma.serverInstance.findFirst({
       where: { id: serverInstanceId, orgId },
-      include: { host: true },
+      include: {
+        host: true,
+        gameType: { select: { slug: true } },
+      },
     });
     if (!serverInstance) {
       throw new NotFoundException('Server instance not found');
     }
 
+    const queuePayload = buildAgentPayload(serverInstance, payload);
+
     const job = await this.prisma.job.create({
       data: {
         orgId,
         serverInstanceId,
-        type: jobType,
+        type: normalizedJobType,
         payload: payload as Prisma.InputJsonValue | undefined,
         createdById: userId,
       },
@@ -58,8 +66,8 @@ export class JobsService {
       jobRunId: run.id,
       hostId: serverInstance.hostId,
       serverInstanceId,
-      type: jobType,
-      payload: payload ?? {},
+      type: normalizedJobType,
+      payload: queuePayload,
     });
 
     return { jobId: job.id, jobRunId: run.id };
@@ -129,4 +137,34 @@ export class JobsService {
       await this.batchesService.recordJobRunStarted(run.job.orgId, run.jobId);
     }
   }
+}
+
+function buildAgentPayload(
+  serverInstance: {
+    id: string;
+    installPath: string | null;
+    startCommand: string | null;
+    telnetHost: string | null;
+    telnetPort: number | null;
+    telnetPassword: string | null;
+    gameType?: { slug: string };
+  },
+  payload?: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (payload) {
+    Object.assign(out, payload);
+  }
+
+  out.server_instance_id = serverInstance.id;
+  if (serverInstance.gameType?.slug) out.game_type = serverInstance.gameType.slug;
+  if (serverInstance.installPath) out.install_path = serverInstance.installPath;
+  if (serverInstance.startCommand) out.start_command = serverInstance.startCommand;
+  if (serverInstance.telnetHost) out.telnet_host = serverInstance.telnetHost;
+  if (serverInstance.telnetPort !== null && serverInstance.telnetPort !== undefined) {
+    out.telnet_port = serverInstance.telnetPort;
+  }
+  if (serverInstance.telnetPassword) out.telnet_password = serverInstance.telnetPassword;
+
+  return out;
 }

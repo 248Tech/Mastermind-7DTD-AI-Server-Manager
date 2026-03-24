@@ -77,7 +77,7 @@ export default function SettingsPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to update webhook';
       if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
-        setWebhookApiNotice('Org update API coming soon — this feature is not yet available on the server.');
+        setWebhookApiNotice('Org settings endpoint not found on the control plane. Verify backend version and API URL.');
       } else {
         setWebhookError(msg);
       }

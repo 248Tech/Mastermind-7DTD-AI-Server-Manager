@@ -48,7 +48,7 @@
 ├── infra/            # Docker Compose for local dev
 ├── docs/             # Architecture, security, design docs
 ├── prompts/          # Prompt library
-├── scripts/          # bootstrap.sh, start.sh, dev.sh, doctor.sh
+├── scripts/          # bootstrap/start/doctor scripts (.sh + .ps1)
 ├── .github/          # Issue/PR templates
 ├── Makefile          # make start, bootstrap, up, down, logs, test
 ├── pnpm-workspace.yaml
@@ -102,7 +102,7 @@
 - **Node.js** 20 LTS (or 20.x)
 - **pnpm** 9.x (`corepack enable && corepack prepare pnpm@latest --activate`)
 - **Go** 1.22+ (for building the agent)
-- **Docker** and **Docker Compose** v2 (for Postgres, Redis, and optional full stack)
+- **Docker** and **Docker Compose** v2 (for Postgres, Redis, and optional full stack; Docker daemon must be running)
 
 ---
 
@@ -115,6 +115,7 @@ cd Mastermind-7DTD-AI-Server-Manager
 # Recommended one-line start (v0.0.3)
 make start
 # or: bash scripts/start.sh
+# on Windows: powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
 ```
 
 Open **http://localhost:3000/login** and sign in with the seeded account:
@@ -168,6 +169,7 @@ Copy `.env.example` to `.env` (and `control-plane/.env.example` to `control-plan
 | Compose build fails | Run `make bootstrap` first. Ensure Docker has enough memory. For control-plane, run `pnpm prisma generate` locally if needed. |
 | Login fails for default admin | Run `cd control-plane && pnpm prisma:seed` and try `admin@mastermind.local / changeme`. |
 | Web shows backend/API errors | Ensure control plane is running on the URL in `NEXT_PUBLIC_CONTROL_PLANE_URL` (default `http://localhost:3001`). |
+| Docker command works but `make start` fails to connect | Start Docker Desktop (or docker engine) so the daemon is available, then rerun `make start`. |
 | Auth failures | Check `JWT_SECRET` and that the user is in the org. For agent, check `JWT_AGENT_SECRET` and that the host’s key version matches. |
 
 ---

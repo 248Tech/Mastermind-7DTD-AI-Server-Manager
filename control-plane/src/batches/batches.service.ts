@@ -65,7 +65,7 @@ export class BatchesService implements OnModuleDestroy {
   ): Promise<BatchSummaryDto> {
     const instances = await this.prisma.serverInstance.findMany({
       where: { id: { in: dto.serverInstanceIds }, orgId },
-      include: { host: true },
+      include: { host: true, gameType: { select: { slug: true } } },
     });
     if (instances.length !== dto.serverInstanceIds.length) {
       const found = new Set(instances.map((i) => i.id));
@@ -110,6 +110,8 @@ export class BatchesService implements OnModuleDestroy {
         data: { jobId: job.id, hostId: si.hostId, status: 'pending' },
       });
 
+      const queuePayload = buildBatchAgentPayload(si, dto.payload);
+
       await queue.add(
         jobType,
         {
@@ -118,7 +120,7 @@ export class BatchesService implements OnModuleDestroy {
           hostId: si.hostId,
           serverInstanceId: si.id,
           type: jobType,
-          payload: dto.payload ?? {},
+          payload: queuePayload,
         },
         {
           jobId: run.id,
@@ -391,4 +393,32 @@ export class BatchesService implements OnModuleDestroy {
       },
     });
   }
+}
+
+function buildBatchAgentPayload(
+  serverInstance: {
+    id: string;
+    installPath: string | null;
+    startCommand: string | null;
+    telnetHost: string | null;
+    telnetPort: number | null;
+    telnetPassword: string | null;
+    gameType?: { slug: string };
+  },
+  payload?: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (payload) Object.assign(out, payload);
+
+  out.server_instance_id = serverInstance.id;
+  if (serverInstance.gameType?.slug) out.game_type = serverInstance.gameType.slug;
+  if (serverInstance.installPath) out.install_path = serverInstance.installPath;
+  if (serverInstance.startCommand) out.start_command = serverInstance.startCommand;
+  if (serverInstance.telnetHost) out.telnet_host = serverInstance.telnetHost;
+  if (serverInstance.telnetPort !== null && serverInstance.telnetPort !== undefined) {
+    out.telnet_port = serverInstance.telnetPort;
+  }
+  if (serverInstance.telnetPassword) out.telnet_password = serverInstance.telnetPassword;
+
+  return out;
 }
