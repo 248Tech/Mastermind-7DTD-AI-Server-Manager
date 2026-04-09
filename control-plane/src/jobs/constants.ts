@@ -1,5 +1,15 @@
 /** MVP job types for 7DTD server control */
-export const JOB_TYPES = ['SERVER_START', 'SERVER_STOP', 'SERVER_RESTART'] as const;
+export const JOB_TYPES = [
+  'SERVER_START',
+  'SERVER_STOP',
+  'SERVER_RESTART',
+  'RCON',
+  'SEND_COMMAND',
+  'start',
+  'stop',
+  'restart',
+  'rcon',
+] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
 export const JOB_RUN_STATUS = ['pending', 'running', 'success', 'failed', 'cancelled'] as const;

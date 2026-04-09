@@ -4,9 +4,10 @@ import type { AlertContext } from '../alert-types';
 
 /** Discord embed colors (decimal) */
 const COLORS = {
-  SERVER_DOWN: 0xe74c3c,   // red
-  SERVER_RESTART: 0xf39c12, // orange
-  AGENT_OFFLINE: 0x9b59b6,  // purple
+  SERVER_DOWN: 0xe74c3c,       // red
+  SERVER_RESTART: 0xf39c12,    // orange
+  AGENT_OFFLINE: 0x9b59b6,     // purple
+  FRIGATE_DETECTION: 0x3498db, // blue
 } as const;
 
 export function formatDiscordAlert(type: AlertType, context: AlertContext): DiscordWebhookPayload {
@@ -26,6 +27,9 @@ function buildEmbed(type: AlertType, ctx: AlertContext): DiscordEmbed {
   if (ctx.hostId) fields.push({ name: 'Host ID', value: ctx.hostId, inline: false });
   if (ctx.lastHeartbeatAt) fields.push({ name: 'Last heartbeat', value: String(ctx.lastHeartbeatAt), inline: false });
   if (ctx.reason) fields.push({ name: 'Reason', value: String(ctx.reason), inline: false });
+  if (ctx.frigateCamera) fields.push({ name: 'Camera', value: String(ctx.frigateCamera), inline: true });
+  if (ctx.frigateLabel) fields.push({ name: 'Detected', value: String(ctx.frigateLabel), inline: true });
+  if (ctx.frigateScore != null) fields.push({ name: 'Confidence', value: `${Math.round(Number(ctx.frigateScore) * 100)}%`, inline: true });
 
   return {
     title,
@@ -44,6 +48,8 @@ function getTitle(type: AlertType): string {
       return '🟠 Server restart';
     case 'AGENT_OFFLINE':
       return '🟣 Agent offline';
+    case 'FRIGATE_DETECTION':
+      return '📷 Frigate detection event';
     default:
       return `Alert: ${type}`;
   }

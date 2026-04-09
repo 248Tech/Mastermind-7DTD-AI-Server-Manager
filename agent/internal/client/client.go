@@ -13,6 +13,8 @@ type Client interface {
 	Pair(ctx context.Context, pairingToken string, hostMetadata *HostMetadata) (*PairResponse, error)
 	// Heartbeat sends host id + metadata. Uses stored key for auth.
 	Heartbeat(ctx context.Context, hostID string, meta *HostMetadata) error
+	// SyncDiscoveredServer sends locally discovered game server data to the control plane.
+	SyncDiscoveredServer(ctx context.Context, hostID string, gameType string, server *DiscoveredServer) error
 	// PollJobs long-polls or short-polls for jobs for this host. Returns when at least one job is ready or timeout.
 	PollJobs(ctx context.Context, hostID string, longPollSec int) ([]Job, error)
 	// SubmitJobResult sends the result of a job run.
@@ -23,36 +25,49 @@ type Client interface {
 
 // HostMetadata is sent at pairing and on each heartbeat.
 type HostMetadata struct {
-	Name        string       `json:"name,omitempty"`
-	CPU         string       `json:"cpu,omitempty"`
-	MemTotalMB  uint64       `json:"mem_total_mb,omitempty"`
-	MemFreeMB   uint64       `json:"mem_free_mb,omitempty"`
-	DiskPath    string       `json:"disk_path,omitempty"`
-	DiskFreeMB  uint64       `json:"disk_free_mb,omitempty"`
-	AgentVersion string      `json:"agent_version,omitempty"`
-	ReportedAt  time.Time    `json:"reported_at"`
+	Name         string    `json:"name,omitempty"`
+	CPU          string    `json:"cpu,omitempty"`
+	MemTotalMB   uint64    `json:"memTotalMB,omitempty"`
+	MemFreeMB    uint64    `json:"memFreeMB,omitempty"`
+	DiskPath     string    `json:"diskPath,omitempty"`
+	DiskFreeMB   uint64    `json:"diskFreeMB,omitempty"`
+	AgentVersion string    `json:"agentVersion,omitempty"`
+	ReportedAt   time.Time `json:"reportedAt"`
 }
 
 // PairResponse is returned on successful pairing.
 type PairResponse struct {
-	HostID    string `json:"host_id"`
-	AgentKey  string `json:"agent_key"` // signed JWT or opaque token; store and use for subsequent requests
+	HostID   string `json:"hostId"`
+	AgentKey string `json:"agentKey"` // signed JWT or opaque token; store and use for subsequent requests
 }
 
 // Job is a work unit from the control plane.
 type Job struct {
-	ID               string                 `json:"id"`
+	ID               string                 `json:"jobRunId"`
 	Type             string                 `json:"type"`
-	ServerInstanceID string                 `json:"server_instance_id,omitempty"`
+	ServerInstanceID string                 `json:"serverInstanceId,omitempty"`
 	Payload          map[string]interface{} `json:"payload,omitempty"`
 	// ScheduleID is set when this job was dispatched by the scheduler.
 	ScheduleID       string                 `json:"schedule_id,omitempty"`
 }
 
+// DiscoveredServer is agent-side local server metadata pushed to the control plane.
+type DiscoveredServer struct {
+	Name           string                 `json:"name,omitempty"`
+	InstallPath    string                 `json:"installPath,omitempty"`
+	StartCommand   string                 `json:"startCommand,omitempty"`
+	TelnetHost     string                 `json:"telnetHost,omitempty"`
+	TelnetPort     int                    `json:"telnetPort,omitempty"`
+	TelnetPassword string                 `json:"telnetPassword,omitempty"`
+	Config         map[string]interface{} `json:"config,omitempty"`
+}
+
 // JobResultPayload is sent when submitting a job result.
 type JobResultPayload struct {
-	Status string                 `json:"status"`
-	Output string                 `json:"output,omitempty"`
-	Result map[string]interface{} `json:"result,omitempty"`
-	Error  string                 `json:"error,omitempty"`
+	Status       string                 `json:"status"`
+	Output       string                 `json:"output,omitempty"`
+	Result       map[string]interface{} `json:"result,omitempty"`
+	Error        string                 `json:"error,omitempty"`
+	DurationMs   int64                  `json:"durationMs,omitempty"`
+	ErrorMessage string                 `json:"errorMessage,omitempty"`
 }

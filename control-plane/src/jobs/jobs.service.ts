@@ -27,20 +27,36 @@ export class JobsService {
     jobType: string,
     payload?: Record<string, unknown>,
   ): Promise<{ jobId: string; jobRunId: string }> {
+    const normalizedJobType = this.normalizeJobType(jobType);
     const serverInstance = await this.prisma.serverInstance.findFirst({
       where: { id: serverInstanceId, orgId },
-      include: { host: true },
+      include: {
+        host: true,
+        gameType: { select: { slug: true } },
+      },
     });
     if (!serverInstance) {
       throw new NotFoundException('Server instance not found');
     }
 
+    const mergedPayload = {
+      server_instance_id: serverInstance.id,
+      game_type: serverInstance.gameType.slug,
+      install_path: serverInstance.installPath ?? undefined,
+      start_command: serverInstance.startCommand ?? undefined,
+      telnet_host: serverInstance.telnetHost ?? undefined,
+      telnet_port: serverInstance.telnetPort ?? undefined,
+      telnet_password: serverInstance.telnetPassword ?? undefined,
+      config: serverInstance.config ?? undefined,
+      ...(payload ?? {}),
+    };
+
     const job = await this.prisma.job.create({
       data: {
         orgId,
         serverInstanceId,
-        type: jobType,
-        payload: payload as Prisma.InputJsonValue | undefined,
+        type: normalizedJobType,
+        payload: mergedPayload as Prisma.InputJsonValue,
         createdById: userId,
       },
     });
@@ -58,8 +74,8 @@ export class JobsService {
       jobRunId: run.id,
       hostId: serverInstance.hostId,
       serverInstanceId,
-      type: jobType,
-      payload: payload ?? {},
+      type: normalizedJobType,
+      payload: mergedPayload,
     });
 
     return { jobId: job.id, jobRunId: run.id };
@@ -127,6 +143,21 @@ export class JobsService {
 
     if (run.job.batchId) {
       await this.batchesService.recordJobRunStarted(run.job.orgId, run.jobId);
+    }
+  }
+
+  private normalizeJobType(jobType: string): string {
+    switch (jobType.toLowerCase()) {
+      case 'start':
+        return 'SERVER_START';
+      case 'stop':
+        return 'SERVER_STOP';
+      case 'restart':
+        return 'SERVER_RESTART';
+      case 'rcon':
+        return 'RCON';
+      default:
+        return jobType.toUpperCase();
     }
   }
 }

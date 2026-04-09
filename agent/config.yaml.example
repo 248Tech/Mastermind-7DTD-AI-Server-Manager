@@ -17,3 +17,15 @@ jobs:
 
 host:
   name: ""   # optional; control plane may set display name
+
+discovery:
+  enabled: false
+  seven_dtd:
+    enabled: false
+    # Same-box 7DTD autodiscovery example:
+    # install_path: "/home/steam/serverfiles"
+    # server_config_path: "/home/steam/serverfiles/serverconfig.xml"
+    # mods_path: "/home/steam/serverfiles/Mods"
+    # saves_path: "/home/steam/.local/share/7DaysToDie/Saves"
+    # server_admin_xml_path: "/home/steam/.local/share/7DaysToDie/Saves/serveradmin.xml"
+    # start_command: "/bin/sh /home/steam/serverfiles/startserver.sh"

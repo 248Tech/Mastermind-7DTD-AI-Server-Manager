@@ -94,6 +94,81 @@ export class ServerInstancesService {
     return this.toResponse(created, true);
   }
 
+  async upsertDiscovered7DtdInstance(
+    hostId: string,
+    dto: {
+      name?: string;
+      installPath?: string;
+      startCommand?: string;
+      telnetHost?: string;
+      telnetPort?: number;
+      telnetPassword?: string;
+      config?: Record<string, unknown>;
+    },
+  ) {
+    const host = await this.prisma.host.findUnique({
+      where: { id: hostId },
+      select: { id: true, orgId: true, name: true },
+    });
+    if (!host) {
+      throw new NotFoundException('Host not found');
+    }
+
+    const gameTypeId = await this.get7DtdGameTypeId();
+    const existingList = await this.prisma.serverInstance.findMany({
+      where: { orgId: host.orgId, hostId, gameTypeId },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const installPath = dto.installPath?.trim() || null;
+    const existing = this.findMatchingDiscoveredInstance(existingList, installPath)
+      ?? (existingList.length === 1 ? existingList[0] : null);
+
+    const discoveryConfig = this.mergeConfig(existing?.config, dto.config);
+    const discoveredManaged = this.isDiscoveredManaged(existing?.config);
+
+    if (!existing) {
+      const created = await this.prisma.serverInstance.create({
+        data: {
+          orgId: host.orgId,
+          hostId,
+          gameTypeId,
+          name: dto.name?.trim() || `${host.name} 7DTD`,
+          installPath,
+          startCommand: dto.startCommand?.trim() || null,
+          telnetHost: dto.telnetHost?.trim() || '127.0.0.1',
+          telnetPort: dto.telnetPort ?? 8081,
+          telnetPassword: dto.telnetPassword ?? null,
+          config: discoveryConfig as Prisma.InputJsonValue,
+        },
+      });
+      return { created: true, serverInstanceId: created.id };
+    }
+
+    await this.prisma.serverInstance.update({
+      where: { id: existing.id },
+      data: {
+        ...(installPath && { installPath }),
+        ...(dto.startCommand?.trim() && (discoveredManaged || !existing.startCommand) && {
+          startCommand: dto.startCommand.trim(),
+        }),
+        ...(dto.telnetHost?.trim() && (discoveredManaged || !existing.telnetHost) && {
+          telnetHost: dto.telnetHost.trim(),
+        }),
+        ...(dto.telnetPort !== undefined && (discoveredManaged || existing.telnetPort == null) && {
+          telnetPort: dto.telnetPort,
+        }),
+        ...(dto.telnetPassword !== undefined && (discoveredManaged || !existing.telnetPassword) && {
+          telnetPassword: dto.telnetPassword || null,
+        }),
+        ...(dto.name?.trim() && discoveredManaged && { name: dto.name.trim() }),
+        config: discoveryConfig as Prisma.InputJsonValue,
+      },
+    });
+
+    return { created: false, serverInstanceId: existing.id };
+  }
+
   async update(
     orgId: string,
     userId: string,
@@ -187,6 +262,51 @@ export class ServerInstancesService {
       out.telnetPassword = row.telnetPassword;
     }
     return out;
+  }
+
+  private findMatchingDiscoveredInstance(
+    rows: Array<{
+      id: string;
+      installPath: string | null;
+      config: Prisma.JsonValue | null;
+    }>,
+    installPath: string | null,
+  ) {
+    if (!installPath) return null;
+    const normalizedTarget = this.normalizePath(installPath);
+    return rows.find((row) => this.normalizePath(row.installPath) === normalizedTarget) ?? null;
+  }
+
+  private normalizePath(path?: string | null): string {
+    return (path ?? '').trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  }
+
+  private mergeConfig(existing: Prisma.JsonValue | null | undefined, incoming?: Record<string, unknown>) {
+    const base = existing && typeof existing === 'object' && !Array.isArray(existing)
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
+    const baseDiscovery = base['discovery'];
+    const incomingDiscovery = incoming?.discovery;
+    if (!incoming) return base;
+    return {
+      ...base,
+      ...incoming,
+      discovery: {
+        ...(baseDiscovery && typeof baseDiscovery === 'object' && !Array.isArray(baseDiscovery)
+          ? (baseDiscovery as Record<string, unknown>)
+          : {}),
+        ...(incomingDiscovery && typeof incomingDiscovery === 'object' && !Array.isArray(incomingDiscovery)
+          ? (incomingDiscovery as Record<string, unknown>)
+          : {}),
+      },
+    };
+  }
+
+  private isDiscoveredManaged(config: Prisma.JsonValue | null | undefined): boolean {
+    if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
+    const discovery = (config as Record<string, unknown>).discovery;
+    if (!discovery || typeof discovery !== 'object' || Array.isArray(discovery)) return false;
+    return Boolean((discovery as Record<string, unknown>).managedByAgent);
   }
 
   private async audit(

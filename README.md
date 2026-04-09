@@ -57,14 +57,15 @@
 
 ---
 
-## Release 0.0.4 (March 24, 2026)
+## Release 0.0.4 (April 8, 2026)
 
 ### Highlights
 
-- Windows onboarding now matches the Linux flow (`scripts/setup.ps1` + `scripts/start.ps1`) with Go cross-compiles and infra/start automation.
-- Alerts, schedules, and settings dashboards no longer show “API coming soon” banners after the backend CRUD work went live and the pages now use the `SERVER_*` job/alert types.
-- `scripts/doctor.sh` enforces Node 20+, pnpm 9+, Go 1.22+, Docker Compose v2 plus Postgres/Redis reachability hints; the agent/scheduler propagate `scheduleId` through `QueueJobData`.
-- Control-plane health endpoint and packages are versioned `0.0.4`, and `web/package.json` now exposes `lint:ci` + `check-env` helpers for production builds.
+- Windows onboarding now matches the Linux flow via `scripts/setup.ps1` and `scripts/start.ps1`.
+- Alerts, schedules, settings, and Frigate-backed detection flows are wired through live backend APIs.
+- Same-host Linux 7DTD autodiscovery: the agent can read local server config, mods, and admin XML and auto-register the server instance.
+- Agent job execution now routes through real game adapters and the control-plane/agent JSON contracts line up for pairing, polling, and result reporting.
+- Health/version/docs updated across the stack for release `0.0.4`.
 
 ---
 
@@ -76,6 +77,7 @@
 - Org management: create org, list my orgs, get org details.
 - Agent onboarding: generate pairing token, pair agent, rotate key, heartbeat ingestion.
 - Agent installer script endpoint for one-line setup: `GET /install.sh`.
+- Agent-driven 7DTD server autodiscovery and auto-registration for same-host Linux installs.
 - Host inventory: list hosts, host details, online/offline status from heartbeat.
 - Server instances: CRUD for org-scoped server definitions.
 - Job dispatch: create/list jobs, queue-backed execution, job run status/result reporting from agents.
@@ -152,8 +154,42 @@ Copy `.env.example` to `.env` (and `control-plane/.env.example` to `control-plan
 4. **Start agent (recommended):** run the generated one-liner from the Hosts page:
    - `curl -sSL "http://<control-plane>:3001/install.sh?token=<token>&url=http://<control-plane>:3001&name=<host-name>" | sudo bash`
 5. **Manual fallback:** in `agent/`, copy `config.yaml.example` to `config.yaml`, set `control_plane_url` + `pairing_token`, then run `go run .`
-6. **Register a server instance:** in **Hosts**, use the Register Server form (game type `7dtd` or `minecraft`).
+   - For same-box Linux 7DTD installs, enable `discovery.seven_dtd` and point it at your real paths (for example `serverfiles/serverconfig.xml`, `serverfiles/Mods`, `.local/share/7DaysToDie/Saves/serveradmin.xml`). The agent will auto-register/update the 7DTD server instance for that host.
+6. **Register a server instance:** in **Hosts**, use the Register Server form (game type `7dtd` or `minecraft`). If autodiscovery is enabled and working, this may already be done for you.
 7. **Run jobs:** in **Jobs**, create `start` / `stop` / `restart` / `rcon` / `custom` jobs and monitor status/output.
+
+### Same-Host 7DTD Autodiscovery Example
+
+If the agent runs on the same Linux machine as your 7DTD dedicated server, use config like:
+
+```yaml
+control_plane_url: "http://YOUR_CONTROL_PLANE_IP:3001"
+pairing_token: "PAIRING_TOKEN"
+agent_key_path: "/var/lib/mastermind-agent/agent.key"
+
+heartbeat:
+  interval_sec: 5
+
+jobs:
+  poll_interval_sec: 5
+  long_poll_sec: 30
+
+host:
+  name: "7dtd-box"
+
+discovery:
+  enabled: true
+  seven_dtd:
+    enabled: true
+    install_path: "/home/xxxxxxx/serverfiles"
+    server_config_path: "/home/xxxxxxx/serverfiles/sdtdserver.xml"
+    mods_path: "/home/xxxxxxx/serverfiles/Mods"
+    saves_path: "/home/xxxxxxxx/.local/share/7DaysToDie/Saves"
+    server_admin_xml_path: "/home/xxxxxxxx/.local/share/7DaysToDie/Saves/serveradmin.xml"
+    start_command: "/bin/sh /home/xxxxxxx/serverfiles/startserver.sh"
+```
+
+On first run, the agent will pair, read the local 7DTD paths, and auto-create or update the matching 7DTD server instance in Mastermind.
 
 ---
 

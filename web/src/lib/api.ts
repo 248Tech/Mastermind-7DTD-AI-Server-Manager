@@ -45,7 +45,7 @@ export const api = {
 // Auth types
 export interface AuthResponse { access_token: string; userId: string; orgId: string; }
 export interface User { id: string; email: string; name?: string; }
-export interface Org { id: string; name: string; slug: string; }
+export interface Org { id: string; name: string; slug: string; discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string; }
 export interface Host { id: string; orgId: string; name: string; status: string | null; lastHeartbeatAt: string | null; lastMetrics: Record<string,unknown> | null; agentVersion: string | null; createdAt: string; serverInstances: { id: string; name: string }[]; }
 export interface ServerInstance { id: string; orgId: string; hostId: string; name: string; gameType: string; capabilities: string[]; installPath: string | null; startCommand: string | null; telnetHost: string | null; telnetPort: number | null; createdAt: string; }
 export interface Job { id: string; orgId: string; serverInstanceId: string | null; serverName?: string; type: string; payload: unknown; createdAt: string; latestRun: { id: string; status: string; startedAt: string | null; finishedAt: string | null; result: unknown } | null; }

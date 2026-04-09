@@ -1,13 +1,10 @@
-import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { Injectable, ForbiddenException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 
 @Injectable()
 export class OrgsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * Create a new org and add the requesting user as admin.
-   */
   async createOrg(
     name: string,
     slug: string,
@@ -36,9 +33,6 @@ export class OrgsService {
     return { id: org.id, name: org.name, slug: org.slug, role: 'admin' };
   }
 
-  /**
-   * Get org details if the user is a member.
-   */
   async getOrg(orgId: string, userId: string) {
     const userOrg = await this.prisma.userOrg.findUnique({
       where: { userId_orgId: { userId, orgId } },
@@ -61,6 +55,9 @@ export class OrgsService {
       name: userOrg.org.name,
       slug: userOrg.org.slug,
       discordWebhookUrl: userOrg.org.discordWebhookUrl,
+      frigateUrl: userOrg.org.frigateUrl,
+      frigateApiKey: userOrg.org.frigateApiKey,
+      frigateWebhookSecret: userOrg.org.frigateWebhookSecret,
       createdAt: userOrg.org.createdAt,
       updatedAt: userOrg.org.updatedAt,
       memberCount: userOrg.org._count.userOrgs,
@@ -70,9 +67,6 @@ export class OrgsService {
     };
   }
 
-  /**
-   * List all orgs the user is a member of, with their role.
-   */
   async getUserOrgs(userId: string) {
     const memberships = await this.prisma.userOrg.findMany({
       where: { userId },
@@ -91,6 +85,10 @@ export class OrgsService {
       id: m.org.id,
       name: m.org.name,
       slug: m.org.slug,
+      discordWebhookUrl: m.org.discordWebhookUrl,
+      frigateUrl: m.org.frigateUrl,
+      frigateApiKey: m.org.frigateApiKey,
+      frigateWebhookSecret: m.org.frigateWebhookSecret,
       createdAt: m.org.createdAt,
       updatedAt: m.org.updatedAt,
       memberCount: m.org._count.userOrgs,
@@ -100,34 +98,55 @@ export class OrgsService {
     }));
   }
 
-  /**
-   * Update org settings. Only members can update their own org.
-   */
   async updateOrg(
     orgId: string,
     userId: string,
-    data: { discordWebhookUrl?: string | null },
-  ): Promise<{ id: string; name: string; slug: string; discordWebhookUrl: string | null }> {
+    updates: { discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string },
+  ): Promise<{ ok: true }> {
     const userOrg = await this.prisma.userOrg.findUnique({
       where: { userId_orgId: { userId, orgId } },
+      include: { role: true },
     });
-    if (!userOrg) {
-      throw new ForbiddenException('Not a member of this org');
+    if (!userOrg) throw new ForbiddenException('Not a member of this org');
+
+    const data: Record<string, string | null> = {};
+    if (updates.discordWebhookUrl !== undefined) data.discordWebhookUrl = updates.discordWebhookUrl || null;
+    if (updates.frigateUrl !== undefined) data.frigateUrl = updates.frigateUrl || null;
+    if (updates.frigateApiKey !== undefined) data.frigateApiKey = updates.frigateApiKey || null;
+    if (updates.frigateWebhookSecret !== undefined) data.frigateWebhookSecret = updates.frigateWebhookSecret || null;
+
+    await this.prisma.org.update({ where: { id: orgId }, data });
+    return { ok: true };
+  }
+
+  async testFrigateConnection(
+    orgId: string,
+    userId: string,
+  ): Promise<{ ok: boolean; version?: string; error?: string }> {
+    const userOrg = await this.prisma.userOrg.findUnique({
+      where: { userId_orgId: { userId, orgId } },
+      include: { org: { select: { frigateUrl: true, frigateApiKey: true } } },
+    });
+    if (!userOrg) throw new ForbiddenException('Not a member of this org');
+
+    const frigateUrl = userOrg.org.frigateUrl?.trim();
+    if (!frigateUrl) {
+      return { ok: false, error: 'No Frigate URL configured for this org' };
     }
 
-    const updated = await this.prisma.org.update({
-      where: { id: orgId },
-      data: {
-        ...(data.discordWebhookUrl !== undefined && { discordWebhookUrl: data.discordWebhookUrl }),
-      },
-    });
+    try {
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (userOrg.org.frigateApiKey) headers.Authorization = `Bearer ${userOrg.org.frigateApiKey}`;
 
-    return {
-      id: updated.id,
-      name: updated.name,
-      slug: updated.slug,
-      discordWebhookUrl: updated.discordWebhookUrl,
-    };
+      const res = await fetch(`${frigateUrl}/api/version`, { headers, signal: AbortSignal.timeout(5000) });
+      if (!res.ok) {
+        return { ok: false, error: `Frigate returned HTTP ${res.status}` };
+      }
+      const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+      return { ok: true, version: String(body.version ?? body.Version ?? 'unknown') };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
   }
 
   private async resolveRole(name: string): Promise<{ id: string; name: string }> {

@@ -10,6 +10,7 @@ import { HealthModule } from './health/health.module';
 import { HostsModule } from './hosts/hosts.module';
 import { AuthModule } from './auth/auth.module';
 import { OrgsModule } from './orgs/orgs.module';
+import { FrigateModule } from './frigate/frigate.module';
 import { WebsocketModule } from './websocket/websocket.module';
 
 @Module({
@@ -19,6 +20,7 @@ import { WebsocketModule } from './websocket/websocket.module';
     HealthModule,
     AuthModule,
     OrgsModule,
+    FrigateModule,
     PairingModule,
     HostsModule,
     ServerInstancesModule,

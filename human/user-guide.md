@@ -264,6 +264,31 @@ host:
 
 > In production, `control_plane_url` should use HTTPS.
 
+### Same-box 7DTD autodiscovery
+
+If the agent runs on the same Linux machine as the 7DTD dedicated server, you can let it discover the install and auto-register the server instance.
+
+Add this to `/etc/mastermind-agent/config.yaml`:
+```yaml
+discovery:
+  enabled: true
+  seven_dtd:
+    enabled: true
+    install_path: "/home/xxxxxxx/serverfiles"
+    server_config_path: "/home/xxxxxxx/serverfiles/sdtdserver.xml"
+    mods_path: "/home/xxxxxxx/serverfiles/Mods"
+    saves_path: "/home/xxxxxxxx/.local/share/7DaysToDie/Saves"
+    server_admin_xml_path: "/home/xxxxxxxx/.local/share/7DaysToDie/Saves/serveradmin.xml"
+    start_command: "/bin/sh /home/xxxxxxx/serverfiles/startserver.sh"
+```
+
+What gets discovered:
+- From `sdtdserver.xml` / `serverconfig.xml`: server name, telnet port, telnet password, world/save info
+- From `Mods/`: mod folder names and mod count
+- From `serveradmin.xml`: admin count
+
+On first successful start, the agent will pair, send heartbeats, and auto-create or update the 7DTD server instance for that host.
+
 ### Part C: Run the agent
 
 ```bash
@@ -278,6 +303,8 @@ host:
 5. Agent starts polling for jobs every 5 seconds (`GET /api/agent/hosts/:hostId/jobs/poll`).
 
 After a few seconds, go to **Hosts** in the UI — you should see the host listed with status **Online** and a green indicator.
+
+If 7DTD autodiscovery is enabled, the linked 7DTD server instance should also appear automatically without filling out the Register Server form manually.
 
 ### Running the agent as a service (Linux/systemd)
 

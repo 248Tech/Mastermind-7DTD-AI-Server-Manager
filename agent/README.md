@@ -54,6 +54,30 @@ go build -o mastermind-agent -ldflags="-s -w" .
 
 First run: set `pairing_token` in config; after success remove it. Key and `host_id` are stored under `agent_key_path` directory.
 
+## Same-host 7DTD autodiscovery
+
+If the agent runs on same Linux box as the 7DTD dedicated server, set discovery paths in `config.yaml`:
+
+```yaml
+discovery:
+  enabled: true
+  seven_dtd:
+    enabled: true
+    install_path: "/home/xxxxxxx/serverfiles"
+    server_config_path: "/home/xxxxxxx/serverfiles/sdtdserver.xml"
+    mods_path: "/home/xxxxxxx/serverfiles/Mods"
+    saves_path: "/home/xxxxxxxx/.local/share/7DaysToDie/Saves"
+    server_admin_xml_path: "/home/xxxxxxxx/.local/share/7DaysToDie/Saves/serveradmin.xml"
+    start_command: "/bin/sh /home/xxxxxxx/serverfiles/startserver.sh"
+```
+
+On startup the agent will:
+
+- pair with control plane
+- read local 7DTD config/mod/admin files
+- sync discovered server instance metadata to control plane
+- execute jobs through registered game adapters
+
 ## systemd
 
 See `infra/agent/systemd/mastermind-agent.service.example`.

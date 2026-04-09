@@ -1,14 +1,49 @@
 import { Controller, Post, Param, Body, UseGuards, Req } from '@nestjs/common';
+import { IsInt, IsObject, IsOptional, IsString } from 'class-validator';
 import { HostsService, HeartbeatMetrics } from './hosts.service';
 import { AgentAuthGuard, RequestWithAgent } from '../pairing/agent-auth.guard';
+import { ServerInstancesService } from '../server-instances/server-instances.service';
 
 class HeartbeatDto {
   metrics?: HeartbeatMetrics;
 }
 
+class Discover7DtdServerDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  installPath?: string;
+
+  @IsOptional()
+  @IsString()
+  startCommand?: string;
+
+  @IsOptional()
+  @IsString()
+  telnetHost?: string;
+
+  @IsOptional()
+  @IsInt()
+  telnetPort?: number;
+
+  @IsOptional()
+  @IsString()
+  telnetPassword?: string;
+
+  @IsOptional()
+  @IsObject()
+  config?: Record<string, unknown>;
+}
+
 @Controller('api/agent/hosts')
 export class AgentHostsController {
-  constructor(private readonly hostsService: HostsService) {}
+  constructor(
+    private readonly hostsService: HostsService,
+    private readonly serverInstancesService: ServerInstancesService,
+  ) {}
 
   /**
    * Agent heartbeat endpoint.
@@ -32,5 +67,16 @@ export class AgentHostsController {
     await this.hostsService.recordHeartbeatByHostIdOnly(hostId, dto.metrics);
 
     return { ok: true };
+  }
+
+  @Post(':hostId/server-instances/discover/7dtd')
+  @UseGuards(AgentAuthGuard)
+  async discover7dtd(
+    @Param('hostId') _pathHostId: string,
+    @Body() dto: Discover7DtdServerDto,
+    @Req() req: RequestWithAgent,
+  ) {
+    const hostId = req.agentHostId!;
+    return this.serverInstancesService.upsertDiscovered7DtdInstance(hostId, dto);
   }
 }

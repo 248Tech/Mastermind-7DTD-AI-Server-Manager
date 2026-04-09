@@ -4,7 +4,6 @@ import { api, AlertRule } from '../../../lib/api';
 import { getStoredOrgId } from '../../../lib/auth';
 import { usePoll } from '../../../hooks/useRealtime';
 
-// ─── Design tokens ────────────────────────────────────────────────────────────
 const card: React.CSSProperties = {
   background: '#111118', borderRadius: 10, padding: '1.5rem',
   border: '1px solid #1e1e2a', marginBottom: '1rem',
@@ -80,7 +79,6 @@ function onBlur(e: React.FocusEvent<HTMLInputElement | HTMLSelectElement>) {
   e.target.style.boxShadow = 'none';
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
 export default function AlertsPage() {
   const orgId = getStoredOrgId();
   const [rules, setRules] = useState<AlertRule[]>([]);
@@ -153,7 +151,7 @@ export default function AlertsPage() {
     <div>
       <div style={{ marginBottom: '2rem' }}>
         <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: '#f1f5f9' }}>Alert Rules</h1>
-        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Get notified via Discord when a server goes offline or crosses a threshold</p>
+        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Get notified via Discord when a server goes offline, restarts, or when Frigate detects events</p>
       </div>
 
       {error && (
@@ -183,7 +181,15 @@ export default function AlertsPage() {
                   <option value="SERVER_DOWN">Server Down</option>
                   <option value="SERVER_RESTART">Server Restart</option>
                   <option value="AGENT_OFFLINE">Agent Offline</option>
+                  <option value="FRIGATE_DETECTION">Frigate Detection</option>
                 </select>
+                <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.3rem' }}>
+                  {form.type === 'FRIGATE_DETECTION'
+                    ? 'Triggers when Frigate detects a configured object. Configure Frigate in Settings.'
+                    : form.type === 'AGENT_OFFLINE'
+                      ? 'Triggers when a host agent stops heartbeating.'
+                      : 'Triggers on server lifecycle events.'}
+                </div>
               </div>
               <div>
                 <label style={labelStyle}>Discord Webhook URL *</label>
@@ -212,7 +218,7 @@ export default function AlertsPage() {
                 <label htmlFor="alertEnabled" style={{ ...labelStyle, marginBottom: 0, cursor: 'pointer' }}>Enabled</label>
               </div>
             </div>
-            {createError && <p style={{ color: '#f87171', fontSize: '0.8rem', margin: '0.875rem 0 0' }}>{createError}</p>}
+            {createError && <p style={{ color: '#f87171', margin: '0.875rem 0 0', fontSize: '0.8rem' }}>{createError}</p>}
             <div style={{ marginTop: '1rem', display: 'flex', gap: 8 }}>
               <button type="submit" style={btnPrimary} disabled={createLoading}>
                 {createLoading ? 'Saving…' : 'Save Alert Rule'}

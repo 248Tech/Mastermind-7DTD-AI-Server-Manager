@@ -34,6 +34,7 @@ func Loop(ctx context.Context, c client.Client, hostID string, pollIntervalSec i
 }
 
 func runOne(ctx context.Context, c client.Client, hostID string, j client.Job, exec agent.JobExecutor) {
+	started := time.Now()
 	job := agent.Job{
 		ID:               j.ID,
 		Type:             j.Type,
@@ -44,15 +45,22 @@ func runOne(ctx context.Context, c client.Client, hostID string, j client.Job, e
 	result, err := exec.Execute(ctx, job)
 	if err != nil {
 		_ = c.SubmitJobResult(ctx, hostID, j.ID, &client.JobResultPayload{
-			Status: "failed",
-			Error:  err.Error(),
+			Status:       "failed",
+			ErrorMessage: err.Error(),
+			DurationMs:   time.Since(started).Milliseconds(),
 		})
 		return
 	}
+	errorMessage := result.Error
+	if result.Result != nil {
+		if errValue, ok := result.Result["error"].(string); ok && errorMessage == "" {
+			errorMessage = errValue
+		}
+	}
 	_ = c.SubmitJobResult(ctx, hostID, j.ID, &client.JobResultPayload{
-		Status: result.Status,
-		Output: result.Output,
-		Result: result.Result,
-		Error:  result.Error,
+		Status:       result.Status,
+		Output:       result.Output,
+		ErrorMessage: errorMessage,
+		DurationMs:   time.Since(started).Milliseconds(),
 	})
 }

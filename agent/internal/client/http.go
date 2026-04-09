@@ -35,8 +35,8 @@ func NewHTTPClient(baseURL string, agentKey string) *HTTPClient {
 func (c *HTTPClient) Pair(ctx context.Context, pairingToken string, meta *HostMetadata) (*PairResponse, error) {
 	meta.ReportedAt = time.Now().UTC()
 	body, err := json.Marshal(map[string]interface{}{
-		"pairing_token": pairingToken,
-		"host_metadata": meta,
+		"pairingToken": pairingToken,
+		"hostMetadata": meta,
 	})
 	if err != nil {
 		return nil, err
@@ -82,6 +82,34 @@ func (c *HTTPClient) Heartbeat(ctx context.Context, hostID string, meta *HostMet
 	return nil
 }
 
+// SyncDiscoveredServer implements Client.
+func (c *HTTPClient) SyncDiscoveredServer(ctx context.Context, hostID string, gameType string, server *DiscoveredServer) error {
+	body, err := json.Marshal(server)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.BaseURL+"/api/agent/hosts/"+url.PathEscape(hostID)+"/server-instances/discover/"+url.PathEscape(strings.ToLower(gameType)),
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.AgentKey)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("sync discovered server: %s", resp.Status)
+	}
+	return nil
+}
+
 // PollJobs implements Client. Uses GET with timeout query for long-poll.
 func (c *HTTPClient) PollJobs(ctx context.Context, hostID string, longPollSec int) ([]Job, error) {
 	url := c.BaseURL + "/api/agent/hosts/" + hostID + "/jobs/poll"
@@ -101,11 +129,16 @@ func (c *HTTPClient) PollJobs(ctx context.Context, hostID string, longPollSec in
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("poll jobs: %s", resp.Status)
 	}
-	var list []Job
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+	var payload struct {
+		Job *Job `json:"job"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, err
 	}
-	return list, nil
+	if payload.Job == nil {
+		return nil, nil
+	}
+	return []Job{*payload.Job}, nil
 }
 
 // SubmitJobResult implements Client.

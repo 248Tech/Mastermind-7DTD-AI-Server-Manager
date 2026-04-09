@@ -56,6 +56,15 @@ export default function SettingsPage() {
   const [webhookError, setWebhookError] = useState('');
   const [webhookSuccess, setWebhookSuccess] = useState('');
 
+  const [frigateUrl, setFrigateUrl] = useState('');
+  const [frigateApiKey, setFrigateApiKey] = useState('');
+  const [frigateWebhookSecret, setFrigateWebhookSecret] = useState('');
+  const [frigateLoading, setFrigateLoading] = useState(false);
+  const [frigateError, setFrigateError] = useState('');
+  const [frigateSuccess, setFrigateSuccess] = useState('');
+  const [frigateTestLoading, setFrigateTestLoading] = useState(false);
+  const [frigateTestResult, setFrigateTestResult] = useState<{ ok: boolean; version?: string; error?: string } | null>(null);
+
   useEffect(() => {
     if (!orgId) return;
     Promise.all([
@@ -65,6 +74,36 @@ export default function SettingsPage() {
       .then(([u, o]) => { setUser(u); setOrg(o); setLoading(false); })
       .catch((err) => { setError(err.message); setLoading(false); });
   }, [orgId]);
+
+  async function handleSaveFrigate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!orgId) return;
+    setFrigateLoading(true); setFrigateError(''); setFrigateSuccess(''); setFrigateTestResult(null);
+    try {
+      await api.patch(`/api/orgs/${orgId}`, { frigateUrl, frigateApiKey, frigateWebhookSecret });
+      setFrigateSuccess('Frigate settings saved.');
+    } catch (err: unknown) {
+      setFrigateError(err instanceof Error ? err.message : 'Failed to save Frigate settings');
+    } finally {
+      setFrigateLoading(false);
+    }
+  }
+
+  async function handleTestFrigate() {
+    if (!orgId) return;
+    setFrigateTestLoading(true); setFrigateTestResult(null);
+    try {
+      const result = await api.post<{ ok: boolean; version?: string; error?: string }>(
+        `/api/orgs/${orgId}/detection/frigate/test`,
+        {},
+      );
+      setFrigateTestResult(result);
+    } catch (err: unknown) {
+      setFrigateTestResult({ ok: false, error: err instanceof Error ? err.message : 'Request failed' });
+    } finally {
+      setFrigateTestLoading(false);
+    }
+  }
 
   async function handleUpdateWebhook(e: React.FormEvent) {
     e.preventDefault();
@@ -135,6 +174,95 @@ export default function SettingsPage() {
           <div>
             <button type="submit" style={btnPrimary} disabled={webhookLoading}>
               {webhookLoading ? 'Saving…' : 'Save Webhook'}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* Frigate Detection */}
+      <div style={card}>
+        <h2 style={{ margin: '0 0 0.375rem', fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>Frigate Detection</h2>
+        <p style={{ margin: '0 0 1.25rem', fontSize: '0.8rem', color: '#64748b' }}>
+          Connect to a Frigate NVR instance to receive camera detection events and trigger alerts.
+        </p>
+        {orgId && (
+          <div style={{ marginBottom: '1.25rem', padding: '0.75rem 0.875rem', background: '#0a0a12', borderRadius: 7, border: '1px solid #1e1e2a' }}>
+            <div style={{ fontSize: '0.72rem', color: '#64748b', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Webhook URL — paste this into Frigate → Notifications → Webhooks
+            </div>
+            <code style={{ fontSize: '0.78rem', color: '#818cf8', wordBreak: 'break-all', fontFamily: 'monospace' }}>
+              {`${process.env.NEXT_PUBLIC_CONTROL_PLANE_URL || 'http://localhost:3001'}/api/orgs/${orgId}/detection/frigate/webhook`}
+            </code>
+          </div>
+        )}
+        <form onSubmit={handleSaveFrigate} style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+          <div>
+            <label style={labelStyle}>Frigate URL</label>
+            <input
+              style={inputStyle}
+              type="url"
+              value={frigateUrl}
+              onChange={e => setFrigateUrl(e.target.value)}
+              placeholder="http://192.168.1.100:5000"
+              onFocus={onFocus}
+              onBlur={onBlur}
+            />
+            <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.3rem' }}>
+              Base URL of your Frigate instance (no trailing slash).
+            </div>
+          </div>
+          <div>
+            <label style={labelStyle}>API Key <span style={{ color: '#475569' }}>(optional)</span></label>
+            <input
+              style={inputStyle}
+              type="password"
+              value={frigateApiKey}
+              onChange={e => setFrigateApiKey(e.target.value)}
+              placeholder="Leave blank if Frigate auth is disabled"
+              onFocus={onFocus}
+              onBlur={onBlur}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Webhook Secret <span style={{ color: '#475569' }}>(optional)</span></label>
+            <input
+              style={inputStyle}
+              type="password"
+              value={frigateWebhookSecret}
+              onChange={e => setFrigateWebhookSecret(e.target.value)}
+              placeholder="Shared secret sent in X-Webhook-Secret header"
+              onFocus={onFocus}
+              onBlur={onBlur}
+            />
+            <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.3rem' }}>
+              If set, Frigate must send this value in the <code style={{ fontFamily: 'monospace', color: '#818cf8' }}>X-Webhook-Secret</code> header. Leave blank to accept all requests.
+            </div>
+          </div>
+          {frigateError && <p style={{ color: '#f87171', margin: 0, fontSize: '0.8rem' }}>{frigateError}</p>}
+          {frigateSuccess && <p style={{ color: '#4ade80', margin: 0, fontSize: '0.8rem' }}>{frigateSuccess}</p>}
+          {frigateTestResult && (
+            <div style={{
+              padding: '0.625rem 0.875rem', borderRadius: 7, fontSize: '0.8rem',
+              background: frigateTestResult.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+              border: `1px solid ${frigateTestResult.ok ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
+              color: frigateTestResult.ok ? '#4ade80' : '#f87171',
+            }}>
+              {frigateTestResult.ok
+                ? `Connected — Frigate v${frigateTestResult.version}`
+                : `Connection failed: ${frigateTestResult.error}`}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="submit" style={btnPrimary} disabled={frigateLoading}>
+              {frigateLoading ? 'Saving…' : 'Save Frigate Settings'}
+            </button>
+            <button
+              type="button"
+              style={{ ...btnPrimary, background: '#0f766e', boxShadow: '0 2px 8px rgba(15,118,110,0.25)' }}
+              onClick={handleTestFrigate}
+              disabled={frigateTestLoading}
+            >
+              {frigateTestLoading ? 'Testing…' : 'Test Connection'}
             </button>
           </div>
         </form>

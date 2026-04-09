@@ -15,10 +15,14 @@ import (
 
 	"github.com/mastermind/agent/internal/client"
 	"github.com/mastermind/agent/internal/config"
+	"github.com/mastermind/agent/internal/discovery"
+	"github.com/mastermind/agent/internal/execute"
+	"github.com/mastermind/agent/internal/games"
+	sevendtd "github.com/mastermind/agent/internal/games/7dtd"
+	"github.com/mastermind/agent/internal/games/minecraft"
 	"github.com/mastermind/agent/internal/heartbeat"
 	"github.com/mastermind/agent/internal/jobs"
 	"github.com/mastermind/agent/internal/pairing"
-	"github.com/mastermind/agent/internal/runner"
 )
 
 var (
@@ -73,6 +77,28 @@ func main() {
 
 	cl := client.NewHTTPClient(cfg.ControlPlaneURL, agentKey)
 
+	if shouldDiscoverSevenDTD(cfg) {
+		discovered, err := discovery.DiscoverSevenDTD(cfg.Discovery.SevenDTD)
+		if err != nil {
+			slog.Warn("7dtd discovery failed", "err", err)
+		} else {
+			err = cl.SyncDiscoveredServer(context.Background(), hostID, "7dtd", &client.DiscoveredServer{
+				Name:           discovered.Name,
+				InstallPath:    discovered.InstallPath,
+				StartCommand:   discovered.StartCommand,
+				TelnetHost:     discovered.TelnetHost,
+				TelnetPort:     discovered.TelnetPort,
+				TelnetPassword: discovered.TelnetPassword,
+				Config:         discovered.Config,
+			})
+			if err != nil {
+				slog.Warn("7dtd discovery sync failed", "err", err)
+			} else {
+				slog.Info("7dtd discovery synced", "install_path", discovered.InstallPath, "name", discovered.Name)
+			}
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -80,11 +106,10 @@ func main() {
 	interval := time.Duration(cfg.Heartbeat.IntervalSec) * time.Second
 	go heartbeat.Run(ctx, cl, hostID, cfg.Host.Name, interval, "")
 
-	// Job executor: default runner (allowlist + timeout); future: dispatch by game type via Registry
-	exec := &runner.Runner{
-		AllowedCommands: []string{"start", "stop", "update", "exec"},
-		Timeout:          10 * time.Minute,
-	}
+	registry := games.NewRegistry()
+	registry.Register(sevendtd.NewAdapter())
+	registry.Register(minecraft.NewAdapter())
+	exec := &execute.RegistryExecutor{Registry: registry}
 
 	// Job polling loop (long-poll if configured)
 	go jobs.Loop(ctx, cl, hostID, cfg.Jobs.PollIntervalSec, cfg.Jobs.LongPollSec, exec)
@@ -116,4 +141,18 @@ func loadHostID(agentKeyPath string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(b)), nil
+}
+
+func shouldDiscoverSevenDTD(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	d := cfg.Discovery.SevenDTD
+	return cfg.Discovery.Enabled ||
+		d.Enabled ||
+		d.InstallPath != "" ||
+		d.ServerConfigPath != "" ||
+		d.ModsPath != "" ||
+		d.SavesPath != "" ||
+		d.ServerAdminXMLPath != ""
 }

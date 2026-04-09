@@ -16,6 +16,7 @@ type Config struct {
 	Heartbeat       HeartbeatCfg `yaml:"heartbeat" json:"heartbeat"`
 	Jobs            JobsCfg      `yaml:"jobs" json:"jobs"`
 	Host            HostCfg      `yaml:"host" json:"host"`
+	Discovery       DiscoveryCfg `yaml:"discovery" json:"discovery"`
 }
 
 type HeartbeatCfg struct {
@@ -25,11 +26,27 @@ type HeartbeatCfg struct {
 type JobsCfg struct {
 	PollIntervalSec int  `yaml:"poll_interval_sec" json:"poll_interval_sec"`
 	LongPollSec     int  `yaml:"long_poll_sec" json:"long_poll_sec"` // 0 = short poll
-	WebSocket       bool `yaml:"websocket" json:"websocket"`       // future
+	WebSocket       bool `yaml:"websocket" json:"websocket"`         // future
 }
 
 type HostCfg struct {
 	Name string `yaml:"name" json:"name"` // optional; CP may override
+}
+
+type DiscoveryCfg struct {
+	Enabled  bool                 `yaml:"enabled" json:"enabled"`
+	SevenDTD SevenDTDDiscoveryCfg `yaml:"seven_dtd" json:"seven_dtd"`
+}
+
+type SevenDTDDiscoveryCfg struct {
+	Enabled            bool   `yaml:"enabled" json:"enabled"`
+	InstallPath        string `yaml:"install_path" json:"install_path"`
+	ServerConfigPath   string `yaml:"server_config_path" json:"server_config_path"`
+	ModsPath           string `yaml:"mods_path" json:"mods_path"`
+	SavesPath          string `yaml:"saves_path" json:"saves_path"`
+	ServerAdminXMLPath string `yaml:"server_admin_xml_path" json:"server_admin_xml_path"`
+	StartCommand       string `yaml:"start_command" json:"start_command"`
+	Name               string `yaml:"name" json:"name"`
 }
 
 // Load reads config from path. Supports .yaml, .yml, .json.
@@ -61,6 +78,33 @@ func (c *Config) Env() {
 	}
 	if v := os.Getenv("MASTERMIND_KEY_PATH"); v != "" {
 		c.AgentKeyPath = v
+	}
+	if v := os.Getenv("MASTERMIND_DISCOVERY_ENABLED"); v != "" {
+		c.Discovery.Enabled = v == "1" || v == "true" || v == "TRUE"
+	}
+	if v := os.Getenv("MASTERMIND_7DTD_DISCOVERY_ENABLED"); v != "" {
+		c.Discovery.SevenDTD.Enabled = v == "1" || v == "true" || v == "TRUE"
+	}
+	if v := os.Getenv("MASTERMIND_7DTD_INSTALL_PATH"); v != "" {
+		c.Discovery.SevenDTD.InstallPath = v
+	}
+	if v := os.Getenv("MASTERMIND_7DTD_SERVER_CONFIG"); v != "" {
+		c.Discovery.SevenDTD.ServerConfigPath = v
+	}
+	if v := os.Getenv("MASTERMIND_7DTD_MODS_PATH"); v != "" {
+		c.Discovery.SevenDTD.ModsPath = v
+	}
+	if v := os.Getenv("MASTERMIND_7DTD_SAVES_PATH"); v != "" {
+		c.Discovery.SevenDTD.SavesPath = v
+	}
+	if v := os.Getenv("MASTERMIND_7DTD_SERVERADMIN_XML"); v != "" {
+		c.Discovery.SevenDTD.ServerAdminXMLPath = v
+	}
+	if v := os.Getenv("MASTERMIND_7DTD_START_COMMAND"); v != "" {
+		c.Discovery.SevenDTD.StartCommand = v
+	}
+	if v := os.Getenv("MASTERMIND_7DTD_NAME"); v != "" {
+		c.Discovery.SevenDTD.Name = v
 	}
 }
 
