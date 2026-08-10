@@ -234,7 +234,7 @@ export default function JobsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  {['Server', 'Type', 'Status', 'Created', 'Duration', 'Output'].map(h => (
+                  {['Server', 'Type', 'Started by', 'Status', 'Created', 'Duration', 'Output'].map(h => (
                     <th key={h} style={thStyle}>{h}</th>
                   ))}
                 </tr>
@@ -248,6 +248,9 @@ export default function JobsPage() {
                       </td>
                       <td style={{ ...tdStyle, borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}>
                         <code style={{ background: '#1e1e2a', padding: '0.15rem 0.5rem', borderRadius: 4, fontSize: '0.8rem', color: '#94a3b8' }}>{job.type}</code>
+                      </td>
+                      <td style={{ ...tdStyle, borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }} title={job.startedBy?.email}>
+                        {job.startedBy?.name || 'Unknown'}
                       </td>
                       <td style={{ ...tdStyle, borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}><Badge status={job.latestRun?.status ?? null} /></td>
                       <td style={{ ...tdStyle, color: '#64748b', borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}>{formatRelative(job.createdAt)}</td>
@@ -267,7 +270,7 @@ export default function JobsPage() {
                     </tr>
                     {expandedJob === job.id && Boolean(job.latestRun?.result) && (
                       <tr>
-                        <td colSpan={6} style={{ padding: '0 1rem 1rem', borderBottom: '1px solid #1a1a24' }}>
+                        <td colSpan={7} style={{ padding: '0 1rem 1rem', borderBottom: '1px solid #1a1a24' }}>
                           <pre style={{ background: '#0a0a0f', border: '1px solid #1e1e2a', color: '#94a3b8', padding: '0.875rem', borderRadius: 7, fontSize: '0.8rem', overflow: 'auto', margin: 0, maxHeight: 200 }}>
                             {(() => { const r = job.latestRun?.result; return typeof r === 'string' ? r : JSON.stringify(r as Record<string, unknown>, null, 2); })()}
                           </pre>

@@ -22,6 +22,7 @@ import (
 	"github.com/mastermind/agent/internal/games/minecraft"
 	"github.com/mastermind/agent/internal/heartbeat"
 	"github.com/mastermind/agent/internal/jobs"
+	"github.com/mastermind/agent/internal/logtail"
 	"github.com/mastermind/agent/internal/pairing"
 )
 
@@ -113,6 +114,9 @@ func main() {
 
 	// Job polling loop (long-poll if configured)
 	go jobs.Loop(ctx, cl, hostID, cfg.Jobs.PollIntervalSec, cfg.Jobs.LongPollSec, exec)
+	if cfg.Logs.Enabled && cfg.Logs.Path != "" && cfg.Logs.ServerInstanceID != "" {
+		go logtail.Run(ctx, cl, hostID, cfg.Logs.ServerInstanceID, cfg.Logs.Path, time.Duration(cfg.Logs.PollIntervalSec)*time.Second)
+	}
 
 	<-ctx.Done()
 	slog.Info("shutting down")

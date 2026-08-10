@@ -52,7 +52,7 @@ export class BatchesService implements OnModuleDestroy {
     if (!this.orgQueues.has(orgId)) {
       this.orgQueues.set(
         orgId,
-        new Queue<QueueJobData>(`jobs:${orgId}`, { connection: REDIS_CONNECTION }),
+        new Queue<QueueJobData>(`jobs-${orgId}`, { connection: REDIS_CONNECTION }),
       );
     }
     return this.orgQueues.get(orgId)!;

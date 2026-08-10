@@ -17,6 +17,14 @@ type Config struct {
 	Jobs            JobsCfg      `yaml:"jobs" json:"jobs"`
 	Host            HostCfg      `yaml:"host" json:"host"`
 	Discovery       DiscoveryCfg `yaml:"discovery" json:"discovery"`
+	Logs            LogsCfg      `yaml:"logs" json:"logs"`
+}
+
+type LogsCfg struct {
+	Enabled          bool   `yaml:"enabled" json:"enabled"`
+	Path             string `yaml:"path" json:"path"`
+	ServerInstanceID string `yaml:"server_instance_id" json:"server_instance_id"`
+	PollIntervalSec  int    `yaml:"poll_interval_sec" json:"poll_interval_sec"`
 }
 
 type HeartbeatCfg struct {
@@ -118,5 +126,8 @@ func (c *Config) Defaults() {
 	}
 	if c.Jobs.PollIntervalSec <= 0 {
 		c.Jobs.PollIntervalSec = 5
+	}
+	if c.Logs.PollIntervalSec <= 0 {
+		c.Logs.PollIntervalSec = 2
 	}
 }

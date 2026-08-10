@@ -1,4 +1,4 @@
-import { IsString, IsIn, IsOptional, IsNumber, Min } from 'class-validator';
+import { IsString, IsIn, IsOptional, IsNumber, IsObject, Min } from 'class-validator';
 
 export class ReportResultDto {
   @IsString()
@@ -17,4 +17,8 @@ export class ReportResultDto {
   @IsOptional()
   @IsString()
   output?: string;
+
+  @IsOptional()
+  @IsObject()
+  result?: Record<string, unknown>;
 }

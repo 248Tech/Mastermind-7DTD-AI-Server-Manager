@@ -64,6 +64,12 @@ export default function SettingsPage() {
   const [frigateSuccess, setFrigateSuccess] = useState('');
   const [frigateTestLoading, setFrigateTestLoading] = useState(false);
   const [frigateTestResult, setFrigateTestResult] = useState<{ ok: boolean; version?: string; error?: string } | null>(null);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
 
   useEffect(() => {
     if (!orgId) return;
@@ -117,6 +123,19 @@ export default function SettingsPage() {
     } finally {
       setWebhookLoading(false);
     }
+  }
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault(); setPasswordError(''); setPasswordSuccess('');
+    if (newPassword.length < 12) { setPasswordError('New password must be at least 12 characters.'); return; }
+    if (newPassword !== confirmPassword) { setPasswordError('New passwords do not match.'); return; }
+    setPasswordLoading(true);
+    try {
+      await api.post('/api/auth/change-password', { currentPassword, newPassword });
+      setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
+      setPasswordSuccess('Password changed successfully.');
+    } catch (err) { setPasswordError(err instanceof Error ? err.message : 'Password change failed'); }
+    finally { setPasswordLoading(false); }
   }
 
   return (
@@ -289,9 +308,16 @@ export default function SettingsPage() {
             <InfoRow label="Email" value={user.email} />
             {user.name && <InfoRow label="Name" value={user.name} />}
             <InfoRow label="User ID" value={user.id} mono />
-            <p style={{ margin: '1rem 0 0', fontSize: '0.78rem', color: '#64748b' }}>
-              Account changes are not supported in this version. Contact your administrator to update credentials.
-            </p>
+            <form onSubmit={handleChangePassword} style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'.875rem',marginTop:'1.25rem'}}>
+              <div><label style={labelStyle}>Current password</label><input style={inputStyle} type="password" autoComplete="current-password" value={currentPassword} onChange={e=>setCurrentPassword(e.target.value)} required onFocus={onFocus} onBlur={onBlur}/></div>
+              <div><label style={labelStyle}>New password</label><input style={inputStyle} type="password" autoComplete="new-password" minLength={12} value={newPassword} onChange={e=>setNewPassword(e.target.value)} required onFocus={onFocus} onBlur={onBlur}/></div>
+              <div><label style={labelStyle}>Confirm new password</label><input style={inputStyle} type="password" autoComplete="new-password" minLength={12} value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} required onFocus={onFocus} onBlur={onBlur}/></div>
+              <div style={{gridColumn:'1 / -1'}}>
+                {passwordError&&<p style={{color:'#f87171',fontSize:'.8rem'}}>{passwordError}</p>}
+                {passwordSuccess&&<p style={{color:'#4ade80',fontSize:'.8rem'}}>{passwordSuccess}</p>}
+                <button type="submit" style={btnPrimary} disabled={passwordLoading}>{passwordLoading?'Changing…':'Change Password'}</button>
+              </div>
+            </form>
           </div>
         ) : (
           <p style={{ color: '#64748b', fontSize: '0.875rem' }}>Could not load user info.</p>

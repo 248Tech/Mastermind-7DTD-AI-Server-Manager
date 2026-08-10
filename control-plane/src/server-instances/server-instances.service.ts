@@ -269,6 +269,10 @@ export class ServerInstancesService {
       id: string;
       installPath: string | null;
       config: Prisma.JsonValue | null;
+      startCommand: string | null;
+      telnetHost: string | null;
+      telnetPort: number | null;
+      telnetPassword: string | null;
     }>,
     installPath: string | null,
   ) {

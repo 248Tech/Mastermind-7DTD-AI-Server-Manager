@@ -5,6 +5,8 @@ import { AgentAuthGuard, RequestWithAgent } from '../pairing/agent-auth.guard';
 import { ServerInstancesService } from '../server-instances/server-instances.service';
 
 class HeartbeatDto {
+  @IsOptional()
+  @IsObject()
   metrics?: HeartbeatMetrics;
 }
 

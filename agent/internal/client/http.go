@@ -20,6 +20,10 @@ type HTTPClient struct {
 	HTTPClient *http.Client
 }
 
+func isSuccess(statusCode int) bool {
+	return statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
+}
+
 // NewHTTPClient creates a client. AgentKey can be empty before pairing; set after Pair succeeds.
 func NewHTTPClient(baseURL string, agentKey string) *HTTPClient {
 	return &HTTPClient{
@@ -51,7 +55,7 @@ func (c *HTTPClient) Pair(ctx context.Context, pairingToken string, meta *HostMe
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if !isSuccess(resp.StatusCode) {
 		return nil, fmt.Errorf("pair: %s", resp.Status)
 	}
 	var out PairResponse
@@ -64,7 +68,11 @@ func (c *HTTPClient) Pair(ctx context.Context, pairingToken string, meta *HostMe
 // Heartbeat implements Client.
 func (c *HTTPClient) Heartbeat(ctx context.Context, hostID string, meta *HostMetadata) error {
 	meta.ReportedAt = time.Now().UTC()
-	body, _ := json.Marshal(meta)
+	body, _ := json.Marshal(map[string]interface{}{"metrics": map[string]interface{}{
+		"cpu": meta.CPUPercent, "ramUsedMb": meta.RamUsedMB, "ramTotalMb": meta.RamTotalMB,
+		"diskUsedGb": meta.DiskUsedGB, "latencyMs": meta.LatencyMS,
+		"gameReachable": meta.GameReachable, "agentVersion": meta.AgentVersion,
+	}})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/agent/hosts/"+url.PathEscape(hostID)+"/heartbeat", bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -76,7 +84,7 @@ func (c *HTTPClient) Heartbeat(ctx context.Context, hostID string, meta *HostMet
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if !isSuccess(resp.StatusCode) {
 		return fmt.Errorf("heartbeat: %s", resp.Status)
 	}
 	return nil
@@ -104,7 +112,7 @@ func (c *HTTPClient) SyncDiscoveredServer(ctx context.Context, hostID string, ga
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if !isSuccess(resp.StatusCode) {
 		return fmt.Errorf("sync discovered server: %s", resp.Status)
 	}
 	return nil
@@ -126,7 +134,7 @@ func (c *HTTPClient) PollJobs(ctx context.Context, hostID string, longPollSec in
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if !isSuccess(resp.StatusCode) {
 		return nil, fmt.Errorf("poll jobs: %s", resp.Status)
 	}
 	var payload struct {
@@ -155,7 +163,7 @@ func (c *HTTPClient) SubmitJobResult(ctx context.Context, hostID string, jobID s
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if !isSuccess(resp.StatusCode) {
 		return fmt.Errorf("submit result: %s", resp.Status)
 	}
 	return nil
@@ -163,18 +171,27 @@ func (c *HTTPClient) SubmitJobResult(ctx context.Context, hostID string, jobID s
 
 // StreamLog implements Client.
 func (c *HTTPClient) StreamLog(ctx context.Context, hostID string, serverInstanceID string, r io.Reader) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/agent/hosts/"+hostID+"/log", r)
+	content, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]string{"content": string(content)})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/agent/hosts/"+hostID+"/log", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.AgentKey)
 	req.Header.Set("X-Server-Instance-ID", serverInstanceID)
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if !isSuccess(resp.StatusCode) {
 		return fmt.Errorf("stream log: %s", resp.Status)
 	}
 	return nil

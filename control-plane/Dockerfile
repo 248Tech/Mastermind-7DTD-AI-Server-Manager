@@ -1,7 +1,7 @@
 # ── Stage 1: deps ────────────────────────────────────────────────────────────
 FROM node:20-alpine AS deps
 RUN apk add --no-cache openssl
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
 WORKDIR /app
 COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile --prod=false || pnpm install --prod=false

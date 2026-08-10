@@ -4,6 +4,9 @@ import { AgentAuthGuard } from './agent-auth.guard';
 import { PairingController } from './pairing.controller';
 import { PairingService } from './pairing.service';
 import { PrismaService } from '../prisma.service';
+import { JwtAuthGuard } from '../server-instances/guards/jwt-auth.guard';
+import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
+import { RequireOrgRoleGuard } from '../server-instances/guards/require-org-role.guard';
 
 @Module({
   imports: [
@@ -15,7 +18,14 @@ import { PrismaService } from '../prisma.service';
     }),
   ],
   controllers: [PairingController],
-  providers: [PairingService, PrismaService, AgentAuthGuard],
+  providers: [
+    PairingService,
+    PrismaService,
+    AgentAuthGuard,
+    JwtAuthGuard,
+    OrgMemberGuard,
+    RequireOrgRoleGuard,
+  ],
   exports: [PairingService, AgentAuthGuard],
 })
 export class PairingModule {}

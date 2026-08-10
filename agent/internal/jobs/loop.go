@@ -60,6 +60,7 @@ func runOne(ctx context.Context, c client.Client, hostID string, j client.Job, e
 	_ = c.SubmitJobResult(ctx, hostID, j.ID, &client.JobResultPayload{
 		Status:       result.Status,
 		Output:       result.Output,
+		Result:       result.Result,
 		ErrorMessage: errorMessage,
 		DurationMs:   time.Since(started).Milliseconds(),
 	})

@@ -40,11 +40,7 @@ export default function Home() {
         background: '#111118', border: '1px solid #1e1e2a', borderRadius: 16,
         padding: '2.5rem 3rem', maxWidth: 520, width: '100%', textAlign: 'center',
       }}>
-        <div style={{
-          width: 56, height: 56, background: 'linear-gradient(135deg, #6366f1 0%, #818cf8 100%)',
-          borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '1.5rem', margin: '0 auto 1.25rem', boxShadow: '0 0 32px rgba(99,102,241,0.4)',
-        }}>⬡</div>
+        <img src="/mastermind-logo.png" alt="Mastermind" style={{width:88,height:88,objectFit:'cover',objectPosition:'center 42%',borderRadius:14,display:'block',margin:'0 auto 1.25rem',boxShadow:'0 0 32px rgba(249,115,22,.4)'}} />
         <h1 style={{ margin: '0 0 0.375rem', fontSize: '1.5rem', fontWeight: 700, color: '#f1f5f9' }}>
           Mastermind
         </h1>

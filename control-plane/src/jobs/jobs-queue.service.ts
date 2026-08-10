@@ -32,7 +32,7 @@ export class JobsQueueService implements OnModuleDestroy {
     if (!this.orgQueues.has(orgId)) {
       this.orgQueues.set(
         orgId,
-        new Queue<QueueJobData>(`jobs:${orgId}`, { connection: REDIS_CONNECTION }),
+        new Queue<QueueJobData>(`jobs-${orgId}`, { connection: REDIS_CONNECTION }),
       );
     }
     return this.orgQueues.get(orgId)!;
@@ -60,7 +60,7 @@ export class JobsQueueService implements OnModuleDestroy {
       if (job.data.hostId === hostId) {
         // Move job to active by promoting it
         try {
-          await job.changeDelay(0); // ensure not delayed
+          if (job.delay > 0) await job.changeDelay(0);
           // We "claim" it by removing from queue; agent will submit result
           await job.remove();
           return job.data;

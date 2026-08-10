@@ -7,30 +7,18 @@ import {
   Req,
   HttpCode,
   HttpStatus,
-  CanActivate,
-  ExecutionContext,
-  Injectable,
 } from '@nestjs/common';
 import { PairingService } from './pairing.service';
 import { CreatePairingTokenDto } from './dto/create-pairing-token.dto';
 import { PairRequestDto } from './dto/pair-request.dto';
 import { PairResponseDto } from './dto/pair-response.dto';
 import { PairingTokenResponseDto } from './dto/pairing-token-response.dto';
-
-/** Stub: replace with your JWT strategy + org admin check (e.g. RolesGuard + orgId from param). */
-@Injectable()
-class JwtAuthGuard implements CanActivate {
-  canActivate(_ctx: ExecutionContext): boolean {
-    return true;
-  }
-}
-
-@Injectable()
-class OrgAdminGuard implements CanActivate {
-  canActivate(_ctx: ExecutionContext): boolean {
-    return true;
-  }
-}
+import { JwtAuthGuard } from '../server-instances/guards/jwt-auth.guard';
+import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
+import {
+  RequireOrgRoleGuard,
+  RequireOrgRoles,
+} from '../server-instances/guards/require-org-role.guard';
 
 /** Request with optional user and org from auth */
 interface RequestWithOrg {
@@ -53,7 +41,8 @@ export class PairingController {
    * Require: JWT + org membership + admin/operator role.
    */
   @Post('api/orgs/:orgId/pairing-tokens')
-  @UseGuards(JwtAuthGuard, OrgAdminGuard)
+  @UseGuards(JwtAuthGuard, OrgMemberGuard, RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
   async createToken(
     @Param('orgId') orgId: string,
     @Body() dto: CreatePairingTokenDto,
@@ -91,7 +80,8 @@ export class PairingController {
    * Admin: rotate agent key for a host. Returns new key (display once; agent must re-fetch or use new key from separate channel).
    */
   @Post('api/orgs/:orgId/hosts/:hostId/rotate-key')
-  @UseGuards(JwtAuthGuard, OrgAdminGuard)
+  @UseGuards(JwtAuthGuard, OrgMemberGuard, RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
   async rotateKey(
     @Param('orgId') orgId: string,
     @Param('hostId') hostId: string,

@@ -106,6 +106,7 @@ export class JobsService {
       durationMs: dto.durationMs,
       errorMessage: dto.errorMessage,
       output: dto.output,
+      data: dto.result as Prisma.InputJsonValue | undefined,
     };
 
     await this.prisma.jobRun.update({
@@ -116,6 +117,10 @@ export class JobsService {
         result,
       },
     });
+
+    if (run.job.type === 'PLAYER_LIST_SYNC' && runStatus === 'success' && dto.output && run.job.serverInstanceId) {
+      await this.reconcilePlayers(run.job.orgId, run.job.serverInstanceId, dto.output);
+    }
 
     const orgId = run.job.orgId;
     if (run.job.batchId) {
@@ -158,6 +163,37 @@ export class JobsService {
         return 'RCON';
       default:
         return jobType.toUpperCase();
+    }
+  }
+
+  private async reconcilePlayers(orgId: string, serverInstanceId: string, output: string) {
+    if (!/Total of\s+\d+\s+in the game/i.test(output)) return;
+    const now = new Date();
+    const seen = new Set<string>();
+    for (const line of output.split(/\r?\n/)) {
+      const head = line.match(/^\s*\d+\.\s+id=(\d+),\s*([^,]+),/i);
+      if (!head) continue;
+      const steam = line.match(/(?:pltfmid|steamid)=Steam_([0-9]{15,20})/i)?.[1] ?? null;
+      const eos = line.match(/(?:crossid|pltfmid)=EOS_([a-f0-9]{20,64})/i)?.[1] ?? null;
+      const name = head[2].trim();
+      const identityKey = steam ? `steam:${steam}` : eos ? `eos:${eos}` : `name:${name.toLowerCase()}`;
+      seen.add(identityKey);
+      const existing = await this.prisma.player.findUnique({ where: { serverInstanceId_identityKey: { serverInstanceId, identityKey } } });
+      const player = await this.prisma.player.upsert({
+        where: { serverInstanceId_identityKey: { serverInstanceId, identityKey } },
+        create: { orgId, serverInstanceId, identityKey, steamId: steam, eosId: eos, entityId: Number(head[1]), name, online: true, currentSessionStartedAt: now, lastSeenAt: now },
+        update: { steamId: steam ?? existing?.steamId, eosId: eos ?? existing?.eosId, entityId: Number(head[1]), name, online: true, lastSeenAt: now, ...(!existing?.online ? { currentSessionStartedAt: now } : {}) },
+      });
+      if (!existing?.online) await this.prisma.playerSession.create({ data: { playerId: player.id, startedAt: now } });
+    }
+    const missing = await this.prisma.player.findMany({ where: { serverInstanceId, online: true, identityKey: { notIn: [...seen] } } });
+    for (const player of missing) {
+      const end = player.lastSeenAt < now ? player.lastSeenAt : now;
+      const duration = player.currentSessionStartedAt ? Math.max(0, Math.floor((end.getTime() - player.currentSessionStartedAt.getTime()) / 1000)) : 0;
+      await this.prisma.$transaction([
+        this.prisma.player.update({ where: { id: player.id }, data: { online: false, currentSessionStartedAt: null, lifetimeSeconds: { increment: duration } } }),
+        this.prisma.playerSession.updateMany({ where: { playerId: player.id, endedAt: null }, data: { endedAt: end, durationSeconds: duration } }),
+      ]);
     }
   }
 }

@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 
 const SALT_BYTES = 16;
 
@@ -20,11 +20,19 @@ function hashPassword(password: string, salt: string): string {
 
 function makePasswordHash(password: string): string {
   const salt = generateSalt();
-  const hash = hashPassword(password, salt);
-  return `${salt}:${hash}`;
+  const hash = scryptSync(password, salt, 64).toString('hex');
+  return `scrypt$${salt}$${hash}`;
 }
 
 function verifyPassword(password: string, storedHash: string): boolean {
+  if (storedHash.startsWith('scrypt$')) {
+    const [, salt, hash] = storedHash.split('$');
+    if (!salt || !hash) return false;
+    const candidate = scryptSync(password, salt, 64);
+    const expected = Buffer.from(hash, 'hex');
+    return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+  }
+  // Backward compatibility for existing salt:sha256 accounts. Password changes migrate to scrypt.
   const [salt, hash] = storedHash.split(':');
   if (!salt || !hash) return false;
   const candidate = hashPassword(password, salt);
@@ -36,6 +44,7 @@ function verifyPassword(password: string, storedHash: string): boolean {
   for (let i = 0; i < a.length; i++) {
     diff |= a[i] ^ b[i];
   }
+
   return diff === 0;
 }
 
@@ -45,6 +54,17 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
   ) {}
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
+    if (!user?.passwordHash || !verifyPassword(currentPassword, user.passwordHash)) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+    if (currentPassword === newPassword) {
+      throw new ConflictException('New password must differ from current password');
+    }
+    await this.prisma.user.update({ where: { id: userId }, data: { passwordHash: makePasswordHash(newPassword) } });
+  }
 
   /**
    * Register a new user. Optionally associate with an org (defaults to the default org).

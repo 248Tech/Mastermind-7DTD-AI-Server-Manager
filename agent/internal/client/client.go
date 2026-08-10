@@ -25,14 +25,20 @@ type Client interface {
 
 // HostMetadata is sent at pairing and on each heartbeat.
 type HostMetadata struct {
-	Name         string    `json:"name,omitempty"`
-	CPU          string    `json:"cpu,omitempty"`
-	MemTotalMB   uint64    `json:"memTotalMB,omitempty"`
-	MemFreeMB    uint64    `json:"memFreeMB,omitempty"`
-	DiskPath     string    `json:"diskPath,omitempty"`
-	DiskFreeMB   uint64    `json:"diskFreeMB,omitempty"`
-	AgentVersion string    `json:"agentVersion,omitempty"`
-	ReportedAt   time.Time `json:"reportedAt"`
+	Name          string    `json:"name,omitempty"`
+	CPU           string    `json:"cpu,omitempty"`
+	MemTotalMB    uint64    `json:"memTotalMB,omitempty"`
+	MemFreeMB     uint64    `json:"memFreeMB,omitempty"`
+	CPUPercent    float64   `json:"cpuPercent,omitempty"`
+	RamUsedMB     float64   `json:"ramUsedMB,omitempty"`
+	RamTotalMB    float64   `json:"ramTotalMB,omitempty"`
+	DiskUsedGB    float64   `json:"diskUsedGB,omitempty"`
+	LatencyMS     float64   `json:"latencyMS,omitempty"`
+	GameReachable bool      `json:"gameReachable"`
+	DiskPath      string    `json:"diskPath,omitempty"`
+	DiskFreeMB    uint64    `json:"diskFreeMB,omitempty"`
+	AgentVersion  string    `json:"agentVersion,omitempty"`
+	ReportedAt    time.Time `json:"reportedAt"`
 }
 
 // PairResponse is returned on successful pairing.
@@ -48,7 +54,7 @@ type Job struct {
 	ServerInstanceID string                 `json:"serverInstanceId,omitempty"`
 	Payload          map[string]interface{} `json:"payload,omitempty"`
 	// ScheduleID is set when this job was dispatched by the scheduler.
-	ScheduleID       string                 `json:"schedule_id,omitempty"`
+	ScheduleID string `json:"schedule_id,omitempty"`
 }
 
 // DiscoveredServer is agent-side local server metadata pushed to the control plane.

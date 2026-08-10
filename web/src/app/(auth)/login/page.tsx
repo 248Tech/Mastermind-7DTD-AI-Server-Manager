@@ -78,17 +78,7 @@ export default function LoginPage() {
       }}>
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2rem' }}>
-          <div style={{
-            width: 40,
-            height: 40,
-            background: 'linear-gradient(135deg, #6366f1 0%, #818cf8 100%)',
-            borderRadius: 10,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '1.25rem',
-            boxShadow: '0 0 24px rgba(99,102,241,0.4)',
-          }}>⬡</div>
+          <img src="/mastermind-logo.png" alt="Mastermind" style={{width:48,height:48,objectFit:'cover',objectPosition:'center 42%',borderRadius:10,boxShadow:'0 0 24px rgba(249,115,22,.4)'}} />
           <div>
             <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#f1f5f9' }}>Mastermind</div>
             <div style={{ fontSize: '0.75rem', color: '#64748b' }}>7DTD Server Manager</div>

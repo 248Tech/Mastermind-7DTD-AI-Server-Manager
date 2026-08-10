@@ -5,12 +5,16 @@ import { PrismaService } from '../prisma.service';
 export interface HeartbeatMetrics {
   cpu?: number;
   ramUsedMb?: number;
+  ramTotalMb?: number;
   diskUsedGb?: number;
+  latencyMs?: number;
+  gameReachable?: boolean;
   agentVersion?: string;
 }
 
 @Injectable()
 export class HostsService {
+  private readonly lastHealthSample = new Map<string, number>();
   constructor(private readonly prisma: PrismaService) {}
 
   /** List all hosts in the org with their server instance count. */
@@ -18,6 +22,7 @@ export class HostsService {
     const hosts = await this.prisma.host.findMany({
       where: { orgId },
       include: {
+        serverInstances: { select: { id: true, name: true } },
         _count: { select: { serverInstances: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -72,7 +77,10 @@ export class HostsService {
     if (metrics) {
       if (metrics.cpu !== undefined) metricsData.cpu = metrics.cpu;
       if (metrics.ramUsedMb !== undefined) metricsData.ramUsedMb = metrics.ramUsedMb;
+      if (metrics.ramTotalMb !== undefined) metricsData.ramTotalMb = metrics.ramTotalMb;
       if (metrics.diskUsedGb !== undefined) metricsData.diskUsedGb = metrics.diskUsedGb;
+      if (metrics.latencyMs !== undefined) metricsData.latencyMs = metrics.latencyMs;
+      if (metrics.gameReachable !== undefined) metricsData.gameReachable = metrics.gameReachable;
     }
 
     await this.prisma.host.update({
@@ -86,6 +94,23 @@ export class HostsService {
         ...(metrics?.agentVersion !== undefined && { agentVersion: metrics.agentVersion }),
       },
     });
+
+    if (metrics) {
+      const org = await this.prisma.org.findUnique({ where: { id: orgId }, select: { healthIntervalSec: true } });
+      const now = Date.now();
+      if (org && now - (this.lastHealthSample.get(hostId) ?? 0) >= org.healthIntervalSec * 1000) {
+        this.lastHealthSample.set(hostId, now);
+        await this.prisma.healthSample.create({ data: {
+          orgId, hostId,
+          cpuPercent: metrics.cpu ?? 0,
+          ramUsedMb: metrics.ramUsedMb ?? 0,
+          ramTotalMb: metrics.ramTotalMb ?? 0,
+          diskUsedGb: metrics.diskUsedGb ?? 0,
+          latencyMs: metrics.latencyMs ?? 0,
+          gameReachable: metrics.gameReachable ?? false,
+        }});
+      }
+    }
 
     return { wasOffline, host: { id: existing.id, name: existing.name, orgId: existing.orgId } };
   }
@@ -162,7 +187,7 @@ export class HostsService {
       lastMetrics: host.lastMetrics ?? null,
       labels: host.labels ?? null,
       serverInstanceCount: host._count?.serverInstances ?? host.serverInstances?.length ?? 0,
-      serverInstances: host.serverInstances,
+      serverInstances: host.serverInstances ?? [],
       createdAt: host.createdAt,
       updatedAt: host.updatedAt,
     };

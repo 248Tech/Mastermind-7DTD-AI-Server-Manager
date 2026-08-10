@@ -1,0 +1,23 @@
+[Unit]
+Description=Mastermind game server agent
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=mastermind-agent
+Group=mastermind-agent
+ExecStartPre=+/usr/bin/chgrp mastermind-agent /opt/7dtd/serverconfig.xml
+ExecStartPre=+/usr/bin/chmod 0640 /opt/7dtd/serverconfig.xml
+ExecStart=/usr/local/bin/mastermind-agent -config /etc/mastermind-agent/config.yaml -log info
+Restart=on-failure
+RestartSec=10
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/opt/7dtd
+ReadWritePaths=/var/lib/mastermind-agent /opt/7dtd/server/Mods /opt/7dtd/userdata/Saves
+
+[Install]
+WantedBy=multi-user.target

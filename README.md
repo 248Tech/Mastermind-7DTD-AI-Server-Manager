@@ -57,43 +57,37 @@
 
 ---
 
-## Release 0.0.4 (April 8, 2026)
+## Release 0.0.5 (August 10, 2026)
 
 ### Highlights
 
-- Windows onboarding now matches the Linux flow via `scripts/setup.ps1` and `scripts/start.ps1`.
-- Alerts, schedules, settings, and Frigate-backed detection flows are wired through live backend APIs.
-- Same-host Linux 7DTD autodiscovery: the agent can read local server config, mods, and admin XML and auto-register the server instance.
-- Agent job execution now routes through real game adapters and the control-plane/agent JSON contracts line up for pairing, polling, and result reporting.
-- Health/version/docs updated across the stack for release `0.0.4`.
+- Server-first dashboard with per-server controls, health, logs, players, mods, RegionHealer, and filtered job history.
+- Persistent log ingestion with configurable retention and keyword alerts.
+- Live CPU, RAM, disk, latency, and game-reachability monitoring with configurable sampling intervals.
+- Authoritative 7DTD player tracking through scheduled `lp` polling, including Steam/EOS IDs, sessions, lifetime playtime, kick, and ban controls.
+- Safe mod inventory, bulk quarantine, restore, and permanent deletion using `ModInfo.xml` metadata.
+- Confirmed save wipe workflow plus reliable stop/start verification for restart jobs.
+- Hardened pairing, account-attributed jobs, password changes with scrypt migration, responsive UI, and custom branding.
 
 ---
 
-## Current known features (v0.0.4)
+## Current features (v0.0.5)
 
 ### Implemented end-to-end
 
-- User auth: register, login, `GET /api/auth/me` (JWT).
-- Org management: create org, list my orgs, get org details.
-- Agent onboarding: generate pairing token, pair agent, rotate key, heartbeat ingestion.
-- Agent installer script endpoint for one-line setup: `GET /install.sh`.
-- Agent-driven 7DTD server autodiscovery and auto-registration for same-host Linux installs.
-- Host inventory: list hosts, host details, online/offline status from heartbeat.
-- Server instances: CRUD for org-scoped server definitions.
-- Job dispatch: create/list jobs, queue-backed execution, job run status/result reporting from agents.
-- Agent polling loop: host fetches pending jobs and posts job results back.
-- Game type registry: `7dtd` and `minecraft` seeded with capabilities.
-- Schedules CRUD API + queue integration.
-- Alert rule CRUD API.
-- Org settings update API (Discord webhook supported).
-- Web UI pages:
-  - Login/Register
-  - Dashboard (host + recent job summaries)
-  - Hosts (pair token generation, server registration)
-  - Jobs (create start/stop/restart/rcon/custom jobs + view output)
-  - Schedules (create/list/edit/delete schedule rules, job types aligned to SERVER_START/STOP/RESTART)
-  - Alerts (create/list/edit/delete alert rules annotated with SERVER_DOWN / SERVER_RESTART / AGENT_OFFLINE)
-  - Settings (org/account + Discord webhook update)
+- **Authentication and organizations:** register/login, JWT sessions, organization membership and roles, protected pairing-token creation, agent-key rotation, and password changes using salted scrypt with legacy-hash migration.
+- **Host agents:** one-time pairing, persistent agent identity, heartbeat and inventory reporting, long-poll job execution, same-host Linux 7DTD autodiscovery, and automatic server registration.
+- **Server-first dashboard:** registered servers are primary; each server opens a management view with overview, controls, console, and server-filtered job history.
+- **7DTD controls:** start, graceful stop, verified restart, telnet console commands, and a confirmed save wipe that validates paths, pauses RegionHealer, deletes only the configured save, starts a fresh world, and verifies creation.
+- **Jobs and accountability:** queue-backed start/stop/restart/RCON/custom jobs, result/output tracking, schedule and batch support, per-server filtering, and initiating-account attribution.
+- **Logs:** agent log tailing, database persistence, live viewing, selectable retention in days/weeks/months, keyword alert definitions, match history, and enable/disable controls.
+- **Health:** CPU, RAM, disk, agent latency, and 7DTD reachability samples with averages and configurable polling intervals.
+- **Players:** authoritative `lp` polling every 60 seconds by default, Steam/EOS identity capture, online state, current/lifetime playtime, last seen, and console-backed kick/ban actions.
+- **Mods:** active and quarantined inventories, `ModInfo.xml` name/version/author/website parsing, single or bulk selection, select-all, quarantine, restore, and constrained permanent deletion.
+- **RegionHealer:** status information plus start/stop jobs for a separately installed RegionHealer-v2 service.
+- **Alerts and integrations:** Discord alerts, schedules, log-keyword alerts, server/agent events, and Frigate webhook/settings support.
+- **Responsive UI:** full desktop, half-window compact navigation, mobile drawer, safe table overflow, custom Mastermind logo, and favicon.
+- **Game adapters:** 7 Days to Die is fully managed; Minecraft adapter and capability registry remain available for expansion.
 
 ---
 
@@ -112,7 +106,7 @@
 git clone https://github.com/248Tech/Mastermind-7DTD-AI-Server-Manager.git
 cd Mastermind-7DTD-AI-Server-Manager
 
-# Recommended one-line start (v0.0.3)
+# Recommended one-line start
 make start
 # or: bash scripts/start.sh
 ```

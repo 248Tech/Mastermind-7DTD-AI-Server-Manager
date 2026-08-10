@@ -13,6 +13,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
+import { Prisma } from '@prisma/client';
 import { JwtAuthGuard } from '../server-instances/guards/jwt-auth.guard';
 import { OrgMemberGuard, ORG_ROLE_KEY, RequestWithOrgRole } from '../server-instances/guards/org-member.guard';
 
@@ -66,8 +67,8 @@ export class AlertRulesController {
       data: {
         orgId,
         name: dto.name.trim(),
-        condition: dto.condition,
-        channel: dto.channel,
+        condition: dto.condition as Prisma.InputJsonValue,
+        channel: dto.channel as Prisma.InputJsonValue,
         enabled: dto.enabled ?? true,
       },
     });

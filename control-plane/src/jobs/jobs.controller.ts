@@ -36,14 +36,16 @@ export class JobsController {
   async list(
     @Param('orgId') orgId: string,
     @Query('limit') limit?: string,
+    @Query('serverInstanceId') serverInstanceId?: string,
   ) {
     const take = limit ? Math.min(100, parseInt(limit, 10) || 20) : 20;
     const jobs = await this.prisma.job.findMany({
-      where: { orgId },
+      where: { orgId, type: { not: 'PLAYER_LIST_SYNC' }, ...(serverInstanceId ? { serverInstanceId } : {}) },
       orderBy: { createdAt: 'desc' },
       take,
       include: {
         serverInstance: { select: { id: true, name: true } },
+        createdBy: { select: { id: true, name: true, email: true } },
         jobRuns: { orderBy: { createdAt: 'desc' }, take: 1 },
       },
     });
@@ -56,6 +58,11 @@ export class JobsController {
       type: j.type,
       payload: j.payload,
       createdAt: j.createdAt.toISOString(),
+      startedBy: j.createdBy ? {
+        id: j.createdBy.id,
+        name: j.createdBy.name || j.createdBy.email,
+        email: j.createdBy.email,
+      } : null,
       latestRun: j.jobRuns[0]
         ? {
             id: j.jobRuns[0].id,

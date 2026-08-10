@@ -11,6 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - (none)
 
+## [0.0.5] - 2026-08-10
+
+### Added
+
+- Server-first dashboard with per-server management and filtered job history.
+- Persistent log tailing, retention settings, keyword alerts, and alert history.
+- Host/game health monitoring with CPU, memory, disk, latency, reachability, and configurable intervals.
+- Authoritative 7DTD player polling with Steam/EOS identity, session/lifetime playtime, last-seen, kick, and ban controls.
+- Mod inventory with metadata parsing, multi-select, quarantine, restore, and constrained permanent deletion.
+- RegionHealer service controls, account password changes, job actor attribution, responsive/mobile layouts, and branded artwork.
+- Confirmed, path-constrained world-save wipe and fresh-save verification.
+
+### Changed
+
+- Bumped repository, control-plane, web, and health endpoint versions to `0.0.5`.
+- Hardened agent deployment and service permissions around 7DTD, Mods, Saves, and RegionHealer.
+- Deployment helper now requires administrator credentials through environment variables instead of embedding defaults.
+
+### Fixed
+
+- Pairing authorization/token generation, successful 2xx handling, BullMQ queue names, and normal-job claiming.
+- False online players and incorrect session totals by making scheduled `lp` results authoritative.
+- Save-wipe I/O failures by stopping and verifying 7DTD before deletion.
+- Restart jobs that reported success without restarting; agent now waits for complete shutdown, starts, and verifies active state.
+- Command runner timeout context now applies to the spawned process.
+
 ### Changed
 
 - (none)

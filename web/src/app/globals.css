@@ -70,3 +70,33 @@ a, button {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
 }
+
+.mobile-menu-button, .mobile-nav-backdrop { display: none; }
+.app-main { min-width: 0; width: calc(100% - 220px); }
+
+@media (max-width: 1100px) and (min-width: 769px) {
+  .app-nav { width: 72px !important; }
+  .app-main { margin-left: 72px !important; width: calc(100% - 72px); padding: 1.25rem !important; }
+  .app-nav .nav-label { display: none; }
+  .app-nav .nav-logo { padding: 1rem 1.25rem !important; }
+  .app-nav .nav-setup a { justify-content: center; }
+}
+
+@media (max-width: 768px) {
+  .app-shell { display: block !important; }
+  .mobile-menu-button { display: block; position: fixed; top: .75rem; left: .75rem; z-index: 220; width: 42px; height: 42px; border-radius: 8px; border: 1px solid #252532; background: #111118; color: #f1f5f9; cursor: pointer; font-size: 1.2rem; }
+  .mobile-nav-backdrop { display: block; position: fixed; inset: 0; z-index: 190; border: 0; background: rgba(0,0,0,.68); padding: 0; }
+  .app-nav { width: min(82vw, 280px) !important; transform: translateX(-105%); transition: transform .2s ease; z-index: 210 !important; }
+  .app-nav.app-nav-open { transform: translateX(0); box-shadow: 12px 0 32px rgba(0,0,0,.45); }
+  .app-main { margin-left: 0 !important; width: 100% !important; padding: 4.5rem 1rem 1.25rem !important; overflow-x: hidden; }
+  .app-main-public { padding: 0 !important; }
+  .app-main table { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; }
+  .app-main h1 { overflow-wrap: anywhere; }
+  .app-main [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+  .app-main [style*="display: flex"] { max-width: 100%; flex-wrap: wrap; }
+  .app-main input, .app-main select, .app-main textarea { max-width: 100%; }
+}
+
+@media (max-width: 620px) {
+  .dashboard-stats-grid, .server-card-grid { grid-template-columns: 1fr !important; }
+}

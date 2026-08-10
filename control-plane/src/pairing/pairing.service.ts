@@ -134,7 +134,6 @@ export class PairingService {
       type: 'agent',
     };
     return this.jwt.sign(payload, {
-      subject: hostId,
       jwtid: String(keyVersion),
     });
   }
