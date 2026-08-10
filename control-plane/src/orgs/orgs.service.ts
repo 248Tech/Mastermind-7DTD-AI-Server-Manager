@@ -58,6 +58,7 @@ export class OrgsService {
       frigateUrl: userOrg.org.frigateUrl,
       frigateApiKey: userOrg.org.frigateApiKey,
       frigateWebhookSecret: userOrg.org.frigateWebhookSecret,
+      avoidBloodMoonRestart: userOrg.org.avoidBloodMoonRestart,
       createdAt: userOrg.org.createdAt,
       updatedAt: userOrg.org.updatedAt,
       memberCount: userOrg.org._count.userOrgs,
@@ -89,6 +90,7 @@ export class OrgsService {
       frigateUrl: m.org.frigateUrl,
       frigateApiKey: m.org.frigateApiKey,
       frigateWebhookSecret: m.org.frigateWebhookSecret,
+      avoidBloodMoonRestart: m.org.avoidBloodMoonRestart,
       createdAt: m.org.createdAt,
       updatedAt: m.org.updatedAt,
       memberCount: m.org._count.userOrgs,
@@ -101,22 +103,26 @@ export class OrgsService {
   async updateOrg(
     orgId: string,
     userId: string,
-    updates: { discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string },
-  ): Promise<{ ok: true }> {
+    updates: { discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string; avoidBloodMoonRestart?: boolean },
+  ): Promise<{ ok: true; avoidBloodMoonRestart: boolean }> {
     const userOrg = await this.prisma.userOrg.findUnique({
       where: { userId_orgId: { userId, orgId } },
       include: { role: true },
     });
     if (!userOrg) throw new ForbiddenException('Not a member of this org');
+    if (updates.avoidBloodMoonRestart !== undefined && userOrg.role.name !== 'admin') {
+      throw new ForbiddenException('Only organization administrators may change restart protection');
+    }
 
-    const data: Record<string, string | null> = {};
+    const data: Record<string, string | null | boolean> = {};
     if (updates.discordWebhookUrl !== undefined) data.discordWebhookUrl = updates.discordWebhookUrl || null;
     if (updates.frigateUrl !== undefined) data.frigateUrl = updates.frigateUrl || null;
     if (updates.frigateApiKey !== undefined) data.frigateApiKey = updates.frigateApiKey || null;
     if (updates.frigateWebhookSecret !== undefined) data.frigateWebhookSecret = updates.frigateWebhookSecret || null;
+    if (updates.avoidBloodMoonRestart !== undefined) data.avoidBloodMoonRestart = updates.avoidBloodMoonRestart;
 
-    await this.prisma.org.update({ where: { id: orgId }, data });
-    return { ok: true };
+    const org = await this.prisma.org.update({ where: { id: orgId }, data });
+    return { ok: true, avoidBloodMoonRestart: org.avoidBloodMoonRestart };
   }
 
   async testFrigateConnection(

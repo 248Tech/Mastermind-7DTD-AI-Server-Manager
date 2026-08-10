@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { JobsService } from '../jobs/jobs.service';
+import { reconcileNameFallback } from './player-identity';
 
 @Injectable()
 export class PlayersService implements OnModuleInit, OnModuleDestroy {
@@ -29,6 +30,12 @@ export class PlayersService implements OnModuleInit, OnModuleDestroy {
     } finally { this.polling = false; }
   }
   async list(orgId: string, serverInstanceId?: string) {
+    const stablePlayers = await this.prisma.player.findMany({
+      where: { orgId, ...(serverInstanceId ? { serverInstanceId } : {}), NOT: { identityKey: { startsWith: 'name:' } } },
+    });
+    for (const player of stablePlayers) {
+      await reconcileNameFallback(this.prisma, player.serverInstanceId, player.identityKey, player.name, player.steamId, player.eosId);
+    }
     const now = Date.now();
     const players = await this.prisma.player.findMany({
       where: { orgId, ...(serverInstanceId ? { serverInstanceId } : {}) },

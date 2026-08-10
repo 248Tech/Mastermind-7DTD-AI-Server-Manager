@@ -49,7 +49,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   async hydrateSchedules(): Promise<void> {
     const schedules = await this.prisma.schedule.findMany({
       where: { enabled: true },
-      include: { serverInstance: { include: { host: true } } },
+      include: { serverInstance: { include: { host: true, gameType: true, org: true } } },
     });
     const now = new Date();
     for (const s of schedules) {
@@ -88,12 +88,25 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     const { scheduleId } = job.data;
     const schedule = await this.prisma.schedule.findUnique({
       where: { id: scheduleId },
-      include: { serverInstance: { include: { host: true } } },
+      include: { serverInstance: { include: { host: true, gameType: true, org: true } } },
     });
     if (!schedule || !schedule.enabled) return;
     const hostId = schedule.serverInstance.hostId;
     const orgId = schedule.orgId;
     const serverInstanceId = schedule.serverInstanceId;
+    const configuredPayload = (schedule.payload as Record<string, unknown> | null) ?? {};
+    const mergedPayload = {
+      server_instance_id: schedule.serverInstance.id,
+      game_type: schedule.serverInstance.gameType.slug,
+      install_path: schedule.serverInstance.installPath ?? undefined,
+      start_command: schedule.serverInstance.startCommand ?? undefined,
+      telnet_host: schedule.serverInstance.telnetHost ?? undefined,
+      telnet_port: schedule.serverInstance.telnetPort ?? undefined,
+      telnet_password: schedule.serverInstance.telnetPassword ?? undefined,
+      config: schedule.serverInstance.config ?? undefined,
+      avoid_blood_moon_restart: schedule.serverInstance.org.avoidBloodMoonRestart,
+      ...configuredPayload,
+    };
 
     let createdJobId: string | null = null;
     try {
@@ -102,7 +115,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
           orgId,
           serverInstanceId,
           type: schedule.jobType,
-          payload: schedule.payload ?? undefined,
+          payload: mergedPayload as Prisma.InputJsonValue,
           createdById: null,
         },
       });
@@ -124,7 +137,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
           hostId,
           serverInstanceId,
           type: schedule.jobType,
-          payload: schedule.payload ?? {},
+          payload: mergedPayload,
           scheduleId: schedule.id,
         },
         { jobId: run.id, attempts, backoff: { type: 'fixed' as const, delay: backoff } },
@@ -245,7 +258,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   async updateSchedule(
     orgId: string,
     scheduleId: string,
-    data: { enabled?: boolean; name?: string; cronExpression?: string; jobType?: string },
+    data: { enabled?: boolean; name?: string; cronExpression?: string; jobType?: string; payload?: unknown },
   ) {
     const existing = await this.prisma.schedule.findFirst({ where: { id: scheduleId, orgId } });
     if (!existing) throw new Error('Schedule not found');
@@ -266,10 +279,14 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         ...(data.name !== undefined && { name: data.name }),
         ...(data.cronExpression !== undefined && { cronExpression, nextRunAt }),
         ...(data.jobType !== undefined && { jobType: data.jobType }),
+        ...(data.payload !== undefined && { payload: data.payload as Prisma.InputJsonValue }),
         ...(data.enabled !== undefined && { enabled: data.enabled }),
       },
     });
 
+    if (existing.nextRunAt && this.schedulerQueue) {
+      await this.schedulerQueue.remove(`schedule:${existing.id}:${existing.nextRunAt.getTime()}`).catch(() => false);
+    }
     // Re-enqueue if enabled (BullMQ dedupes by jobId)
     if (updated.enabled && updated.nextRunAt && this.schedulerQueue) {
       const delayMs = Math.max(0, updated.nextRunAt.getTime() - Date.now());
@@ -292,6 +309,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   private toDto(s: {
     id: string; orgId: string; serverInstanceId: string; name: string;
     cronExpression: string; jobType: string; enabled: boolean;
+    payload: Prisma.JsonValue;
     nextRunAt: Date | null; lastRunAt: Date | null; lastRunStatus: string | null;
     createdAt: Date; updatedAt: Date;
   }) {
@@ -302,6 +320,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       name: s.name,
       cronExpression: s.cronExpression,
       jobType: s.jobType,
+      payload: s.payload,
       enabled: s.enabled,
       nextRunAt: s.nextRunAt?.toISOString() ?? null,
       lastRunAt: s.lastRunAt?.toISOString() ?? null,

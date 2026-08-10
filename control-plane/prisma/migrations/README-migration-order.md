@@ -2,7 +2,7 @@
 
 Run migrations in this order when applying raw SQL or creating Prisma migrations:
 
-1. **orgs**
+1. **orgs** — then run 20260810000011 (add Blood Moon restart protection setting)
 2. **users**
 3. **roles**
 4. **game_types** — then run 20250223000008 (add `capabilities`), then 20250223000009 (seed minecraft)

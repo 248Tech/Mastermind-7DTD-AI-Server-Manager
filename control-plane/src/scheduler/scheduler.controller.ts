@@ -55,7 +55,7 @@ export class SchedulerController {
   async update(
     @Param('orgId') orgId: string,
     @Param('id') id: string,
-    @Body() body: { enabled?: boolean; name?: string; cronExpression?: string; jobType?: string },
+    @Body() body: { enabled?: boolean; name?: string; cronExpression?: string; jobType?: string; payload?: unknown },
   ) {
     try {
       return await this.schedulerService.updateSchedule(orgId, id, body);

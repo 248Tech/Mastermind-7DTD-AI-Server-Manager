@@ -1,0 +1,54 @@
+import { PrismaService } from '../prisma.service';
+
+/**
+ * Reconcile an early name-only record once Steam/EOS supplies a stable ID.
+ * Ambiguous display names are deliberately left untouched.
+ */
+export async function reconcileNameFallback(
+  prisma: PrismaService,
+  serverInstanceId: string,
+  identityKey: string,
+  name: string,
+  steamId: string | null,
+  eosId: string | null,
+) {
+  if (identityKey.startsWith('name:')) return;
+  const fallbackKey = `name:${name.toLowerCase()}`;
+  const fallback = await prisma.player.findUnique({
+    where: { serverInstanceId_identityKey: { serverInstanceId, identityKey: fallbackKey } },
+  });
+  if (!fallback) return;
+
+  const stableMatches = await prisma.player.findMany({
+    where: { serverInstanceId, name: { equals: name, mode: 'insensitive' }, identityKey: { not: fallbackKey } },
+  });
+  const canonical = stableMatches.find(player => player.identityKey === identityKey);
+  if (stableMatches.length > (canonical ? 1 : 0)) return;
+
+  if (!canonical) {
+    await prisma.player.update({
+      where: { id: fallback.id },
+      data: { identityKey, steamId, eosId },
+    });
+    return;
+  }
+
+  const online = canonical.online || fallback.online;
+  const sessionStarts = [canonical.currentSessionStartedAt, fallback.currentSessionStartedAt].filter((value): value is Date => Boolean(value));
+  await prisma.$transaction([
+    prisma.playerSession.updateMany({ where: { playerId: fallback.id }, data: { playerId: canonical.id } }),
+    prisma.player.update({
+      where: { id: canonical.id },
+      data: {
+        steamId: steamId ?? canonical.steamId,
+        eosId: eosId ?? canonical.eosId,
+        lifetimeSeconds: { increment: fallback.lifetimeSeconds },
+        firstSeenAt: fallback.firstSeenAt < canonical.firstSeenAt ? fallback.firstSeenAt : canonical.firstSeenAt,
+        lastSeenAt: fallback.lastSeenAt > canonical.lastSeenAt ? fallback.lastSeenAt : canonical.lastSeenAt,
+        online,
+        currentSessionStartedAt: online && sessionStarts.length ? new Date(Math.min(...sessionStarts.map(value => value.getTime()))) : null,
+      },
+    }),
+    prisma.player.delete({ where: { id: fallback.id } }),
+  ]);
+}

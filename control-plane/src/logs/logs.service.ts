@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
+import { reconcileNameFallback } from '../players/player-identity';
 
 @Injectable()
 export class LogsService {
@@ -39,6 +40,7 @@ export class LogsService {
         ?? line.match(/PlayerLogin:\s*(?:[^/]+\/)?([^/]+)\//i)?.[1])?.trim();
       const identityKey = steam ? `steam:${steam}` : eos ? `eos:${eos}` : name ? `name:${name.toLowerCase()}` : '';
       if (!identityKey || !name) continue;
+      await reconcileNameFallback(this.prisma, serverInstanceId, identityKey, name, steam ?? null, eos ?? null);
       const now = new Date();
       const existing = await this.prisma.player.findUnique({ where: { serverInstanceId_identityKey: { serverInstanceId, identityKey } } });
       if (joined) {

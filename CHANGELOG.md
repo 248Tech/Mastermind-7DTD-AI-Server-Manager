@@ -11,6 +11,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - (none)
 
+### Changed
+
+- (none)
+
+### Fixed
+
+- (none)
+
+## [0.0.6] - 2026-08-10
+
+### Added
+
+- Added a Saves page for manual full-world backups, Region Healer snapshot inventory, recorded backup time/game day, server-off restore, and confirmed deletion.
+- Saves now supports persistent full-backup retention and automatic intervals from 15 minutes through daily; retention never removes Region Healer snapshots.
+- Added an interactive telnet command console to the Logs page with inline command responses, timeout/error feedback, and single-command input validation.
+- Players page can read administrator membership and permission levels from the configured `serveradmin.xml`.
+- Organization administrators can promote or demote players through constrained 7DTD console jobs; the game remains responsible for updating its XML.
+- Settings includes optional Blood Moon restart protection. Restart jobs on in-game days divisible by 7 remain running until the next game day, then restart normally.
+- Players and server management include Kick all with an operator-provided reason and an automatic `lp` verification requiring 0 remaining players.
+
+### Changed
+
+- Bumped repository, control-plane, web, and health endpoint versions to `0.0.6`.
+- Scheduled jobs now receive resolved server configuration, and cron scheduling supports minute/hour step expressions.
+- Hardened the agent service with narrowly scoped access to RegionHealer save snapshots.
+
+### Fixed
+
+- Fixed duplicate player identities across name, Steam, and EOS observations.
+- Fixed rejected promote, demote, kick, ban, kick-all, and restart actions through corrected identifiers and result verification.
+- Fixed save-policy retention hanging when fewer full backups exist than the configured retention count.
+
 ## [0.0.5] - 2026-08-10
 
 ### Added
@@ -36,14 +68,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Save-wipe I/O failures by stopping and verifying 7DTD before deletion.
 - Restart jobs that reported success without restarting; agent now waits for complete shutdown, starts, and verifies active state.
 - Command runner timeout context now applies to the spawned process.
-
-### Changed
-
-- (none)
-
-### Fixed
-
-- (none)
 
 ## [0.0.4] - 2026-04-08
 

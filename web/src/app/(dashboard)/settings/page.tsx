@@ -70,6 +70,9 @@ export default function SettingsPage() {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [avoidBloodMoonRestart, setAvoidBloodMoonRestart] = useState(false);
+  const [restartGuardSaving, setRestartGuardSaving] = useState(false);
+  const [restartGuardMessage, setRestartGuardMessage] = useState('');
 
   useEffect(() => {
     if (!orgId) return;
@@ -77,7 +80,7 @@ export default function SettingsPage() {
       api.get<User>('/api/auth/me'),
       api.get<Org[]>('/api/orgs').then(orgs => orgs.find(o => o.id === orgId) || null).catch(() => null),
     ])
-      .then(([u, o]) => { setUser(u); setOrg(o); setLoading(false); })
+      .then(([u, o]) => { setUser(u); setOrg(o); setWebhookUrl(o?.discordWebhookUrl||''); setFrigateUrl(o?.frigateUrl||''); setFrigateApiKey(o?.frigateApiKey||''); setFrigateWebhookSecret(o?.frigateWebhookSecret||''); setAvoidBloodMoonRestart(Boolean(o?.avoidBloodMoonRestart)); setLoading(false); })
       .catch((err) => { setError(err.message); setLoading(false); });
   }, [orgId]);
 
@@ -138,6 +141,18 @@ export default function SettingsPage() {
     finally { setPasswordLoading(false); }
   }
 
+  async function handleRestartGuard(enabled:boolean) {
+    if (!orgId) return;
+    setRestartGuardSaving(true); setRestartGuardMessage('');
+    try {
+      const saved=await api.patch<{ok:boolean;avoidBloodMoonRestart:boolean}>(`/api/orgs/${orgId}`, { avoidBloodMoonRestart: enabled });
+      setAvoidBloodMoonRestart(saved.avoidBloodMoonRestart);
+      setRestartGuardMessage(saved.avoidBloodMoonRestart ? 'Blood Moon restart protection enabled.' : 'Blood Moon restart protection disabled.');
+    } catch (err) {
+      setRestartGuardMessage(err instanceof Error ? err.message : 'Failed to save restart protection');
+    } finally { setRestartGuardSaving(false); }
+  }
+
   return (
     <div>
       <div style={{ marginBottom: '2rem' }}>
@@ -167,6 +182,18 @@ export default function SettingsPage() {
             Org ID: <code style={{ fontFamily: 'monospace', color: '#818cf8' }}>{orgId || '—'}</code>
           </p>
         )}
+      </div>
+
+      <div style={card}>
+        <h2 style={{ margin: '0 0 0.375rem', fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>7DTD Restart Protection</h2>
+        <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748b' }}>
+          When enabled, restart jobs check the live in-game day. On days divisible by 7, the job waits and restarts after the next in-game day begins.
+        </p>
+        <label style={{display:'flex',alignItems:'center',gap:10,color:'#e2e8f0',fontSize:'.875rem',cursor:restartGuardSaving?'wait':'pointer'}}>
+          <input type="checkbox" checked={avoidBloodMoonRestart} disabled={restartGuardSaving} onChange={e=>void handleRestartGuard(e.target.checked)} />
+          Do not restart during Blood Moon days <strong style={{color:avoidBloodMoonRestart?'#4ade80':'#64748b'}}>({avoidBloodMoonRestart?'Enabled':'Disabled'})</strong>
+        </label>
+        {restartGuardMessage&&<p style={{color:restartGuardMessage.includes('enabled')||restartGuardMessage.includes('disabled')?'#4ade80':'#f87171',fontSize:'.8rem',marginBottom:0}}>{restartGuardMessage}</p>}
       </div>
 
       {/* Discord Webhook */}

@@ -21,6 +21,7 @@ model Org {
   frigateWebhookSecret String? @map("frigate_webhook_secret") // shared secret validated on incoming Frigate webhooks
   logRetentionDays    Int      @default(7) @map("log_retention_days")
   healthIntervalSec   Int      @default(10) @map("health_interval_sec")
+  avoidBloodMoonRestart Boolean @default(false) @map("avoid_blood_moon_restart")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 

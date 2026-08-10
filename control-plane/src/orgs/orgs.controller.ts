@@ -11,6 +11,7 @@ import {
 import { OrgsService } from './orgs.service';
 import { JwtAuthGuard, RequestWithUser } from '../server-instances/guards/jwt-auth.guard';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
 class CreateOrgDto {
   name!: string;
@@ -18,10 +19,21 @@ class CreateOrgDto {
 }
 
 class UpdateOrgDto {
+  @IsOptional()
+  @IsString()
   discordWebhookUrl?: string;
+  @IsOptional()
+  @IsString()
   frigateUrl?: string;
+  @IsOptional()
+  @IsString()
   frigateApiKey?: string;
+  @IsOptional()
+  @IsString()
   frigateWebhookSecret?: string;
+  @IsOptional()
+  @IsBoolean()
+  avoidBloodMoonRestart?: boolean;
 }
 
 @Controller('api/orgs')

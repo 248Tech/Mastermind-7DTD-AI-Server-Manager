@@ -9,6 +9,7 @@ const NAV = [
   { href: '/health', label: 'Health', icon: '♥', title: 'Server health, latency, CPU, and memory' },
   { href: '/players', label: 'Players', icon: '♟', title: 'Player identities, playtime, kick, and ban controls' },
   { href: '/mods', label: 'Mods', icon: '◇', title: 'Installed server mods and removal controls' },
+  { href: '/saves', label: 'Saves', icon: '▣', title: 'Back up, restore, and manage world saves' },
   { href: '/hosts', label: 'Hosts', icon: '⬡', title: 'Machines running the agent + game server processes on them' },
   { href: '/jobs', label: 'Jobs', icon: '⚡', title: 'Send one-off commands to your servers (restart, backup, etc.)' },
   { href: '/logs', label: 'Logs', icon: '≡', title: 'Live and recorded server logs' },

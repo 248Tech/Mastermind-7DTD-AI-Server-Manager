@@ -17,7 +17,7 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadOnlyPaths=/opt/7dtd
-ReadWritePaths=/var/lib/mastermind-agent /opt/7dtd/server/Mods /opt/7dtd/userdata/Saves
+ReadWritePaths=/var/lib/mastermind-agent /opt/7dtd/server/Mods /opt/7dtd/userdata/Saves /opt/regionhealer/RegionAutoFix/Saves
 
 [Install]
 WantedBy=multi-user.target

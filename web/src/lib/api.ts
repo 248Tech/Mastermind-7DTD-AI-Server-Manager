@@ -45,11 +45,11 @@ export const api = {
 // Auth types
 export interface AuthResponse { access_token: string; userId: string; orgId: string; }
 export interface User { id: string; email: string; name?: string; }
-export interface Org { id: string; name: string; slug: string; discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string; }
+export interface Org { id: string; name: string; slug: string; discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string; avoidBloodMoonRestart?: boolean; }
 export interface Host { id: string; orgId: string; name: string; status: string | null; lastHeartbeatAt: string | null; lastMetrics: Record<string,unknown> | null; agentVersion: string | null; createdAt: string; serverInstances: { id: string; name: string }[]; }
 export interface ServerInstance { id: string; orgId: string; hostId: string; name: string; gameType: string; capabilities: string[]; installPath: string | null; startCommand: string | null; telnetHost: string | null; telnetPort: number | null; createdAt: string; }
 export interface Job { id: string; orgId: string; serverInstanceId: string | null; serverName?: string; type: string; payload: unknown; createdAt: string; startedBy?: { id:string; name:string; email:string } | null; latestRun: { id: string; status: string; startedAt: string | null; finishedAt: string | null; result: unknown } | null; }
-export interface Schedule { id: string; orgId: string; serverInstanceId: string; name: string; cronExpression: string; jobType: string; enabled: boolean; nextRunAt: string | null; lastRunAt: string | null; lastRunStatus: string | null; }
+export interface Schedule { id: string; orgId: string; serverInstanceId: string; name: string; cronExpression: string; jobType: string; payload?: Record<string,unknown>; enabled: boolean; nextRunAt: string | null; lastRunAt: string | null; lastRunStatus: string | null; }
 export interface AlertRule { id: string; orgId: string; name: string; condition: unknown; channel: unknown; enabled: boolean; createdAt: string; }
 export interface PairingToken { id: string; token: string; expiresAt: string; expiresInSec: number; }
 export interface ServerLog { id: string; serverInstanceId: string; content: string; createdAt: string; }
@@ -59,4 +59,6 @@ export interface HealthSample { id: string; hostId: string; cpuPercent: number; 
 export interface HealthHost { id: string; name: string; status: string; lastHeartbeatAt: string|null; lastMetrics: { cpu?:number; ramUsedMb?:number; ramTotalMb?:number; diskUsedGb?:number; latencyMs?:number; gameReachable?:boolean }|null; }
 export interface HealthDashboard { hosts: HealthHost[]; samples: HealthSample[]; intervalSec: number; }
 export interface PlayerRecord { id:string; serverInstanceId:string; identityKey:string; steamId:string|null; eosId:string|null; entityId:number|null; name:string; online:boolean; currentSessionStartedAt:string|null; sessionSeconds:number; lifetimeSeconds:number; firstSeenAt:string; lastSeenAt:string; }
+export interface ServerAdminRecord { platform?:string; userId:string; name?:string; permissionLevel:number; }
 export interface ModRecord { folder:string; name:string; author?:string; website?:string; version?:string; }
+export interface SaveRecord { id:string; createdAt:string; gameDay:number; kind:'full-world'|'region-healer'; sizeBytes:number; }

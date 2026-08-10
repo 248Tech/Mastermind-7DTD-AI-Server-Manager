@@ -57,7 +57,7 @@
 
 ---
 
-## Release 0.0.5 (August 10, 2026)
+## Release 0.0.6 (August 10, 2026)
 
 ### Highlights
 
@@ -67,24 +67,29 @@
 - Authoritative 7DTD player tracking through scheduled `lp` polling, including Steam/EOS IDs, sessions, lifetime playtime, kick, and ban controls.
 - Safe mod inventory, bulk quarantine, restore, and permanent deletion using `ModInfo.xml` metadata.
 - Confirmed save wipe workflow plus reliable stop/start verification for restart jobs.
+- Full-world and RegionHealer save management with metadata, safe restore/delete, retention, and automatic backup intervals.
+- Interactive telnet command console embedded in live logs.
+- Kick-all verification, XML-backed admin promotion/demotion, identity reconciliation, and Blood Moon-aware restarts.
 - Hardened pairing, account-attributed jobs, password changes with scrypt migration, responsive UI, and custom branding.
 
 ---
 
-## Current features (v0.0.5)
+## Current features (v0.0.6)
 
 ### Implemented end-to-end
 
 - **Authentication and organizations:** register/login, JWT sessions, organization membership and roles, protected pairing-token creation, agent-key rotation, and password changes using salted scrypt with legacy-hash migration.
 - **Host agents:** one-time pairing, persistent agent identity, heartbeat and inventory reporting, long-poll job execution, same-host Linux 7DTD autodiscovery, and automatic server registration.
 - **Server-first dashboard:** registered servers are primary; each server opens a management view with overview, controls, console, and server-filtered job history.
-- **7DTD controls:** start, graceful stop, verified restart, telnet console commands, and a confirmed save wipe that validates paths, pauses RegionHealer, deletes only the configured save, starts a fresh world, and verifies creation.
+- **7DTD controls:** start, graceful stop, verified restart, telnet console commands (including an interactive Logs-page console), and a confirmed save wipe that validates paths, pauses RegionHealer, deletes only the configured save, starts a fresh world, and verifies creation.
+- **Blood Moon safety:** an optional organization setting defers restart jobs on in-game days divisible by 7 until the next game day begins.
 - **Jobs and accountability:** queue-backed start/stop/restart/RCON/custom jobs, result/output tracking, schedule and batch support, per-server filtering, and initiating-account attribution.
 - **Logs:** agent log tailing, database persistence, live viewing, selectable retention in days/weeks/months, keyword alert definitions, match history, and enable/disable controls.
 - **Health:** CPU, RAM, disk, agent latency, and 7DTD reachability samples with averages and configurable polling intervals.
-- **Players:** authoritative `lp` polling every 60 seconds by default, Steam/EOS identity capture, online state, current/lifetime playtime, last seen, and console-backed kick/ban actions.
+- **Players:** authoritative `lp` polling every 60 seconds by default, reconciled Steam/EOS identity capture, online state, current/lifetime playtime, last seen, kick/ban/kick-all actions, post-kick verification, and XML-backed administrator status with promote/demote controls.
 - **Mods:** active and quarantined inventories, `ModInfo.xml` name/version/author/website parsing, single or bulk selection, select-all, quarantine, restore, and constrained permanent deletion.
 - **RegionHealer:** status information plus start/stop jobs for a separately installed RegionHealer-v2 service.
+- **Saves:** combined full-world and RegionHealer snapshot inventory, timestamp/game-day metadata, manual full backup, confirmed server-off restore/delete, full-backup retention, and scheduled backups from every 15 minutes through daily.
 - **Alerts and integrations:** Discord alerts, schedules, log-keyword alerts, server/agent events, and Frigate webhook/settings support.
 - **Responsive UI:** full desktop, half-window compact navigation, mobile drawer, safe table overflow, custom Mastermind logo, and favicon.
 - **Game adapters:** 7 Days to Die is fully managed; Minecraft adapter and capability registry remain available for expansion.

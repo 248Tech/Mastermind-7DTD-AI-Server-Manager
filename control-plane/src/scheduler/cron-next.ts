@@ -44,6 +44,13 @@ function parseSet(str: string, min: number, max: number): Set<number> | null {
   if (str === '*') return null;
   const set = new Set<number>();
   for (const s of str.split(',')) {
+    const step = s.match(/^\*\/(\d+)$/);
+    if (step) {
+      const amount = Number(step[1]);
+      if (!Number.isInteger(amount) || amount < 1 || amount > max - min + 1) throw new Error(`Invalid cron field: ${str}`);
+      for (let value = min; value <= max; value += amount) set.add(value);
+      continue;
+    }
     const n = parseInt(s.trim(), 10);
     if (Number.isNaN(n) || n < min || n > max) throw new Error(`Invalid cron field: ${str}`);
     set.add(n);

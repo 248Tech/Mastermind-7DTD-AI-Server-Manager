@@ -30,7 +30,7 @@ type xmlProperty struct {
 
 type xmlProperties struct {
 	Properties []xmlProperty `xml:"property"`
-	Admins     []struct{}    `xml:"admin"`
+	Admins     []struct{}    `xml:"users>user"`
 }
 
 func DiscoverSevenDTD(cfg config.SevenDTDDiscoveryCfg) (*SevenDTDResult, error) {

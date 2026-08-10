@@ -2,6 +2,7 @@ package sevendtd
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -9,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,7 +76,13 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 		}
 		return agent.JobResult{Status: "success", Result: map[string]interface{}{"deletedSave": path, "restarted": true}}, nil
 	case "RCON", "SEND_COMMAND":
-		cmd := getString(job.Payload, "command", "")
+		cmd := strings.TrimSpace(getString(job.Payload, "command", ""))
+		if cmd == "" {
+			return agent.JobResult{Status: "failed", Error: "console command is required"}, nil
+		}
+		if len(cmd) > 512 || strings.ContainsAny(cmd, "\r\n") {
+			return agent.JobResult{Status: "failed", Error: "console command must be one line and at most 512 characters"}, nil
+		}
 		out, err := a.SendCommand(ctx, cfg, cmd)
 		if err != nil {
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
@@ -85,12 +94,82 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 		return agent.JobResult{Status: "success", Output: out}, nil
+	case "PLAYER_ADMIN_LIST":
+		admins, err := listServerAdmins(job.Payload)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"admins": admins}}, nil
+	case "PLAYER_ADMIN_PROMOTE", "PLAYER_ADMIN_DEMOTE":
+		identifier := sanitizeRCONArg(getString(job.Payload, "identifier", ""))
+		platform := getString(job.Payload, "platform", "")
+		if !strings.EqualFold(platform, "Steam") && !strings.EqualFold(platform, "EOS") {
+			return agent.JobResult{Status: "failed", Error: "player platform must be Steam or EOS"}, nil
+		}
+		if identifier == "" {
+			return agent.JobResult{Status: "failed", Error: "player Steam/EOS ID required"}, nil
+		}
+		platformPrefix := "Steam"
+		if strings.EqualFold(platform, "EOS") {
+			platformPrefix = "EOS"
+		}
+		platformID := fmt.Sprintf("%s_%s", platformPrefix, identifier)
+		command := fmt.Sprintf("admin add %s 0", platformID)
+		if strings.EqualFold(job.Type, "PLAYER_ADMIN_DEMOTE") {
+			command = fmt.Sprintf("admin remove %s", platformID)
+		}
+		out, err := a.SendCommand(ctx, cfg, command)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		if strings.Contains(strings.ToLower(out), " is not a valid ") || strings.Contains(strings.ToLower(out), "error executing command") {
+			return agent.JobResult{Status: "failed", Error: "7DTD rejected administrator command", Output: out}, nil
+		}
+		return agent.JobResult{Status: "success", Output: out}, nil
 	case "REGION_HEALER_START":
 		return resultOrErr(a.Runner.run(ctx, "", "/usr/bin/sudo", "/usr/bin/systemctl", "start", "regionhealer.service"))
 	case "REGION_HEALER_STOP":
 		return resultOrErr(a.Runner.run(ctx, "", "/usr/bin/sudo", "/usr/bin/systemctl", "stop", "regionhealer.service"))
+	case "SAVE_LIST":
+		saves, err := a.ListSaves(cfg, getString(job.Payload, "server_config_path", ""))
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"saves": saves}}, nil
+	case "SAVE_BACKUP":
+		save, err := a.BackupSave(ctx, cfg, getString(job.Payload, "server_config_path", ""), getInt(job.Payload, "retention_count", 10))
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"save": save}}, nil
+	case "SAVE_RESTORE":
+		if !getBool(job.Payload, "confirmed") {
+			return agent.JobResult{Status: "failed", Error: "save restore requires explicit confirmation"}, nil
+		}
+		save, err := a.RestoreSave(ctx, cfg, getString(job.Payload, "server_config_path", ""), getString(job.Payload, "save_id", ""))
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"save": save, "serverStopped": true}}, nil
+	case "SAVE_DELETE":
+		if !getBool(job.Payload, "confirmed") {
+			return agent.JobResult{Status: "failed", Error: "save deletion requires explicit confirmation"}, nil
+		}
+		if err := a.DeleteSaveBackup(ctx, getString(job.Payload, "save_id", "")); err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"deleted": getString(job.Payload, "save_id", "")}}, nil
+	case "SAVE_RETENTION":
+		retention := getInt(job.Payload, "retention_count", 10)
+		if retention < 1 || retention > 100 {
+			return agent.JobResult{Status: "failed", Error: "retention count must be between 1 and 100"}, nil
+		}
+		if err := pruneFullSaveBackups(retention); err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"retentionCount": retention}}, nil
 	case "PLAYER_KICK":
-		identifier := sanitizeRCONArg(getString(job.Payload, "identifier", ""))
+		identifier := playerCommandIdentifier(job.Payload)
 		reason := sanitizeRCONArg(getString(job.Payload, "reason", "Removed by administrator"))
 		if identifier == "" {
 			return agent.JobResult{Status: "failed", Error: "player identifier required"}, nil
@@ -99,9 +178,41 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 		if err != nil {
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
+		if consoleRejected(out) {
+			return agent.JobResult{Status: "failed", Error: "7DTD rejected kick command", Output: out}, nil
+		}
 		return agent.JobResult{Status: "success", Output: out}, nil
+	case "PLAYER_KICK_ALL":
+		reason := sanitizeRCONArg(getString(job.Payload, "reason", "Removed by administrator"))
+		if strings.TrimSpace(reason) == "" {
+			reason = "Removed by administrator"
+		}
+		out, err := a.SendCommand(ctx, cfg, fmt.Sprintf("kickall %q", reason))
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		if consoleRejected(out) {
+			return agent.JobResult{Status: "failed", Error: "7DTD rejected kickall command", Output: out}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return agent.JobResult{Status: "failed", Error: ctx.Err().Error()}, nil
+		case <-time.After(2 * time.Second):
+		}
+		verification, err := a.SendCommand(ctx, cfg, "lp")
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: fmt.Sprintf("kickall sent but verification failed: %v", err), Output: out}, nil
+		}
+		remaining, err := playerCountFromList(verification)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: fmt.Sprintf("kickall sent but verification failed: %v", err), Output: out + "\n" + verification}, nil
+		}
+		if remaining != 0 {
+			return agent.JobResult{Status: "failed", Error: fmt.Sprintf("kickall verification found %d player(s) still online", remaining), Output: out + "\n" + verification}, nil
+		}
+		return agent.JobResult{Status: "success", Output: out + "\nVerification: 0 players online", Result: map[string]interface{}{"playersRemaining": 0}}, nil
 	case "PLAYER_BAN":
-		identifier := sanitizeRCONArg(getString(job.Payload, "identifier", ""))
+		identifier := playerCommandIdentifier(job.Payload)
 		reason := sanitizeRCONArg(getString(job.Payload, "reason", "Banned by administrator"))
 		duration := sanitizeRCONArg(getString(job.Payload, "duration", "1 days"))
 		if identifier == "" {
@@ -110,6 +221,9 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 		out, err := a.SendCommand(ctx, cfg, fmt.Sprintf("ban add %s %s %q", identifier, duration, reason))
 		if err != nil {
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		if consoleRejected(out) {
+			return agent.JobResult{Status: "failed", Error: "7DTD rejected ban command", Output: out}, nil
 		}
 		return agent.JobResult{Status: "success", Output: out}, nil
 	case "MOD_LIST":
@@ -240,6 +354,69 @@ type modInfo struct {
 	Author  string `json:"author,omitempty"`
 	Website string `json:"website,omitempty"`
 	Version string `json:"version,omitempty"`
+}
+
+type serverAdmin struct {
+	Platform        string `json:"platform,omitempty"`
+	UserID          string `json:"userId"`
+	Name            string `json:"name,omitempty"`
+	PermissionLevel int    `json:"permissionLevel"`
+}
+
+func listServerAdmins(payload map[string]interface{}) ([]serverAdmin, error) {
+	config, _ := payload["config"].(map[string]interface{})
+	discovery, _ := config["discovery"].(map[string]interface{})
+	path, _ := discovery["serverAdminPath"].(string)
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || !filepath.IsAbs(path) || !strings.EqualFold(filepath.Base(path), "serveradmin.xml") {
+		return nil, fmt.Errorf("configured serveradmin.xml path required")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("read serveradmin.xml: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("serveradmin.xml must be a regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open serveradmin.xml: %w", err)
+	}
+	defer file.Close()
+	admins := []serverAdmin{}
+	decoder := xml.NewDecoder(file)
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse serveradmin.xml: %w", err)
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok || (!strings.EqualFold(start.Name.Local, "user") && !strings.EqualFold(start.Name.Local, "admin")) {
+			continue
+		}
+		admin := serverAdmin{PermissionLevel: 0}
+		for _, attribute := range start.Attr {
+			switch strings.ToLower(attribute.Name.Local) {
+			case "platform":
+				admin.Platform = strings.TrimSpace(attribute.Value)
+			case "userid", "steamid":
+				admin.UserID = strings.TrimPrefix(strings.TrimSpace(attribute.Value), "Steam_")
+			case "name":
+				admin.Name = strings.TrimSpace(attribute.Value)
+			case "permission_level":
+				if level, parseErr := strconv.Atoi(strings.TrimSpace(attribute.Value)); parseErr == nil {
+					admin.PermissionLevel = level
+				}
+			}
+		}
+		if admin.UserID != "" {
+			admins = append(admins, admin)
+		}
+	}
+	return admins, nil
 }
 
 func modsPath(cfg *agent.InstanceConfig, override string) (string, error) {
@@ -373,6 +550,7 @@ func jobPayloadToConfig(p map[string]interface{}) *agent.InstanceConfig {
 		TelnetHost:       getString(p, "telnet_host", "127.0.0.1"),
 		TelnetPort:       getInt(p, "telnet_port", 8081),
 		TelnetPassword:   getString(p, "telnet_password", ""),
+		AvoidBloodMoonRestart: getBool(p, "avoid_blood_moon_restart"),
 	}
 	return cfg
 }
@@ -406,6 +584,323 @@ type serverProperty struct {
 
 type serverConfiguration struct {
 	Properties []serverProperty `xml:"property"`
+}
+
+const saveBackupRoot = "/opt/regionhealer/RegionAutoFix/Saves"
+
+type SaveRecord struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"createdAt"`
+	GameDay   int       `json:"gameDay"`
+	Kind      string    `json:"kind"`
+	SizeBytes int64     `json:"sizeBytes"`
+}
+
+type saveMetadata struct {
+	CreatedAt time.Time `json:"createdAt"`
+	GameDay   int       `json:"gameDay"`
+	Kind      string    `json:"kind"`
+}
+
+func resolveLiveSave(cfg *agent.InstanceConfig, configOverride string) (string, error) {
+	configPath := configOverride
+	if configPath == "" {
+		configPath = filepath.Join(filepath.Dir(cfg.InstallPath), "serverconfig.xml")
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", fmt.Errorf("read server configuration: %w", err)
+	}
+	var parsed serverConfiguration
+	if err := xml.Unmarshal(data, &parsed); err != nil {
+		return "", fmt.Errorf("parse server configuration: %w", err)
+	}
+	properties := make(map[string]string)
+	for _, property := range parsed.Properties {
+		properties[property.Name] = strings.TrimSpace(property.Value)
+	}
+	world, game := properties["GameWorld"], properties["GameName"]
+	userData := properties["UserDataFolder"]
+	if userData == "" {
+		userData = filepath.Join(filepath.Dir(cfg.InstallPath), "userdata")
+	}
+	if world == "" || game == "" || filepath.Base(world) != world || filepath.Base(game) != game {
+		return "", fmt.Errorf("safe GameWorld and GameName are required")
+	}
+	savesRoot := filepath.Clean(filepath.Join(userData, "Saves"))
+	target := filepath.Clean(filepath.Join(savesRoot, world, game))
+	rel, err := filepath.Rel(savesRoot, target)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("resolved save path is outside Saves")
+	}
+	return target, nil
+}
+
+func validSaveID(id string) bool {
+	if filepath.Base(id) != id {
+		return false
+	}
+	matched, _ := regexp.MatchString(`^(mastermind|snap)_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$`, id)
+	return matched
+}
+
+func saveBackupPath(id string) (string, error) {
+	if !validSaveID(id) {
+		return "", fmt.Errorf("invalid save ID")
+	}
+	return filepath.Join(saveBackupRoot, id), nil
+}
+
+func directorySize(root string) int64 {
+	var total int64
+	_ = filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
+		if err == nil && info.Mode().IsRegular() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+func copySaveTree(source, destination string, skipMetadata bool) error {
+	return filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		if skipMetadata && rel == ".mastermind-save.json" {
+			return nil
+		}
+		target := filepath.Join(destination, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		return copySaveFile(path, target, info.Mode().Perm())
+	})
+}
+
+func copySaveFile(source, destination string, mode os.FileMode) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(destination, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		_ = in.Close()
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	inErr := in.Close()
+	outErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if inErr != nil {
+		return inErr
+	}
+	return outErr
+}
+
+func (a *Adapter) ListSaves(cfg *agent.InstanceConfig, configOverride string) ([]SaveRecord, error) {
+	if _, err := resolveLiveSave(cfg, configOverride); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(saveBackupRoot)
+	if err != nil {
+		return nil, fmt.Errorf("read save backups: %w", err)
+	}
+	saves := make([]SaveRecord, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || !validSaveID(entry.Name()) {
+			continue
+		}
+		path := filepath.Join(saveBackupRoot, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		record := SaveRecord{ID: entry.Name(), CreatedAt: info.ModTime().UTC(), Kind: "region-healer", SizeBytes: directorySize(path)}
+		if data, err := os.ReadFile(filepath.Join(path, ".mastermind-save.json")); err == nil {
+			var metadata saveMetadata
+			if json.Unmarshal(data, &metadata) == nil {
+				record.CreatedAt, record.GameDay, record.Kind = metadata.CreatedAt, metadata.GameDay, metadata.Kind
+			}
+		}
+		saves = append(saves, record)
+	}
+	sort.Slice(saves, func(i, j int) bool { return saves[i].CreatedAt.After(saves[j].CreatedAt) })
+	return saves, nil
+}
+
+func (a *Adapter) BackupSave(ctx context.Context, cfg *agent.InstanceConfig, configOverride string, retention int) (SaveRecord, error) {
+	live, err := resolveLiveSave(cfg, configOverride)
+	if err != nil {
+		return SaveRecord{}, err
+	}
+	if info, err := os.Stat(live); err != nil || !info.IsDir() {
+		return SaveRecord{}, fmt.Errorf("live save is unavailable")
+	}
+	gameDay := 0
+	if serviceActive(ctx, "7dtd.service") {
+		if _, err := a.SendCommand(ctx, cfg, "saveworld"); err != nil {
+			return SaveRecord{}, fmt.Errorf("flush world before backup: %w", err)
+		}
+		time.Sleep(2 * time.Second)
+		if output, err := a.SendCommand(ctx, cfg, "gettime"); err == nil {
+			if match := gameDayPattern.FindStringSubmatch(output); len(match) == 2 {
+				gameDay, _ = strconv.Atoi(match[1])
+			}
+		}
+	}
+	created := time.Now().UTC()
+	id := "mastermind_" + created.Format("2006-01-02_15-04-05")
+	destination, _ := saveBackupPath(id)
+	if err := os.MkdirAll(saveBackupRoot, 0750); err != nil {
+		return SaveRecord{}, fmt.Errorf("create backup root: %w", err)
+	}
+	if _, err := os.Lstat(destination); !os.IsNotExist(err) {
+		return SaveRecord{}, fmt.Errorf("backup ID already exists; try again in one second")
+	}
+	if err := copySaveTree(live, destination, false); err != nil {
+		_ = os.RemoveAll(destination)
+		return SaveRecord{}, fmt.Errorf("copy world save: %w", err)
+	}
+	metadata := saveMetadata{CreatedAt: created, GameDay: gameDay, Kind: "full-world"}
+	data, _ := json.MarshalIndent(metadata, "", "  ")
+	if err := os.WriteFile(filepath.Join(destination, ".mastermind-save.json"), data, 0640); err != nil {
+		_ = os.RemoveAll(destination)
+		return SaveRecord{}, fmt.Errorf("write backup metadata: %w", err)
+	}
+	if retention < 1 {
+		retention = 1
+	}
+	if retention > 100 {
+		retention = 100
+	}
+	if err := pruneFullSaveBackups(retention); err != nil {
+		return SaveRecord{}, fmt.Errorf("backup created but retention cleanup failed: %w", err)
+	}
+	return SaveRecord{ID: id, CreatedAt: created, GameDay: gameDay, Kind: metadata.Kind, SizeBytes: directorySize(destination)}, nil
+}
+
+func pruneFullSaveBackups(retention int) error {
+	entries, err := os.ReadDir(saveBackupRoot)
+	if err != nil {
+		return err
+	}
+	ids := make([]string, 0)
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "mastermind_") && validSaveID(entry.Name()) {
+			ids = append(ids, entry.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(ids)))
+	if len(ids) <= retention {
+		return nil
+	}
+	for _, id := range ids[retention:] {
+		path, _ := saveBackupPath(id)
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *Adapter) RestoreSave(ctx context.Context, cfg *agent.InstanceConfig, configOverride, id string) (SaveRecord, error) {
+	if serviceActive(ctx, "7dtd.service") {
+		return SaveRecord{}, fmt.Errorf("server must be stopped before restoring a save")
+	}
+	live, err := resolveLiveSave(cfg, configOverride)
+	if err != nil {
+		return SaveRecord{}, err
+	}
+	source, err := saveBackupPath(id)
+	if err != nil {
+		return SaveRecord{}, err
+	}
+	info, err := os.Lstat(source)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return SaveRecord{}, fmt.Errorf("save backup not found")
+	}
+	if serviceActive(ctx, "regionhealer.service") {
+		if err := systemctlService(ctx, "stop", "regionhealer.service"); err != nil {
+			return SaveRecord{}, fmt.Errorf("stop Region Healer before restore: %w", err)
+		}
+	}
+	saves, err := a.ListSaves(cfg, configOverride)
+	if err != nil {
+		return SaveRecord{}, err
+	}
+	var selected SaveRecord
+	for _, save := range saves {
+		if save.ID == id {
+			selected = save
+			break
+		}
+	}
+	if selected.ID == "" {
+		return SaveRecord{}, fmt.Errorf("save backup not found")
+	}
+	fullWorld := selected.Kind == "full-world"
+	target := live
+	copySource := source
+	if !fullWorld {
+		target = filepath.Join(live, "Region")
+		copySource = filepath.Join(source, "Region")
+		if info, err := os.Stat(copySource); err != nil || !info.IsDir() {
+			return SaveRecord{}, fmt.Errorf("Region Healer snapshot has no Region directory")
+		}
+	}
+	old := target + ".mastermind-restore-old"
+	_ = os.RemoveAll(old)
+	if _, err := os.Stat(target); err == nil {
+		if err := os.Rename(target, old); err != nil {
+			return SaveRecord{}, fmt.Errorf("stage current save: %w", err)
+		}
+	}
+	if err := copySaveTree(copySource, target, fullWorld); err != nil {
+		_ = os.RemoveAll(target)
+		_ = os.Rename(old, target)
+		return SaveRecord{}, fmt.Errorf("restore save: %w", err)
+	}
+	_ = os.RemoveAll(old)
+	return selected, nil
+}
+
+func (a *Adapter) DeleteSaveBackup(ctx context.Context, id string) error {
+	path, err := saveBackupPath(id)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("save backup not found")
+	}
+	healerWasActive := serviceActive(ctx, "regionhealer.service")
+	gameWasActive := serviceActive(ctx, "7dtd.service")
+	if healerWasActive {
+		if err := systemctlService(ctx, "stop", "regionhealer.service"); err != nil {
+			return fmt.Errorf("pause Region Healer before deletion: %w", err)
+		}
+		if gameWasActive {
+			defer func() { _ = systemctlService(context.Background(), "start", "regionhealer.service") }()
+		}
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("delete save backup: %w", err)
+	}
+	return nil
+}
+
+func serviceActive(ctx context.Context, service string) bool {
+	return exec.CommandContext(ctx, "/usr/bin/systemctl", "is-active", "--quiet", service).Run() == nil
 }
 
 func (a *Adapter) WipeSave(ctx context.Context, cfg *agent.InstanceConfig, configOverride string) (string, error) {
@@ -555,6 +1050,12 @@ func (a *Adapter) Stop(ctx context.Context, cfg *agent.InstanceConfig) error {
 		}
 		return a.Runner.run(ctx, cfg.InstallPath, parts[0], parts[1:]...)
 	}
+	// Same-host deployments registered with the hardened systemd start command
+	// must stop through the matching unit. Telnet can acknowledge a connection
+	// without ever executing quit, leaving restart jobs waiting on the old PID.
+	if isSystemdManaged7DTD(cfg) {
+		return systemctl7DTD(ctx, "stop")
+	}
 	// Try to send "quit" via telnet for graceful shutdown
 	resp, err := a.SendCommand(ctx, cfg, "quit")
 	if err == nil && resp != "" {
@@ -568,7 +1069,17 @@ func (a *Adapter) Stop(ctx context.Context, cfg *agent.InstanceConfig) error {
 	return fmt.Errorf("no stop_command, telnet quit failed, and no stop.sh")
 }
 
+func isSystemdManaged7DTD(cfg *agent.InstanceConfig) bool {
+	parts := strings.Fields(cfg.StartCommand)
+	return len(parts) >= 4 && parts[len(parts)-3] == "/usr/bin/systemctl" && parts[len(parts)-2] == "start" && parts[len(parts)-1] == "7dtd.service"
+}
+
 func (a *Adapter) Restart(ctx context.Context, cfg *agent.InstanceConfig) error {
+	if cfg.AvoidBloodMoonRestart {
+		if err := a.waitUntilRestartDay(ctx, cfg); err != nil {
+			return err
+		}
+	}
 	if err := a.Stop(ctx, cfg); err != nil {
 		return err
 	}
@@ -586,6 +1097,33 @@ func (a *Adapter) Restart(ctx context.Context, cfg *agent.InstanceConfig) error 
 		return fmt.Errorf("server did not become active after restart: %w", err)
 	}
 	return nil
+}
+
+var gameDayPattern = regexp.MustCompile(`(?i)\bday\s+(\d+)\b`)
+
+func (a *Adapter) waitUntilRestartDay(ctx context.Context, cfg *agent.InstanceConfig) error {
+	for {
+		output, err := a.SendCommand(ctx, cfg, "gettime")
+		if err != nil {
+			return fmt.Errorf("check game day before restart: %w", err)
+		}
+		match := gameDayPattern.FindStringSubmatch(output)
+		if len(match) != 2 {
+			return fmt.Errorf("check game day before restart: could not parse gettime response")
+		}
+		day, err := strconv.Atoi(match[1])
+		if err != nil {
+			return fmt.Errorf("check game day before restart: %w", err)
+		}
+		if day <= 0 || day%7 != 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(30 * time.Second):
+		}
+	}
 }
 
 func (a *Adapter) Status(ctx context.Context, cfg *agent.InstanceConfig) (string, error) {
@@ -626,6 +1164,36 @@ func sanitizeRCONArg(s string) string {
 		}
 	}
 	return b.String()
+}
+
+func playerCommandIdentifier(payload map[string]interface{}) string {
+	identifier := sanitizeRCONArg(getString(payload, "identifier", ""))
+	platform := getString(payload, "platform", "")
+	if identifier == "" || strings.Contains(identifier, "_") {
+		return identifier
+	}
+	if strings.EqualFold(platform, "Steam") {
+		return "Steam_" + identifier
+	}
+	if strings.EqualFold(platform, "EOS") {
+		return "EOS_" + identifier
+	}
+	return identifier
+}
+
+func consoleRejected(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, " is not a valid ") || strings.Contains(lower, "error executing command")
+}
+
+var playerCountPattern = regexp.MustCompile(`(?i)total of\s+(\d+)\s+in the game`)
+
+func playerCountFromList(output string) (int, error) {
+	match := playerCountPattern.FindStringSubmatch(output)
+	if len(match) != 2 {
+		return 0, fmt.Errorf("could not parse lp response")
+	}
+	return strconv.Atoi(match[1])
 }
 
 func (a *Adapter) KickPlayer(ctx context.Context, cfg *agent.InstanceConfig, playerID string) error {

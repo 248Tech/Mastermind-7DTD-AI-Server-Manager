@@ -2,12 +2,14 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { BatchesService } from '../batches/batches.service';
 import { JobsQueueService } from './jobs-queue.service';
 import type { ReportResultDto } from './dto/report-result.dto';
+import { reconcileNameFallback } from '../players/player-identity';
 
 @Injectable()
 export class JobsService {
@@ -28,11 +30,46 @@ export class JobsService {
     payload?: Record<string, unknown>,
   ): Promise<{ jobId: string; jobRunId: string }> {
     const normalizedJobType = this.normalizeJobType(jobType);
+    if (normalizedJobType === 'RCON' || normalizedJobType === 'SEND_COMMAND') {
+      const command = typeof payload?.command === 'string' ? payload.command.trim() : '';
+      if (!command) throw new BadRequestException('Console command is required');
+      if (command.length > 512) throw new BadRequestException('Console command cannot exceed 512 characters');
+      if (/[\r\n]/.test(command)) throw new BadRequestException('Only one console command may be sent at a time');
+      payload = { ...(payload ?? {}), command };
+    }
+    if (normalizedJobType === 'PLAYER_ADMIN_PROMOTE' || normalizedJobType === 'PLAYER_ADMIN_DEMOTE') {
+      const membership = await this.prisma.userOrg.findUnique({
+        where: { userId_orgId: { userId, orgId } },
+        include: { role: true },
+      });
+      if (membership?.role.name !== 'admin') {
+        throw new ForbiddenException('Only organization administrators may change game administrators');
+      }
+    }
+    if (normalizedJobType === 'PLAYER_KICK_ALL') {
+      const membership = await this.prisma.userOrg.findUnique({
+        where: { userId_orgId: { userId, orgId } },
+        include: { role: true },
+      });
+      if (!membership || !['admin', 'operator'].includes(membership.role.name)) {
+        throw new ForbiddenException('Only organization administrators or operators may kick all players');
+      }
+    }
+    if (['SAVE_BACKUP', 'SAVE_RESTORE', 'SAVE_DELETE', 'SAVE_RETENTION'].includes(normalizedJobType)) {
+      const membership = await this.prisma.userOrg.findUnique({
+        where: { userId_orgId: { userId, orgId } },
+        include: { role: true },
+      });
+      if (!membership || !['admin', 'operator'].includes(membership.role.name)) {
+        throw new ForbiddenException('Only organization administrators or operators may manage saves');
+      }
+    }
     const serverInstance = await this.prisma.serverInstance.findFirst({
       where: { id: serverInstanceId, orgId },
       include: {
         host: true,
         gameType: { select: { slug: true } },
+        org: { select: { avoidBloodMoonRestart: true } },
       },
     });
     if (!serverInstance) {
@@ -48,6 +85,7 @@ export class JobsService {
       telnet_port: serverInstance.telnetPort ?? undefined,
       telnet_password: serverInstance.telnetPassword ?? undefined,
       config: serverInstance.config ?? undefined,
+      avoid_blood_moon_restart: serverInstance.org.avoidBloodMoonRestart,
       ...(payload ?? {}),
     };
 
@@ -178,6 +216,7 @@ export class JobsService {
       const name = head[2].trim();
       const identityKey = steam ? `steam:${steam}` : eos ? `eos:${eos}` : `name:${name.toLowerCase()}`;
       seen.add(identityKey);
+      await reconcileNameFallback(this.prisma, serverInstanceId, identityKey, name, steam, eos);
       const existing = await this.prisma.player.findUnique({ where: { serverInstanceId_identityKey: { serverInstanceId, identityKey } } });
       const player = await this.prisma.player.upsert({
         where: { serverInstanceId_identityKey: { serverInstanceId, identityKey } },
