@@ -1,5 +1,5 @@
 /** MVP alert types */
-export const ALERT_TYPES = ['SERVER_DOWN', 'SERVER_RESTART', 'AGENT_OFFLINE', 'FRIGATE_DETECTION'] as const;
+export const ALERT_TYPES = ['SERVER_DOWN', 'SERVER_RESTART', 'AGENT_OFFLINE', 'FRIGATE_DETECTION', 'PLAYER_CONNECTED', 'PLAYER_DISCONNECTED'] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 
 /** Context passed when sending an alert (used for structured formatting) */
@@ -18,6 +18,9 @@ export interface AlertContext {
   frigateCamera?: string;
   frigateLabel?: string;
   frigateScore?: number;
+  playerName?: string;
+  steamId?: string;
+  eosId?: string;
   /** Arbitrary extras */
   [key: string]: unknown;
 }

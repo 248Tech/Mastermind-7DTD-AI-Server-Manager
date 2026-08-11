@@ -57,41 +57,42 @@
 
 ---
 
-## Release 0.0.6 (August 10, 2026)
+## Release 0.0.7 (August 11, 2026)
 
 ### Highlights
 
-- Server-first dashboard with per-server controls, health, logs, players, mods, RegionHealer, and filtered job history.
-- Persistent log ingestion with configurable retention and keyword alerts.
-- Live CPU, RAM, disk, latency, and game-reachability monitoring with configurable sampling intervals.
-- Authoritative 7DTD player tracking through scheduled `lp` polling, including Steam/EOS IDs, sessions, lifetime playtime, kick, and ban controls.
-- Safe mod inventory, bulk quarantine, restore, and permanent deletion using `ModInfo.xml` metadata.
-- Confirmed save wipe workflow plus reliable stop/start verification for restart jobs.
-- Full-world and RegionHealer save management with metadata, safe restore/delete, retention, and automatic backup intervals.
-- Interactive telnet command console embedded in live logs.
-- Kick-all verification, XML-backed admin promotion/demotion, identity reconciliation, and Blood Moon-aware restarts.
-- Hardened pairing, account-attributed jobs, password changes with scrypt migration, responsive UI, and custom branding.
+- Safe restart performs a one-minute player countdown, full backup, verified kick-all, and service restart; scheduled restarts use the same protocol.
+- Emergency Kill, hardened save wipe escalation, permission-safe save restores, and reliable systemd process-state verification.
+- Player-only chat history with Discord webhook relay and an operator reply box that speaks through the server.
+- Player connect/disconnect Discord alerts with per-rule delivery tests and lifecycle-event deduplication.
+- Faster incremental logs, concurrent read-only mod inventory, accurate host-scoped health charts, and game-reachability server status.
+- Customizable dashboard shortcuts plus host and server-instance rename/unregister controls.
+- Sortable mod metadata with activation timestamps and permission normalization after quarantine restore.
+- Simple day/hour/minute scheduling alongside advanced cron expressions.
 
 ---
 
-## Current features (v0.0.6)
+## Current features (v0.0.7)
 
 ### Implemented end-to-end
 
 - **Authentication and organizations:** register/login, JWT sessions, organization membership and roles, protected pairing-token creation, agent-key rotation, and password changes using salted scrypt with legacy-hash migration.
 - **Host agents:** one-time pairing, persistent agent identity, heartbeat and inventory reporting, long-poll job execution, same-host Linux 7DTD autodiscovery, and automatic server registration.
 - **Server-first dashboard:** registered servers are primary; each server opens a management view with overview, controls, console, and server-filtered job history.
-- **7DTD controls:** start, graceful stop, verified restart, telnet console commands (including an interactive Logs-page console), and a confirmed save wipe that validates paths, pauses RegionHealer, deletes only the configured save, starts a fresh world, and verifies creation.
+- **7DTD controls:** start, graceful stop, verified restart, safe restart with countdown/save/backup/kick verification, emergency process kill, telnet console commands, and a confirmed save wipe that safely stops or escalates a hung server before deleting only the configured save and verifying fresh-world creation.
 - **Blood Moon safety:** an optional organization setting defers restart jobs on in-game days divisible by 7 until the next game day begins.
-- **Jobs and accountability:** queue-backed start/stop/restart/RCON/custom jobs, result/output tracking, schedule and batch support, per-server filtering, and initiating-account attribution.
-- **Logs:** agent log tailing, database persistence, live viewing, selectable retention in days/weeks/months, keyword alert definitions, match history, and enable/disable controls.
-- **Health:** CPU, RAM, disk, agent latency, and 7DTD reachability samples with averages and configurable polling intervals.
+- **Jobs and accountability:** queue-backed start/stop/restart/safe-restart/kill/RCON/custom jobs, result/output tracking, schedule and batch support, per-server filtering, initiating-account attribution, and serialized mutations with concurrent read-only inventory jobs.
+- **Logs and console:** agent log tailing, database persistence, incremental live viewing, optional auto-scroll, selectable retention, keyword alert definitions, match history, and an audited telnet command box.
+- **Chat:** player-only chat extraction, stored history, per-server Discord webhook relay with mention suppression, and operator replies automatically sent as server `say` messages.
+- **Health:** host-scoped CPU, RAM, disk, agent latency, and real 7DTD reachability samples with current values, historical averages, and configurable polling intervals.
 - **Players:** authoritative `lp` polling every 60 seconds by default, reconciled Steam/EOS identity capture, online state, current/lifetime playtime, last seen, kick/ban/kick-all actions, post-kick verification, and XML-backed administrator status with promote/demote controls.
-- **Mods:** active and quarantined inventories, `ModInfo.xml` name/version/author/website parsing, single or bulk selection, select-all, quarantine, restore, and constrained permanent deletion.
+- **Mods:** fast active/quarantined inventories, `ModInfo.xml` name/version/author/website parsing, activation timestamps, sortable columns, single/bulk selection, quarantine, permission-safe restore, and constrained permanent deletion.
 - **RegionHealer:** status information plus start/stop jobs for a separately installed RegionHealer-v2 service.
 - **Saves:** combined full-world and RegionHealer snapshot inventory, timestamp/game-day metadata, manual full backup, confirmed server-off restore/delete, full-backup retention, and scheduled backups from every 15 minutes through daily.
-- **Alerts and integrations:** Discord alerts, schedules, log-keyword alerts, server/agent events, and Frigate webhook/settings support.
-- **Responsive UI:** full desktop, half-window compact navigation, mobile drawer, safe table overflow, custom Mastermind logo, and favicon.
+- **Schedules:** safe scheduled restarts, a simple day/hour/minute builder, advanced five-field cron entry, and automatic full-world backup intervals.
+- **Alerts and integrations:** Discord alerts, per-rule pipeline testing, deduplicated player connection/disconnection events, log-keyword alerts, player-chat relay, server/agent events, and Frigate webhook/settings support.
+- **Host and instance registry:** role-protected rename and unregister operations with clear confirmation that unregistering does not delete game files.
+- **Responsive UI:** server-first overview, customizable Quick Access cards, full desktop, half-window compact navigation, mobile drawer, safe table overflow, custom Mastermind logo, and favicon.
 - **Game adapters:** 7 Days to Die is fully managed; Minecraft adapter and capability registry remain available for expansion.
 
 ---

@@ -11,10 +11,13 @@ import {
   HttpStatus,
   BadRequestException,
   NotFoundException,
+  Req,
 } from '@nestjs/common';
 import { AlertsService } from './alerts.service';
 import { JwtAuthGuard } from '../server-instances/guards/jwt-auth.guard';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
+import { RequireOrgRoleGuard, RequireOrgRoles } from '../server-instances/guards/require-org-role.guard';
+import { RequestWithOrgRole } from '../server-instances/guards/org-member.guard';
 
 @Controller('api/orgs/:orgId/alerts')
 @UseGuards(JwtAuthGuard, OrgMemberGuard)
@@ -50,6 +53,17 @@ export class AlertsController {
       if (msg.includes('not found')) throw new NotFoundException(msg);
       throw new BadRequestException(msg);
     }
+  }
+
+  @Post(':id/test')
+  @UseGuards(RequireOrgRoleGuard)
+  @RequireOrgRoles('admin', 'operator')
+  async test(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Req() req: RequestWithOrgRole & { user: { id: string } },
+  ) {
+    return this.alertsService.testRule(orgId, id, req.user.id);
   }
 
   @Delete(':id')

@@ -58,7 +58,8 @@ export interface LogKeywordMatch { id: string; sourceId: string; createdAt: stri
 export interface HealthSample { id: string; hostId: string; cpuPercent: number; ramUsedMb: number; ramTotalMb: number; diskUsedGb: number; latencyMs: number; gameReachable: boolean; createdAt: string; }
 export interface HealthHost { id: string; name: string; status: string; lastHeartbeatAt: string|null; lastMetrics: { cpu?:number; ramUsedMb?:number; ramTotalMb?:number; diskUsedGb?:number; latencyMs?:number; gameReachable?:boolean }|null; }
 export interface HealthDashboard { hosts: HealthHost[]; samples: HealthSample[]; intervalSec: number; }
+export interface ChatMessage { id:string; sourceId:string; createdAt:string; payload:{playerId:string;entityId:string;playerName:string;channel:string;message:string;serverInstanceName:string}; }
 export interface PlayerRecord { id:string; serverInstanceId:string; identityKey:string; steamId:string|null; eosId:string|null; entityId:number|null; name:string; online:boolean; currentSessionStartedAt:string|null; sessionSeconds:number; lifetimeSeconds:number; firstSeenAt:string; lastSeenAt:string; }
 export interface ServerAdminRecord { platform?:string; userId:string; name?:string; permissionLevel:number; }
-export interface ModRecord { folder:string; name:string; author?:string; website?:string; version?:string; }
+export interface ModRecord { folder:string; name:string; author?:string; website?:string; version?:string; activatedAt:string; }
 export interface SaveRecord { id:string; createdAt:string; gameDay:number; kind:'full-world'|'region-healer'; sizeBytes:number; }

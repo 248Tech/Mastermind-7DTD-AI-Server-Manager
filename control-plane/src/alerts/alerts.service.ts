@@ -8,6 +8,8 @@ import { ALERT_TYPES } from './alert-types';
 
 @Injectable()
 export class AlertsService {
+  private readonly recentPlayerLifecycleAlerts = new Map<string, number>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly discord: DiscordService,
@@ -101,6 +103,90 @@ export class AlertsService {
     const existing = await this.prisma.alertRule.findFirst({ where: { id: ruleId, orgId } });
     if (!existing) throw new Error('Alert rule not found');
     await this.prisma.alertRule.delete({ where: { id: ruleId } });
+  }
+
+  async sendMatchingRules(type: AlertType, context: AlertContext): Promise<void> {
+    if (type === 'PLAYER_CONNECTED' || type === 'PLAYER_DISCONNECTED') {
+      const player = context.playerName?.trim().toLocaleLowerCase() || context.steamId || context.eosId;
+      if (player) {
+        const now = Date.now();
+        const key = `${context.orgId}:${context.serverInstanceId}:${type}:${player}`;
+        const previous = this.recentPlayerLifecycleAlerts.get(key);
+        if (previous !== undefined && now - previous < 15_000) return;
+        this.recentPlayerLifecycleAlerts.set(key, now);
+        if (this.recentPlayerLifecycleAlerts.size > 1_000) {
+          for (const [candidate, timestamp] of this.recentPlayerLifecycleAlerts) {
+            if (now - timestamp >= 15_000) this.recentPlayerLifecycleAlerts.delete(candidate);
+          }
+        }
+      }
+    }
+
+    const [org, rules] = await Promise.all([
+      this.prisma.org.findUnique({ where: { id: context.orgId }, select: { name: true } }),
+      this.prisma.alertRule.findMany({ where: { orgId: context.orgId, enabled: true } }),
+    ]);
+    const matching = rules.filter(rule => String((rule.condition as Record<string, unknown>)?.type ?? '').toUpperCase() === type);
+    const payload = formatDiscordAlert(type, { ...context, orgName: org?.name });
+    for (const rule of matching) {
+      const channel = rule.channel as Record<string, unknown>;
+      if (String(channel?.type ?? '').toLowerCase() !== 'discord') continue;
+      const webhookUrl = String(channel.webhookUrl ?? '').trim();
+      if (!webhookUrl) continue;
+      const result = await this.discord.send(webhookUrl, payload, `${context.orgId}:${rule.id}`);
+      await this.auditAlert(context.orgId, type, context, result.ok, result.ok ? undefined : result.error);
+    }
+  }
+
+  async relayPlayerChat(context: { orgId: string; serverInstanceId: string; serverInstanceName: string; playerName: string; playerId: string; channel: string; message: string }): Promise<void> {
+    const rules = await this.prisma.alertRule.findMany({ where: { orgId: context.orgId, enabled: true } });
+    const matching = rules.filter(rule => {
+      const condition = rule.condition as Record<string, unknown>;
+      return condition?.type === 'chat_relay' && (!condition.serverInstanceId || condition.serverInstanceId === context.serverInstanceId);
+    });
+    for (const rule of matching) {
+      const channel = rule.channel as Record<string, unknown>;
+      if (String(channel?.type ?? '').toLowerCase() !== 'discord') continue;
+      const webhookUrl = String(channel.webhookUrl ?? '').trim();
+      if (!webhookUrl) continue;
+      const safeName = context.playerName.replace(/[*_`~|>]/g, '\\$&').slice(0, 80);
+      const safeMessage = context.message.replace(/@/g, '@\u200b').slice(0, 1800);
+      await this.discord.send(webhookUrl, {
+        embeds: [{ title: `💬 ${safeName}`, description: safeMessage, color: 0x5865f2,
+          fields: [{ name: 'Server', value: context.serverInstanceName, inline: true }, { name: 'Channel', value: context.channel, inline: true }],
+          footer: { text: `7DTD player chat · ${context.playerId}` }, timestamp: new Date().toISOString() }],
+      }, `${context.orgId}:${rule.id}`);
+    }
+  }
+
+  async testRule(orgId: string, ruleId: string, userId: string) {
+    const rule = await this.prisma.alertRule.findFirst({ where: { id: ruleId, orgId } });
+    if (!rule) throw new Error('Alert rule not found');
+    const channel = rule.channel as Record<string, unknown>;
+    if (String(channel?.type ?? '').toLowerCase() !== 'discord') {
+      return { sent: false, error: `Testing is not supported for ${String(channel?.type ?? 'this')} channels` };
+    }
+    const webhookUrl = String(channel.webhookUrl ?? '').trim();
+    let parsed: URL;
+    try { parsed = new URL(webhookUrl); } catch { return { sent: false, error: 'Saved Discord webhook URL is invalid' }; }
+    if (parsed.protocol !== 'https:' || !['discord.com', 'discordapp.com'].includes(parsed.hostname.toLowerCase()) || !parsed.pathname.startsWith('/api/webhooks/')) {
+      return { sent: false, error: 'Saved channel is not a valid Discord webhook URL' };
+    }
+    const result = await this.discord.send(webhookUrl, {
+      embeds: [{
+        title: '🧪 Mastermind alert pipeline test',
+        description: `Alert rule **${rule.name}** successfully reached its configured Discord channel.`,
+        color: 0x6366f1,
+        fields: [{ name: 'Result', value: 'Webhook delivery successful', inline: true }],
+        footer: { text: 'Mastermind Control Plane · Manual Test' },
+        timestamp: new Date().toISOString(),
+      }],
+    }, `${orgId}:rule-test`);
+    await this.prisma.auditLog.create({ data: {
+      orgId, actorId: userId, action: 'alert_test', resourceType: 'alert_rule', resourceId: ruleId,
+      details: { name: rule.name, success: result.ok, ...(!result.ok && { error: result.error }) },
+    }});
+    return result.ok ? { sent: true, message: 'Test alert delivered successfully' } : { sent: false, error: result.error };
   }
 
   private toDto(r: {

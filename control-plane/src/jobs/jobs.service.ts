@@ -46,13 +46,13 @@ export class JobsService {
         throw new ForbiddenException('Only organization administrators may change game administrators');
       }
     }
-    if (normalizedJobType === 'PLAYER_KICK_ALL') {
+    if (normalizedJobType === 'PLAYER_KICK_ALL' || normalizedJobType === 'SERVER_KILL') {
       const membership = await this.prisma.userOrg.findUnique({
         where: { userId_orgId: { userId, orgId } },
         include: { role: true },
       });
       if (!membership || !['admin', 'operator'].includes(membership.role.name)) {
-        throw new ForbiddenException('Only organization administrators or operators may kick all players');
+        throw new ForbiddenException('Only organization administrators or operators may perform this action');
       }
     }
     if (['SAVE_BACKUP', 'SAVE_RESTORE', 'SAVE_DELETE', 'SAVE_RETENTION'].includes(normalizedJobType)) {

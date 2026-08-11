@@ -24,13 +24,14 @@ saves_root = os.path.realpath(os.path.join(user_data, "Saves"))
 resolved = os.path.abspath(os.path.join(saves_root, world, game))
 if os.path.commonpath((saves_root, resolved)) != saves_root or resolved == saves_root:
     raise SystemExit("resolved save is outside Saves")
-if requested != resolved:
-    raise SystemExit("requested save does not match server configuration")
+allowed = (resolved, resolved + ".mastermind-restore-old")
+if requested not in allowed:
+    raise SystemExit("requested path does not match the configured save or its restore rollback directory")
 if os.path.islink(resolved):
     raise SystemExit("save path must not be a symlink")
-if not os.path.isdir(resolved):
-    raise SystemExit("configured save directory does not exist")
+if not os.path.isdir(requested):
+    raise SystemExit("requested save directory does not exist")
 
-shutil.rmtree(resolved)
-if os.path.exists(resolved):
+shutil.rmtree(requested)
+if os.path.exists(requested):
     raise SystemExit("save directory still exists after deletion")

@@ -89,6 +89,7 @@ export default function AlertsPage() {
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string,{ok:boolean;text:string}>>({});
 
   const fetchRules = useCallback(async () => {
     if (!orgId) return [];
@@ -147,6 +148,17 @@ export default function AlertsPage() {
     }
   }
 
+  async function handleTest(rule: AlertRule) {
+    if (!orgId) return;
+    setActionLoading(rule.id);setTestResults(current=>({...current,[rule.id]:{ok:true,text:'Sending test…'}}));
+    try {
+      const result=await api.post<{sent:boolean;message?:string;error?:string}>(`/api/orgs/${orgId}/alerts/${rule.id}/test`,{});
+      setTestResults(current=>({...current,[rule.id]:{ok:result.sent,text:result.message||result.error||(result.sent?'Delivered':'Delivery failed')}}));
+    } catch(err) {
+      setTestResults(current=>({...current,[rule.id]:{ok:false,text:err instanceof Error?err.message:'Test failed'}}));
+    } finally { setActionLoading(null); }
+  }
+
   return (
     <div>
       <div style={{ marginBottom: '2rem' }}>
@@ -182,12 +194,16 @@ export default function AlertsPage() {
                   <option value="SERVER_RESTART">Server Restart</option>
                   <option value="AGENT_OFFLINE">Agent Offline</option>
                   <option value="FRIGATE_DETECTION">Frigate Detection</option>
+                  <option value="PLAYER_CONNECTED">Player Connected</option>
+                  <option value="PLAYER_DISCONNECTED">Player Disconnected</option>
                 </select>
                 <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.3rem' }}>
                   {form.type === 'FRIGATE_DETECTION'
                     ? 'Triggers when Frigate detects a configured object. Configure Frigate in Settings.'
                     : form.type === 'AGENT_OFFLINE'
                       ? 'Triggers when a host agent stops heartbeating.'
+                      : form.type === 'PLAYER_CONNECTED' || form.type === 'PLAYER_DISCONNECTED'
+                        ? 'Triggers once when the server log confirms a player connection state change.'
                       : 'Triggers on server lifecycle events.'}
                 </div>
               </div>
@@ -264,10 +280,14 @@ export default function AlertsPage() {
                         <button style={btnSmall} onClick={() => handleToggle(rule)} disabled={actionLoading === rule.id}>
                           {rule.enabled ? 'Disable' : 'Enable'}
                         </button>
+                        <button style={{...btnSmall,color:'#818cf8',borderColor:'rgba(99,102,241,.4)'}} onClick={() => handleTest(rule)} disabled={actionLoading === rule.id}>
+                          {actionLoading===rule.id?'Testing…':'Test'}
+                        </button>
                         <button style={btnDangerSmall} onClick={() => handleDelete(rule.id)} disabled={actionLoading === rule.id}>
                           Delete
                         </button>
                       </div>
+                      {testResults[rule.id]&&<div style={{color:testResults[rule.id].ok?'#4ade80':'#f87171',fontSize:'.72rem',marginTop:5,maxWidth:240}}>{testResults[rule.id].text}</div>}
                     </td>
                   </tr>
                 ))}

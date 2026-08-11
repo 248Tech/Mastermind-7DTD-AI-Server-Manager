@@ -13,6 +13,7 @@ const NAV = [
   { href: '/hosts', label: 'Hosts', icon: '⬡', title: 'Machines running the agent + game server processes on them' },
   { href: '/jobs', label: 'Jobs', icon: '⚡', title: 'Send one-off commands to your servers (restart, backup, etc.)' },
   { href: '/logs', label: 'Logs', icon: '≡', title: 'Live and recorded server logs' },
+  { href: '/chat', label: 'Chat', icon: '💬', title: 'Player-only chat history and Discord relay' },
   { href: '/region-healer', label: 'Region Healer', icon: '✚', title: 'Automatic corrupt-region recovery' },
   { href: '/schedules', label: 'Schedules', icon: '◷', title: 'Run jobs automatically on a cron schedule' },
   { href: '/alerts', label: 'Alerts', icon: '◎', title: 'Get notified via Discord when servers go offline' },

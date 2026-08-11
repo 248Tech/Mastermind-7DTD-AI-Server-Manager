@@ -19,6 +19,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - (none)
 
+## [0.0.7] - 2026-08-11
+
+### Added
+
+- Added a persistent, optional auto-scroll/follow toggle to the Logs page so operators can follow new output or hold their reading position.
+- Added a privileged emergency Kill process control with an explicit data-corruption warning and immediate SIGKILL semantics.
+- Added mod activation date/time tracking and sortable name, activation date, and author columns to the Mods page.
+- Added a Safe restart server control that broadcasts a six-message 60-second countdown, flushes and backs up the world, kicks and verifies all players, and performs a verified restart.
+- Added a beginner-friendly day, hour, and minute schedule builder while retaining direct cron expressions as an advanced option.
+- Bumped repository, control-plane, web, and health endpoint versions to `0.0.7`.
+
+### Changed
+
+- Improved Logs page load and refresh performance with incremental log polling, bounded rendering, and less frequent alert refreshes.
+- Corrected health charts to scope samples by host, plot the complete selected time window using real timestamps, and distinguish current values from historical averages.
+- Added a customizable dashboard Quick Access section for Logs, Health, Players, Mods, Saves, Jobs, Schedules, Alerts, and Region Healer, with per-browser saved preferences.
+- Added role-protected rename and unregister controls for registered hosts and server instances, with destructive-action confirmations that distinguish registry removal from deleting game files.
+- Improved mod inventory loading by allowing read-only active/quarantine scans alongside long serialized server actions and reducing UI job-result polling latency.
+- Fixed restored mods retaining quarantine permissions that prevented the 7DTD service account from reading `ModInfo.xml`; restored trees now receive loader-safe directory and file modes.
+- Added per-rule alert pipeline testing with real Discord delivery, inline success/failure results, role protection, webhook validation, retries/rate limiting, and audit logging.
+- Added Player Connected and Player Disconnected Discord alert rules driven by real 7DTD log state transitions, including server, player name, Steam ID, and EOS ID details with duplicate-event suppression.
+- Added a dedicated player-only Chat section that parses genuine 7DTD chat lines, stores clean history, filters server messages, and optionally relays each server’s chat to a validated Discord webhook with mention suppression.
+- Added a Chat reply box that safely sends operator messages through the audited RCON job pipeline with an automatic `say` prefix so they appear in-game as Server.
+
+### Fixed
+
+- Prevented duplicate Discord player lifecycle alerts by ignoring preliminary login and teleport spawn lines and deduplicating repeated connect/disconnect deliveries for 15 seconds.
+- Routed scheduled 7DTD restart jobs through the full safe-restart protocol while preserving immediate manual Restart behavior.
+- Fixed successful server kills appearing ineffective by waiting for job completion and using game reachability—not host-agent connectivity—for server online status.
+- Made Kill idempotent so clicking it when 7DTD is already stopped verifies success instead of creating a failed job.
+- Fixed restored 7DTD saves being owned exclusively by the agent, which prevented the game from rewriting ConfigsDump XML files.
+- Hardened save wipes to flush the world, attempt a bounded graceful shutdown, escalate hung processes to SIGKILL, verify PID removal, and only then delete the configured save.
+- Fixed save restores blocked by stale rollback directories using privileged cleanup restricted to the configured save's exact `.mastermind-restore-old` sibling.
+- Ensured full-world restores return ownership to the 7DTD service account before startup, preventing restored `main.ttw` backup/write failures.
+- Fixed active mod inventory and game loading failures by granting the shared server/agent group inherited read/write access to the configured Mods directory.
+
 ## [0.0.6] - 2026-08-10
 
 ### Added

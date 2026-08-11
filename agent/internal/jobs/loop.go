@@ -11,6 +11,17 @@ import (
 
 // Loop polls for jobs and executes them via the given JobExecutor until ctx is cancelled.
 func Loop(ctx context.Context, c client.Client, hostID string, pollIntervalSec int, longPollSec int, exec agent.JobExecutor) {
+	mutationQueue := make(chan client.Job, 64)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case job := <-mutationQueue:
+				runOne(ctx, c, hostID, job, exec)
+			}
+		}
+	}()
 	for {
 		jobs, err := c.PollJobs(ctx, hostID, longPollSec)
 		if err != nil {
@@ -23,13 +34,32 @@ func Loop(ctx context.Context, c client.Client, hostID string, pollIntervalSec i
 			}
 		}
 		for _, j := range jobs {
-			runOne(ctx, c, hostID, j, exec)
+			if isReadOnly(j.Type) {
+				go runOne(ctx, c, hostID, j, exec)
+			} else {
+				select {
+				case mutationQueue <- j:
+				case <-ctx.Done():
+					return
+				}
+			}
 		}
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
+	}
+}
+
+// Inventory reads can run during a long restart or backup. All state-changing
+// jobs remain strictly ordered through the single mutation worker above.
+func isReadOnly(jobType string) bool {
+	switch jobType {
+	case "MOD_LIST", "MOD_QUARANTINE_LIST":
+		return true
+	default:
+		return false
 	}
 }
 

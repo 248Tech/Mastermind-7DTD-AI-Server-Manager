@@ -64,8 +64,12 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 		return resultOrErr(a.Start(ctx, cfg))
 	case "SERVER_STOP":
 		return resultOrErr(a.Stop(ctx, cfg))
+	case "SERVER_KILL":
+		return resultOrErr(a.Kill(ctx))
 	case "SERVER_RESTART":
 		return resultOrErr(a.Restart(ctx, cfg))
+	case "SERVER_SAFE_RESTART":
+		return a.SafeRestart(ctx, cfg, job.Payload)
 	case "SERVER_WIPE_SAVE":
 		if !getBool(job.Payload, "confirmed") {
 			return agent.JobResult{Status: "failed", Error: "save wipe requires explicit confirmation"}, nil
@@ -345,15 +349,41 @@ func restoreMod(cfg *agent.InstanceConfig, override, folder string) error {
 	if output, err := exec.Command("/usr/bin/mv", "--", source, destination).CombinedOutput(); err != nil {
 		return fmt.Errorf("restore mod: %w: %s", err, strings.TrimSpace(string(output)))
 	}
+	if err := normalizeModPermissions(destination); err != nil {
+		return fmt.Errorf("make restored mod readable by game server: %w", err)
+	}
+	now := time.Now()
+	if err := os.Chtimes(destination, now, now); err != nil {
+		return fmt.Errorf("record restored mod activation time: %w", err)
+	}
 	return nil
 }
 
+// Quarantine preserves the source tree's ownership and modes. Normalize the
+// restored tree so the 7DTD service account can traverse folders and read mod
+// files even when it reaches them through a supplemental group.
+func normalizeModPermissions(root string) error {
+	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if info.IsDir() {
+			return os.Chmod(path, 0750)
+		}
+		return os.Chmod(path, 0640)
+	})
+}
+
 type modInfo struct {
-	Folder  string `json:"folder"`
-	Name    string `json:"name"`
-	Author  string `json:"author,omitempty"`
-	Website string `json:"website,omitempty"`
-	Version string `json:"version,omitempty"`
+	Folder      string    `json:"folder"`
+	Name        string    `json:"name"`
+	Author      string    `json:"author,omitempty"`
+	Website     string    `json:"website,omitempty"`
+	Version     string    `json:"version,omitempty"`
+	ActivatedAt time.Time `json:"activatedAt"`
 }
 
 type serverAdmin struct {
@@ -452,6 +482,9 @@ func listModsAt(root string) ([]modInfo, error) {
 			continue
 		}
 		info := modInfo{Folder: entry.Name(), Name: entry.Name()}
+		if entryInfo, infoErr := entry.Info(); infoErr == nil {
+			info.ActivatedAt = entryInfo.ModTime().UTC()
+		}
 		modInfoPath := filepath.Join(root, entry.Name(), "ModInfo.xml")
 		if values, readErr := readModInfo(modInfoPath); readErr == nil {
 			if values["name"] != "" {
@@ -543,13 +576,13 @@ func jobPayloadToConfig(p map[string]interface{}) *agent.InstanceConfig {
 		return &agent.InstanceConfig{}
 	}
 	cfg := &agent.InstanceConfig{
-		ServerInstanceID: getString(p, "server_instance_id", ""),
-		InstallPath:      getString(p, "install_path", ""),
-		StartCommand:     getString(p, "start_command", ""),
-		StopCommand:      getString(p, "stop_command", ""),
-		TelnetHost:       getString(p, "telnet_host", "127.0.0.1"),
-		TelnetPort:       getInt(p, "telnet_port", 8081),
-		TelnetPassword:   getString(p, "telnet_password", ""),
+		ServerInstanceID:      getString(p, "server_instance_id", ""),
+		InstallPath:           getString(p, "install_path", ""),
+		StartCommand:          getString(p, "start_command", ""),
+		StopCommand:           getString(p, "stop_command", ""),
+		TelnetHost:            getString(p, "telnet_host", "127.0.0.1"),
+		TelnetPort:            getInt(p, "telnet_port", 8081),
+		TelnetPassword:        getString(p, "telnet_password", ""),
 		AvoidBloodMoonRestart: getBool(p, "avoid_blood_moon_restart"),
 	}
 	return cfg
@@ -859,7 +892,17 @@ func (a *Adapter) RestoreSave(ctx context.Context, cfg *agent.InstanceConfig, co
 		}
 	}
 	old := target + ".mastermind-restore-old"
-	_ = os.RemoveAll(old)
+	configPath := configOverride
+	if configPath == "" {
+		configPath = filepath.Join(filepath.Dir(cfg.InstallPath), "serverconfig.xml")
+	}
+	if _, err := os.Lstat(old); err == nil {
+		if err := removeRestoreRollback(ctx, configPath, old); err != nil {
+			return SaveRecord{}, fmt.Errorf("clean stale restore rollback: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return SaveRecord{}, fmt.Errorf("inspect stale restore rollback: %w", err)
+	}
 	if _, err := os.Stat(target); err == nil {
 		if err := os.Rename(target, old); err != nil {
 			return SaveRecord{}, fmt.Errorf("stage current save: %w", err)
@@ -870,8 +913,49 @@ func (a *Adapter) RestoreSave(ctx context.Context, cfg *agent.InstanceConfig, co
 		_ = os.Rename(old, target)
 		return SaveRecord{}, fmt.Errorf("restore save: %w", err)
 	}
-	_ = os.RemoveAll(old)
+	if err := makeTreeGroupWritable(target); err != nil {
+		_ = os.RemoveAll(target)
+		_ = os.Rename(old, target)
+		return SaveRecord{}, fmt.Errorf("set restored save permissions: %w", err)
+	}
+	if fullWorld {
+		output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "/usr/local/sbin/mastermind-fix-7dtd-save-permissions", configPath, target).CombinedOutput()
+		if err != nil {
+			_ = os.RemoveAll(target)
+			_ = os.Rename(old, target)
+			return SaveRecord{}, fmt.Errorf("assign restored save to game account: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+	}
+	if err := removeRestoreRollback(ctx, configPath, old); err != nil {
+		return SaveRecord{}, fmt.Errorf("remove restore rollback after successful copy: %w", err)
+	}
 	return selected, nil
+}
+
+func removeRestoreRollback(ctx context.Context, configPath, old string) error {
+	output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "/usr/local/sbin/mastermind-wipe-7dtd-save", configPath, old).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("delete validated rollback directory: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if _, err := os.Lstat(old); !os.IsNotExist(err) {
+		return fmt.Errorf("rollback directory still exists after deletion")
+	}
+	return nil
+}
+
+func makeTreeGroupWritable(root string) error {
+	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		mode := info.Mode().Perm()
+		if info.IsDir() {
+			mode |= 0070
+		} else if info.Mode().IsRegular() {
+			mode |= 0060
+		}
+		return os.Chmod(path, mode)
+	})
 }
 
 func (a *Adapter) DeleteSaveBackup(ctx context.Context, id string) error {
@@ -945,11 +1029,30 @@ func (a *Adapter) WipeSave(ctx context.Context, cfg *agent.InstanceConfig, confi
 		}
 		defer func() { _ = systemctlService(context.Background(), "start", "regionhealer.service") }()
 	}
-	if err := systemctl7DTD(ctx, "stop"); err != nil {
-		return "", fmt.Errorf("stop server before wipe: %w", err)
+	if serviceHasMainPID(ctx) {
+		// First attempt a safe shutdown: flush the world, then ask systemd to
+		// terminate the game normally. A hung process is force-killed only after
+		// the bounded graceful attempt fails.
+		_, _ = a.SendCommand(ctx, cfg, "saveworld")
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+		stopCtx, cancelStop := context.WithTimeout(ctx, 60*time.Second)
+		stopErr := systemctl7DTD(stopCtx, "stop")
+		cancelStop()
+		if stopErr == nil {
+			stopErr = waitFor7DTDState(ctx, false, 5*time.Second)
+		}
+		if stopErr != nil || serviceHasMainPID(ctx) {
+			if killErr := a.Kill(ctx); killErr != nil {
+				return "", fmt.Errorf("safe shutdown failed (%v); forced kill also failed: %w", stopErr, killErr)
+			}
+		}
 	}
-	if err := waitFor7DTDState(ctx, false, 60*time.Second); err != nil {
-		return "", fmt.Errorf("server did not stop before wipe: %w", err)
+	if serviceHasMainPID(ctx) {
+		return "", fmt.Errorf("server process is still running; refusing to wipe save")
 	}
 	restartNeeded := true
 	defer func() {
@@ -992,6 +1095,42 @@ func (a *Adapter) WipeSave(ctx context.Context, cfg *agent.InstanceConfig, confi
 
 func systemctl7DTD(ctx context.Context, action string) error {
 	return systemctlService(ctx, action, "7dtd.service")
+}
+
+// Kill immediately terminates every process in the 7DTD systemd unit. This is
+// intentionally not graceful and must only be exposed behind a destructive UI.
+func (a *Adapter) Kill(ctx context.Context) error {
+	if !serviceHasMainPID(ctx) {
+		// Emergency stop controls should be idempotent. A repeated click after a
+		// successful kill still satisfies the requested final state.
+		return nil
+	}
+	output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "/usr/bin/systemctl", "kill", "--kill-who=main", "--signal=SIGKILL", "7dtd.service").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("kill 7DTD process: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	// A service configured with Restart=on-failure will otherwise immediately
+	// respawn after SIGKILL. Stop the now-dead unit to suppress that restart.
+	if err := systemctl7DTD(ctx, "stop"); err != nil {
+		return fmt.Errorf("prevent 7DTD restart after kill: %w", err)
+	}
+	output, err = exec.CommandContext(ctx, "/usr/bin/sudo", "/usr/bin/systemctl", "reset-failed", "7dtd.service").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("clear killed 7DTD service state: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if err := waitFor7DTDState(ctx, false, 15*time.Second); err != nil {
+		return fmt.Errorf("7DTD process remained active after kill: %w", err)
+	}
+	return nil
+}
+
+func serviceHasMainPID(ctx context.Context) bool {
+	output, err := exec.CommandContext(ctx, "/usr/bin/systemctl", "show", "--property=MainPID", "--value", "7dtd.service").Output()
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	return err == nil && pid > 0
 }
 
 func systemctlService(ctx context.Context, action, service string) error {
@@ -1097,6 +1236,77 @@ func (a *Adapter) Restart(ctx context.Context, cfg *agent.InstanceConfig) error 
 		return fmt.Errorf("server did not become active after restart: %w", err)
 	}
 	return nil
+}
+
+// SafeRestart warns connected players, takes a full save backup, removes all
+// players, and only then performs the normal verified service restart.
+func (a *Adapter) SafeRestart(ctx context.Context, cfg *agent.InstanceConfig, payload map[string]interface{}) (agent.JobResult, error) {
+	if cfg.AvoidBloodMoonRestart {
+		if err := a.waitUntilRestartDay(ctx, cfg); err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+	}
+
+	warnings := []string{
+		"Server will be rebooting in 1 minute",
+		"Server will be rebooting in 50 seconds",
+		"Server will be rebooting in 40 seconds",
+		"Server will be rebooting in 30 seconds",
+		"Server will be rebooting in 20 seconds",
+		"Server will be rebooting in 10 seconds",
+	}
+	for _, warning := range warnings {
+		if _, err := a.SendCommand(ctx, cfg, fmt.Sprintf("say %q", warning)); err != nil {
+			return agent.JobResult{Status: "failed", Error: fmt.Sprintf("send restart warning: %v", err)}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return agent.JobResult{Status: "failed", Error: ctx.Err().Error()}, nil
+		case <-time.After(10 * time.Second):
+		}
+	}
+
+	backup, err := a.BackupSave(ctx, cfg, getString(payload, "server_config_path", ""), getInt(payload, "retention_count", 10))
+	if err != nil {
+		return agent.JobResult{Status: "failed", Error: fmt.Sprintf("safe restart backup: %v", err)}, nil
+	}
+
+	kickOutput, err := a.SendCommand(ctx, cfg, `kickall "Server is Restarting"`)
+	if err != nil {
+		return agent.JobResult{Status: "failed", Error: fmt.Sprintf("safe restart kickall: %v", err)}, nil
+	}
+	if consoleRejected(kickOutput) {
+		return agent.JobResult{Status: "failed", Error: "7DTD rejected safe restart kickall command", Output: kickOutput}, nil
+	}
+	select {
+	case <-ctx.Done():
+		return agent.JobResult{Status: "failed", Error: ctx.Err().Error()}, nil
+	case <-time.After(2 * time.Second):
+	}
+	verification, err := a.SendCommand(ctx, cfg, "lp")
+	if err != nil {
+		return agent.JobResult{Status: "failed", Error: fmt.Sprintf("safe restart kick verification: %v", err), Output: kickOutput}, nil
+	}
+	remaining, err := playerCountFromList(verification)
+	if err != nil || remaining != 0 {
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: fmt.Sprintf("safe restart kick verification: %v", err), Output: kickOutput + "\n" + verification}, nil
+		}
+		return agent.JobResult{Status: "failed", Error: fmt.Sprintf("safe restart found %d player(s) still online", remaining), Output: kickOutput + "\n" + verification}, nil
+	}
+
+	// Blood Moon protection was evaluated before the countdown; avoid checking
+	// it again after players have already been removed.
+	restartCfg := *cfg
+	restartCfg.AvoidBloodMoonRestart = false
+	if err := a.Restart(ctx, &restartCfg); err != nil {
+		return agent.JobResult{Status: "failed", Error: fmt.Sprintf("safe restart: %v", err), Output: kickOutput}, nil
+	}
+	return agent.JobResult{
+		Status: "success",
+		Output: kickOutput + "\nVerification: 0 players online",
+		Result: map[string]interface{}{"backup": backup, "playersRemaining": 0, "restarted": true},
+	}, nil
 }
 
 var gameDayPattern = regexp.MustCompile(`(?i)\bday\s+(\d+)\b`)

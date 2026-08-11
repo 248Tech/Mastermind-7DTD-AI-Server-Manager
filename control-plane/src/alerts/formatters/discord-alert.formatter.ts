@@ -8,6 +8,8 @@ const COLORS = {
   SERVER_RESTART: 0xf39c12,    // orange
   AGENT_OFFLINE: 0x9b59b6,     // purple
   FRIGATE_DETECTION: 0x3498db, // blue
+  PLAYER_CONNECTED: 0x2ecc71,  // green
+  PLAYER_DISCONNECTED: 0x95a5a6, // gray
 } as const;
 
 export function formatDiscordAlert(type: AlertType, context: AlertContext): DiscordWebhookPayload {
@@ -30,6 +32,9 @@ function buildEmbed(type: AlertType, ctx: AlertContext): DiscordEmbed {
   if (ctx.frigateCamera) fields.push({ name: 'Camera', value: String(ctx.frigateCamera), inline: true });
   if (ctx.frigateLabel) fields.push({ name: 'Detected', value: String(ctx.frigateLabel), inline: true });
   if (ctx.frigateScore != null) fields.push({ name: 'Confidence', value: `${Math.round(Number(ctx.frigateScore) * 100)}%`, inline: true });
+  if (ctx.playerName) fields.push({ name: 'Player', value: String(ctx.playerName), inline: true });
+  if (ctx.steamId) fields.push({ name: 'Steam ID', value: String(ctx.steamId), inline: false });
+  if (ctx.eosId) fields.push({ name: 'EOS ID', value: String(ctx.eosId), inline: false });
 
   return {
     title,
@@ -50,6 +55,10 @@ function getTitle(type: AlertType): string {
       return '🟣 Agent offline';
     case 'FRIGATE_DETECTION':
       return '📷 Frigate detection event';
+    case 'PLAYER_CONNECTED':
+      return '🟢 Player connected';
+    case 'PLAYER_DISCONNECTED':
+      return '⚪ Player disconnected';
     default:
       return `Alert: ${type}`;
   }

@@ -1,34 +1,86 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { reconcileNameFallback } from '../players/player-identity';
+import { AlertsService } from '../alerts/alerts.service';
 
 @Injectable()
 export class LogsService {
   private readonly lastPrune = new Map<string, number>();
   private readonly scanTails = new Map<string, string>();
   private readonly lineBuffers = new Map<string, string>();
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly chatLineBuffers = new Map<string, string>();
+  constructor(private readonly prisma: PrismaService, private readonly alerts: AlertsService) {}
 
   async append(hostId: string, serverInstanceId: string, content: string) {
     if (!content) return { ok: true };
     if (content.length > 65536) throw new BadRequestException('Log chunk exceeds 64 KiB');
     const server = await this.prisma.serverInstance.findFirst({
-      where: { id: serverInstanceId, hostId }, select: { id: true, orgId: true },
+      where: { id: serverInstanceId, hostId }, select: { id: true, orgId: true, name: true },
     });
     if (!server) throw new NotFoundException('Server instance not found for agent host');
     await this.prisma.serverLog.create({ data: { orgId: server.orgId, serverInstanceId: server.id, content } });
     await this.matchKeywordAlerts(server.orgId, server.id, content);
-    await this.parsePlayers(server.orgId, server.id, content);
+    await this.parsePlayers(server.orgId, server.id, server.name, content);
+    await this.parseChat(server.orgId, server.id, server.name, content);
     await this.prune(server.orgId);
     return { ok: true };
   }
 
-  private async parsePlayers(orgId: string, serverInstanceId: string, content: string) {
+  private async parseChat(orgId: string, serverInstanceId: string, serverInstanceName: string, content: string) {
+    const combined = (this.chatLineBuffers.get(serverInstanceId) ?? '') + content;
+    const lines = combined.split(/\r?\n/);
+    this.chatLineBuffers.set(serverInstanceId, lines.pop()?.slice(-4096) ?? '');
+    for (const line of lines) {
+      const match = line.match(/\bChat \(from '([^']+)', entity id '([^']+)', to '([^']+)'\): '(.*)': (.*)$/);
+      if (!match) continue;
+      const [, playerId, entityId, channel, rawName, rawMessage] = match;
+      if (playerId === '-non-player-' || entityId === '-1') continue;
+      const playerName = rawName.trim().slice(0, 128);
+      const message = rawMessage.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, 2000);
+      if (!playerName || !message) continue;
+      await this.prisma.event.create({ data: { orgId, sourceType: 'server_instance', sourceId: serverInstanceId, eventType: 'player_chat',
+        payload: { playerId, entityId, playerName, channel, message, serverInstanceName } } });
+      await this.alerts.relayPlayerChat({ orgId, serverInstanceId, serverInstanceName, playerName, playerId, channel, message }).catch(() => undefined);
+    }
+  }
+
+  async listChat(orgId: string, serverInstanceId?: string, limit = 200) {
+    return this.prisma.event.findMany({ where: { orgId, eventType: 'player_chat', ...(serverInstanceId ? { sourceId: serverInstanceId } : {}) },
+      orderBy: { createdAt: 'desc' }, take: Math.min(Math.max(limit || 200, 1), 500) }).then(rows => rows.reverse());
+  }
+
+  async getChatSettings(orgId: string, serverInstanceId: string) {
+    const rules = await this.prisma.alertRule.findMany({ where: { orgId }, orderBy: { createdAt: 'asc' } });
+    const rule = rules.find(item => { const c=item.condition as Record<string,unknown>; return c?.type==='chat_relay'&&c.serverInstanceId===serverInstanceId; });
+    const channel = rule?.channel as Record<string,unknown>|undefined;
+    return { enabled: rule?.enabled ?? false, webhookUrl: String(channel?.webhookUrl ?? '') };
+  }
+
+  async updateChatSettings(orgId: string, serverInstanceId: string, enabled: boolean, webhookUrl: string) {
+    const server = await this.prisma.serverInstance.findFirst({ where: { id: serverInstanceId, orgId }, select: { id: true, name: true } });
+    if (!server) throw new NotFoundException('Server instance not found');
+    const clean = webhookUrl.trim();
+    if (enabled) {
+      let parsed: URL; try { parsed=new URL(clean); } catch { throw new BadRequestException('Valid Discord webhook URL required'); }
+      if (parsed.protocol!=='https:'||!['discord.com','discordapp.com'].includes(parsed.hostname.toLowerCase())||!parsed.pathname.startsWith('/api/webhooks/')) throw new BadRequestException('Valid Discord webhook URL required');
+    }
+    const rules = await this.prisma.alertRule.findMany({ where: { orgId } });
+    const existing = rules.find(item => { const c=item.condition as Record<string,unknown>; return c?.type==='chat_relay'&&c.serverInstanceId===serverInstanceId; });
+    const data = { name: `Chat relay: ${server.name}`, enabled, condition: { type: 'chat_relay', serverInstanceId }, channel: { type: 'discord', webhookUrl: clean } };
+    if (existing) await this.prisma.alertRule.update({ where: { id: existing.id }, data });
+    else await this.prisma.alertRule.create({ data: { orgId, ...data } });
+    return { enabled, webhookUrl: clean };
+  }
+
+  private async parsePlayers(orgId: string, serverInstanceId: string, serverInstanceName: string, content: string) {
     const combined = (this.lineBuffers.get(serverInstanceId) ?? '') + content;
     const lines = combined.split(/\r?\n/);
     this.lineBuffers.set(serverInstanceId, lines.pop()?.slice(-4096) ?? '');
     for (const line of lines) {
-      const joined = /PlayerLogin|PlayerSpawnedInWorld|GMSG: Player '.*' joined/i.test(line);
+      // A login produces PlayerLogin, GMSG joined, and PlayerSpawnedInWorld lines.
+      // Only the latter two confirm entry, and ignore spawn events caused by teleports.
+      const joined = /GMSG: Player '.*' joined the game/i.test(line)
+        || /PlayerSpawnedInWorld\s*\(reason:\s*(?:EnterMultiplayer|JoinMultiplayer)\b/i.test(line);
       const left = /PlayerDisconnected|GMSG: Player '.*' left/i.test(line);
       if (!joined && !left) continue;
       const steam = line.match(/(?:PltfmId|OwnerID)\s*=\s*'?Steam_([0-9]{15,20})'?/i)?.[1]
@@ -36,8 +88,7 @@ export class LogsService {
       const eos = line.match(/(?:CrossId|PltfmId)\s*=\s*'?EOS_([a-f0-9]{20,64})'?/i)?.[1];
       const entityText = line.match(/EntityID[=:]\s*([0-9]+)/i)?.[1];
       const name = (line.match(/PlayerName\s*=\s*'?([^',\r\n]+)'?/i)?.[1]
-        ?? line.match(/GMSG: Player '([^']+)'/i)?.[1]
-        ?? line.match(/PlayerLogin:\s*(?:[^/]+\/)?([^/]+)\//i)?.[1])?.trim();
+        ?? line.match(/GMSG: Player '([^']+)'/i)?.[1])?.trim();
       const identityKey = steam ? `steam:${steam}` : eos ? `eos:${eos}` : name ? `name:${name.toLowerCase()}` : '';
       if (!identityKey || !name) continue;
       await reconcileNameFallback(this.prisma, serverInstanceId, identityKey, name, steam ?? null, eos ?? null);
@@ -49,14 +100,18 @@ export class LogsService {
           create: { orgId, serverInstanceId, identityKey, steamId: steam, eosId: eos, entityId: entityText ? Number(entityText) : null, name, online: true, currentSessionStartedAt: now, lastSeenAt: now },
           update: { steamId: steam ?? existing?.steamId, eosId: eos ?? existing?.eosId, entityId: entityText ? Number(entityText) : existing?.entityId, name, online: true, lastSeenAt: now, ...(!existing?.online ? { currentSessionStartedAt: now } : {}) },
         });
-        if (!existing?.online) await this.prisma.playerSession.create({ data: { playerId: player.id, startedAt: now } });
-      } else if (existing) {
+        if (!existing?.online) {
+          await this.prisma.playerSession.create({ data: { playerId: player.id, startedAt: now } });
+          await this.alerts.sendMatchingRules('PLAYER_CONNECTED', { orgId, serverInstanceId, serverInstanceName, playerName: name, steamId: steam, eosId: eos }).catch(() => undefined);
+        }
+      } else if (existing?.online) {
         const started = existing.currentSessionStartedAt;
         const duration = started ? Math.max(0, Math.floor((now.getTime() - started.getTime()) / 1000)) : 0;
         await this.prisma.$transaction([
           this.prisma.player.update({ where: { id: existing.id }, data: { online: false, lastSeenAt: now, currentSessionStartedAt: null, lifetimeSeconds: { increment: duration } } }),
           this.prisma.playerSession.updateMany({ where: { playerId: existing.id, endedAt: null }, data: { endedAt: now, durationSeconds: duration } }),
         ]);
+        await this.alerts.sendMatchingRules('PLAYER_DISCONNECTED', { orgId, serverInstanceId, serverInstanceName, playerName: name, steamId: steam ?? existing.steamId ?? undefined, eosId: eos ?? existing.eosId ?? undefined }).catch(() => undefined);
       }
     }
   }
@@ -153,8 +208,26 @@ export class LogsService {
     });
   }
 
-  async list(orgId: string, serverInstanceId?: string, limit = 250) {
+  async list(orgId: string, serverInstanceId?: string, limit = 250, afterId?: string) {
     const take = Math.min(Math.max(limit || 250, 1), 1000);
+    if (afterId) {
+      const cursor = await this.prisma.serverLog.findFirst({
+        where: { id: afterId, orgId, ...(serverInstanceId ? { serverInstanceId } : {}) },
+        select: { createdAt: true },
+      });
+      if (cursor) {
+        return this.prisma.serverLog.findMany({
+          where: {
+            orgId,
+            ...(serverInstanceId ? { serverInstanceId } : {}),
+            createdAt: { gte: cursor.createdAt },
+            NOT: { id: afterId },
+          },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], take,
+          select: { id: true, serverInstanceId: true, content: true, createdAt: true },
+        });
+      }
+    }
     const rows = await this.prisma.serverLog.findMany({
       where: { orgId, ...(serverInstanceId ? { serverInstanceId } : {}) },
       orderBy: { createdAt: 'desc' }, take,

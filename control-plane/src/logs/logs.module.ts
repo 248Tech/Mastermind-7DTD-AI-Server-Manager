@@ -6,9 +6,10 @@ import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
 import { RequireOrgRoleGuard } from '../server-instances/guards/require-org-role.guard';
 import { LogsController } from './logs.controller';
 import { LogsService } from './logs.service';
+import { AlertsModule } from '../alerts/alerts.module';
 
 @Module({
-  imports: [PairingModule, JwtModule.register({ secret: process.env.JWT_SECRET || 'change-me-user-secret' })],
+  imports: [PairingModule, AlertsModule, JwtModule.register({ secret: process.env.JWT_SECRET || 'change-me-user-secret' })],
   controllers: [LogsController],
   providers: [LogsService, PrismaService, OrgMemberGuard, RequireOrgRoleGuard],
 })

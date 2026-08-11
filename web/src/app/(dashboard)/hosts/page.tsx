@@ -534,6 +534,32 @@ export default function HostsPage() {
     }
   }
 
+  async function renameHost(host: Host) {
+    if (!orgId) return;
+    const name=prompt('New host name:',host.name)?.trim(); if(!name||name===host.name)return;
+    try { await api.patch(`/api/orgs/${orgId}/hosts/${host.id}`,{name}); const updated=await fetchData(); if(updated){setHosts(updated.hosts);setServers(updated.servers);setSelectedHost(current=>current?.id===host.id?updated.hosts.find(h=>h.id===host.id)||null:current);} setError(''); }
+    catch(err){setError(err instanceof Error?err.message:'Failed to rename host');}
+  }
+
+  async function deleteHost(host: Host) {
+    if (!orgId||!confirm(`Unregister host "${host.name}"?\n\nThis removes its Mastermind record and history. It does not delete game files. An active agent will need to be paired again.`))return;
+    try { await api.delete(`/api/orgs/${orgId}/hosts/${host.id}`);setSelectedHost(current=>current?.id===host.id?null:current);const updated=await fetchData();if(updated){setHosts(updated.hosts);setServers(updated.servers);}setError(''); }
+    catch(err){setError(err instanceof Error?err.message:'Failed to unregister host');}
+  }
+
+  async function renameServer(server: ServerInstance) {
+    if (!orgId) return;
+    const name=prompt('New server instance name:',server.name)?.trim();if(!name||name===server.name)return;
+    try { await api.patch(`/api/orgs/${orgId}/server-instances/${server.id}`,{name});const updated=await fetchData();if(updated){setHosts(updated.hosts);setServers(updated.servers);}setError(''); }
+    catch(err){setError(err instanceof Error?err.message:'Failed to rename server instance');}
+  }
+
+  async function deleteServer(server: ServerInstance) {
+    if (!orgId||!confirm(`Unregister server instance "${server.name}"?\n\nThis removes its Mastermind record and related dashboard data. It does not stop the server or delete its installation or world files.`))return;
+    try { await api.delete(`/api/orgs/${orgId}/server-instances/${server.id}`);const updated=await fetchData();if(updated){setHosts(updated.hosts);setServers(updated.servers);}setError(''); }
+    catch(err){setError(err instanceof Error?err.message:'Failed to unregister server instance');}
+  }
+
   function copyCmd(text: string, key: string) {
     navigator.clipboard.writeText(text);
     setCopied(key);
@@ -818,6 +844,8 @@ export default function HostsPage() {
                       >
                         {selectedHost?.id === host.id ? 'Hide' : 'Details'}
                       </button>
+                      <button style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.3rem 0.6rem', marginLeft: 6 }} onClick={() => renameHost(host)}>Rename</button>
+                      <button style={{ ...btnDanger, marginLeft: 6 }} onClick={() => deleteHost(host)}>Unregister</button>
                     </td>
                   </tr>
                 ))}
@@ -951,7 +979,7 @@ export default function HostsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  {['Name', 'Game', 'Host', 'Install Path', 'Telnet'].map(h => (
+                  {['Name', 'Game', 'Host', 'Install Path', 'Telnet', 'Actions'].map(h => (
                     <th key={h} style={thStyle}>{h}</th>
                   ))}
                 </tr>
@@ -968,6 +996,7 @@ export default function HostsPage() {
                       <td style={{ ...tdStyle, color: '#94a3b8' }}>{host?.name || s.hostId || '—'}</td>
                       <td style={{ ...tdStyle, color: '#64748b', fontFamily: 'monospace', fontSize: '0.8rem' }}>{s.installPath || '—'}</td>
                       <td style={{ ...tdStyle, color: '#64748b' }}>{s.telnetHost ? `${s.telnetHost}:${s.telnetPort}` : '—'}</td>
+                      <td style={{...tdStyle,whiteSpace:'nowrap'}}><button style={{...btnSecondary,fontSize:'.8rem',padding:'.3rem .6rem'}} onClick={()=>renameServer(s)}>Rename</button><button style={{...btnDanger,marginLeft:6}} onClick={()=>deleteServer(s)}>Unregister</button></td>
                     </tr>
                   );
                 })}

@@ -19,8 +19,9 @@ export class LogsController {
   @Get('api/orgs/:orgId/logs')
   @UseGuards(JwtAuthGuard, OrgMemberGuard)
   list(@Param('orgId') orgId: string, @Query('serverInstanceId') serverInstanceId?: string,
-       @Query('limit', new ParseIntPipe({ optional: true })) limit?: number) {
-    return this.logs.list(orgId, serverInstanceId, limit);
+       @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+       @Query('afterId') afterId?: string) {
+    return this.logs.list(orgId, serverInstanceId, limit, afterId);
   }
 
   @Get('api/orgs/:orgId/logs/settings')
@@ -67,5 +68,21 @@ export class LogsController {
   @UseGuards(JwtAuthGuard, OrgMemberGuard)
   keywordMatches(@Param('orgId') orgId: string, @Query('serverInstanceId') serverInstanceId?: string) {
     return this.logs.listKeywordMatches(orgId, serverInstanceId);
+  }
+
+  @Get('api/orgs/:orgId/chat')
+  @UseGuards(JwtAuthGuard, OrgMemberGuard)
+  chat(@Param('orgId') orgId: string, @Query('serverInstanceId') serverInstanceId?: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number) { return this.logs.listChat(orgId, serverInstanceId, limit); }
+
+  @Get('api/orgs/:orgId/chat/settings')
+  @UseGuards(JwtAuthGuard, OrgMemberGuard)
+  chatSettings(@Param('orgId') orgId: string, @Query('serverInstanceId') serverInstanceId: string) { return this.logs.getChatSettings(orgId, serverInstanceId); }
+
+  @Post('api/orgs/:orgId/chat/settings')
+  @UseGuards(JwtAuthGuard, OrgMemberGuard, RequireOrgRoleGuard)
+  @RequireOrgRoles('admin', 'operator')
+  saveChatSettings(@Param('orgId') orgId: string, @Body() body: { serverInstanceId: string; enabled?: boolean; webhookUrl?: string }) {
+    return this.logs.updateChatSettings(orgId, body.serverInstanceId, body.enabled ?? false, body.webhookUrl ?? '');
   }
 }

@@ -94,6 +94,10 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     const hostId = schedule.serverInstance.hostId;
     const orgId = schedule.orgId;
     const serverInstanceId = schedule.serverInstanceId;
+    const effectiveJobType =
+      schedule.serverInstance.gameType.slug === '7dtd' && schedule.jobType.toUpperCase() === 'SERVER_RESTART'
+        ? 'SERVER_SAFE_RESTART'
+        : schedule.jobType;
     const configuredPayload = (schedule.payload as Record<string, unknown> | null) ?? {};
     const mergedPayload = {
       server_instance_id: schedule.serverInstance.id,
@@ -114,7 +118,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         data: {
           orgId,
           serverInstanceId,
-          type: schedule.jobType,
+          type: effectiveJobType,
           payload: mergedPayload as Prisma.InputJsonValue,
           createdById: null,
         },
@@ -130,13 +134,13 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
 
       const orgQueue = this.getOrgQueue(orgId);
       await orgQueue.add(
-        schedule.jobType,
+        effectiveJobType,
         {
           jobId: createdJob.id,
           jobRunId: run.id,
           hostId,
           serverInstanceId,
-          type: schedule.jobType,
+          type: effectiveJobType,
           payload: mergedPayload,
           scheduleId: schedule.id,
         },

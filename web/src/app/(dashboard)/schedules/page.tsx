@@ -85,6 +85,17 @@ function formatDateTime(dateStr: string | null): string {
 
 const JOB_TYPES = ['SERVER_START', 'SERVER_STOP', 'SERVER_RESTART'];
 
+type SimpleSchedule = { days: number; hour: number; minute: number };
+
+function simpleCron({ days, hour, minute }: SimpleSchedule): string {
+  return `${minute} ${hour} ${days === 1 ? '*' : `*/${days}`} * *`;
+}
+
+function simpleScheduleLabel({ days, hour, minute }: SimpleSchedule): string {
+  const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  return days === 1 ? `Every day at ${time}` : `Every ${days} days at ${time}`;
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function SchedulesPage() {
   const orgId = getStoredOrgId();
@@ -93,7 +104,10 @@ export default function SchedulesPage() {
   const [error, setError] = useState('');
 
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: '', serverInstanceId: '', cronExpression: '', jobType: 'SERVER_START', enabled: true });
+  const defaultSimpleSchedule: SimpleSchedule = { days: 1, hour: 4, minute: 0 };
+  const [scheduleMode, setScheduleMode] = useState<'simple' | 'advanced'>('simple');
+  const [simpleSchedule, setSimpleSchedule] = useState<SimpleSchedule>(defaultSimpleSchedule);
+  const [form, setForm] = useState({ name: '', serverInstanceId: '', cronExpression: simpleCron(defaultSimpleSchedule), jobType: 'SERVER_START', enabled: true });
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -121,7 +135,9 @@ export default function SchedulesPage() {
         cronExpression: form.cronExpression, jobType: form.jobType, enabled: form.enabled,
       });
       setShowCreate(false);
-      setForm({ name: '', serverInstanceId: '', cronExpression: '', jobType: 'SERVER_START', enabled: true });
+      setScheduleMode('simple');
+      setSimpleSchedule(defaultSimpleSchedule);
+      setForm({ name: '', serverInstanceId: '', cronExpression: simpleCron(defaultSimpleSchedule), jobType: 'SERVER_START', enabled: true });
       const updated = await fetchSchedules();
       setSchedules(updated);
     } catch (err: unknown) {
@@ -194,12 +210,66 @@ export default function SchedulesPage() {
                   {servers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
-              <div>
-                <label style={labelStyle}>Cron Expression *</label>
-                <input style={inputStyle} value={form.cronExpression} onChange={e => setForm({ ...form, cronExpression: e.target.value })} required placeholder="0 4 * * *" onFocus={onFocus} onBlur={onBlur} />
-                <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.3rem' }}>
-                  e.g. <code style={{ color: '#818cf8' }}>0 4 * * *</code> = daily at 4 AM
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={labelStyle}>Run Schedule *</label>
+                <div style={{ display: 'flex', gap: 6, marginBottom: '0.75rem' }}>
+                  {(['simple', 'advanced'] as const).map(mode => (
+                    <button
+                      key={mode}
+                      type="button"
+                      style={{ ...btnSecondary, ...(scheduleMode === mode ? { background: '#252542', color: '#c7d2fe', borderColor: '#6366f1' } : {}) }}
+                      onClick={() => {
+                        setScheduleMode(mode);
+                        if (mode === 'simple') setForm(current => ({ ...current, cronExpression: simpleCron(simpleSchedule) }));
+                      }}
+                    >
+                      {mode === 'simple' ? 'Simple' : 'Advanced cron'}
+                    </button>
+                  ))}
                 </div>
+                {scheduleMode === 'simple' ? (
+                  <div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(110px, 1fr))', gap: '0.75rem' }}>
+                      <div>
+                        <label style={labelStyle}>Every N days</label>
+                        <select style={inputStyle} value={simpleSchedule.days} onChange={e => {
+                          const next = { ...simpleSchedule, days: Number(e.target.value) };
+                          setSimpleSchedule(next); setForm({ ...form, cronExpression: simpleCron(next) });
+                        }} onFocus={onFocus} onBlur={onBlur}>
+                          {Array.from({ length: 31 }, (_, i) => i + 1).map(value => <option key={value} value={value}>{value} {value === 1 ? 'day' : 'days'}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Hour</label>
+                        <select style={inputStyle} value={simpleSchedule.hour} onChange={e => {
+                          const next = { ...simpleSchedule, hour: Number(e.target.value) };
+                          setSimpleSchedule(next); setForm({ ...form, cronExpression: simpleCron(next) });
+                        }} onFocus={onFocus} onBlur={onBlur}>
+                          {Array.from({ length: 24 }, (_, value) => <option key={value} value={value}>{String(value).padStart(2, '0')}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Minute</label>
+                        <select style={inputStyle} value={simpleSchedule.minute} onChange={e => {
+                          const next = { ...simpleSchedule, minute: Number(e.target.value) };
+                          setSimpleSchedule(next); setForm({ ...form, cronExpression: simpleCron(next) });
+                        }} onFocus={onFocus} onBlur={onBlur}>
+                          {Array.from({ length: 60 }, (_, value) => <option key={value} value={value}>{String(value).padStart(2, '0')}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.55rem' }}>
+                      {simpleScheduleLabel(simpleSchedule)} · Cron: <code style={{ color: '#818cf8' }}>{form.cronExpression}</code>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <input style={inputStyle} value={form.cronExpression} onChange={e => setForm({ ...form, cronExpression: e.target.value })} required placeholder="0 4 * * *" onFocus={onFocus} onBlur={onBlur} />
+                    <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.3rem' }}>
+                      Standard five-field cron. Example: <code style={{ color: '#818cf8' }}>0 4 * * *</code> runs daily at 4 AM.
+                    </div>
+                  </div>
+                )}
               </div>
               <div>
                 <label style={labelStyle}>Job Type *</label>

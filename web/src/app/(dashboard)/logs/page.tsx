@@ -9,6 +9,7 @@ export default function LogsPage() {
   const [serverId, setServerId] = useState('');
   const [logs, setLogs] = useState<ServerLog[]>([]);
   const [paused, setPaused] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(false);
   const [error, setError] = useState('');
   const [retention, setRetention] = useState(7);
   const [rules, setRules] = useState<LogKeywordRule[]>([]);
@@ -19,6 +20,9 @@ export default function LogsPage() {
   const [commandBusy, setCommandBusy] = useState(false);
   const [consoleEntries, setConsoleEntries] = useState<{id:string;command:string;output:string;failed:boolean}[]>([]);
   const bottom = useRef<HTMLDivElement>(null);
+  const latestLogId = useRef('');
+  const loadingLogs = useRef(false);
+  const pausedRef = useRef(false);
 
   useEffect(() => {
     if (!orgId) return;
@@ -29,16 +33,34 @@ export default function LogsPage() {
       .then(s => setRetention(s.logRetentionDays)).catch(e => setError(e.message));
   }, [orgId]);
 
-  const load = useCallback(async () => {
-    if (!orgId || !serverId || paused) return;
+  useEffect(() => {
+    setAutoScroll(localStorage.getItem('mastermind_logs_auto_scroll') === 'true');
+  }, []);
+
+  const loadLogs = useCallback(async (initial = false) => {
+    if (!orgId || !serverId || pausedRef.current || loadingLogs.current) return;
+    loadingLogs.current = true;
     try {
-      const [rows, found] = await Promise.all([
-        api.get<ServerLog[]>(`/api/orgs/${orgId}/logs?serverInstanceId=${encodeURIComponent(serverId)}&limit=500`),
-        api.get<LogKeywordMatch[]>(`/api/orgs/${orgId}/logs/keyword-matches?serverInstanceId=${encodeURIComponent(serverId)}`),
-      ]);
-      setLogs(rows); setMatches(found); setError('');
+      const after = !initial && latestLogId.current ? `&afterId=${encodeURIComponent(latestLogId.current)}` : '';
+      const rows = await api.get<ServerLog[]>(`/api/orgs/${orgId}/logs?serverInstanceId=${encodeURIComponent(serverId)}&limit=${initial ? 300 : 200}${after}`);
+      if (rows.length) {
+        latestLogId.current = rows[rows.length - 1].id;
+        setLogs(current => {
+          if (initial) return rows;
+          const known = new Set(current.map(row => row.id));
+          return [...current, ...rows.filter(row => !known.has(row.id))].slice(-500);
+        });
+      } else if (initial) setLogs([]);
+      setError('');
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed to load logs'); }
-  }, [orgId, serverId, paused]);
+    finally { loadingLogs.current = false; }
+  }, [orgId, serverId]);
+
+  const loadMatches = useCallback(async () => {
+    if (!orgId || !serverId || pausedRef.current) return;
+    try { setMatches(await api.get<LogKeywordMatch[]>(`/api/orgs/${orgId}/logs/keyword-matches?serverInstanceId=${encodeURIComponent(serverId)}`)); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Failed to load alerts'); }
+  }, [orgId, serverId]);
 
   const loadRules = useCallback(async () => {
     if (!orgId) return;
@@ -82,8 +104,26 @@ export default function LogsPage() {
     }finally{setCommandBusy(false);}
   }
 
-  useEffect(() => { load(); const timer = setInterval(load, 2000); return () => clearInterval(timer); }, [load]);
-  useEffect(() => { if (!paused) bottom.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs, paused]);
+  useEffect(() => {
+    latestLogId.current = '';
+    setLogs([]);
+    void loadLogs(true);
+    void loadMatches();
+    const logTimer = setInterval(() => void loadLogs(), 2000);
+    const matchTimer = setInterval(() => void loadMatches(), 10000);
+    return () => { clearInterval(logTimer); clearInterval(matchTimer); };
+  }, [loadLogs, loadMatches]);
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
+  useEffect(() => { if (autoScroll && !paused) bottom.current?.scrollIntoView({ behavior: 'auto', block: 'end' }); }, [logs, paused, autoScroll]);
+
+  function toggleAutoScroll() {
+    setAutoScroll(value => {
+      const next = !value;
+      localStorage.setItem('mastermind_logs_auto_scroll', String(next));
+      if (next) requestAnimationFrame(() => bottom.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }));
+      return next;
+    });
+  }
 
   return <div>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem'}}>
@@ -97,6 +137,7 @@ export default function LogsPage() {
           <option value={1}>1 day</option><option value={7}>1 week</option><option value={30}>1 month</option>
         </select>
         <select value={serverId} onChange={e=>setServerId(e.target.value)} style={{background:'#111118',color:'#e2e8f0',border:'1px solid #252532',borderRadius:6,padding:'0.5rem'}}>{servers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
+        <button onClick={toggleAutoScroll} title="Keep the log view pinned to the newest entries" style={{background:autoScroll?'#15803d':'#111118',color:'#e2e8f0',border:'1px solid #252532',borderRadius:6,padding:'0.5rem 0.8rem'}}>{autoScroll?'Auto-scroll: On':'Auto-scroll: Off'}</button>
         <button onClick={()=>setPaused(v=>!v)} style={{background:paused?'#6366f1':'#111118',color:'#e2e8f0',border:'1px solid #252532',borderRadius:6,padding:'0.5rem 0.8rem'}}>{paused?'Resume':'Pause'}</button>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 
@@ -52,6 +52,31 @@ export class HostsService {
       throw new NotFoundException('Host not found');
     }
     return this.toResponse(host);
+  }
+
+  async rename(orgId: string, hostId: string, name: string, userId: string) {
+    const clean = name.trim();
+    if (!clean || clean.length > 128) throw new BadRequestException('Host name must contain 1-128 characters');
+    const host = await this.prisma.host.findFirst({ where: { id: hostId, orgId }, select: { id: true, name: true } });
+    if (!host) throw new NotFoundException('Host not found');
+    const updated = await this.prisma.host.update({ where: { id: hostId }, data: { name: clean } });
+    await this.prisma.auditLog.create({ data: { orgId, actorId: userId, action: 'rename', resourceType: 'host', resourceId: hostId, details: { from: host.name, to: clean } } });
+    return this.toResponse(updated);
+  }
+
+  async remove(orgId: string, hostId: string, userId: string) {
+    const host = await this.prisma.host.findFirst({
+      where: { id: hostId, orgId }, select: { id: true, name: true, _count: { select: { serverInstances: true } } },
+    });
+    if (!host) throw new NotFoundException('Host not found');
+    if (host._count.serverInstances > 0) {
+      throw new BadRequestException('Unregister this host’s server instances before deleting the host');
+    }
+    await this.prisma.$transaction([
+      this.prisma.jobRun.deleteMany({ where: { hostId } }),
+      this.prisma.auditLog.create({ data: { orgId, actorId: userId, action: 'delete', resourceType: 'host', resourceId: hostId, details: { name: host.name } } }),
+      this.prisma.host.delete({ where: { id: hostId } }),
+    ]);
   }
 
   /**

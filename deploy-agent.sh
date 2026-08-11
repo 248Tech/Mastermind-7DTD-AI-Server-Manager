@@ -8,6 +8,7 @@ cd /opt/mastermind/agent
 go build -trimpath -ldflags='-s -w' -o /tmp/mastermind-agent .
 sudo install -o root -g root -m 0755 /tmp/mastermind-agent /usr/local/bin/mastermind-agent
 sudo install -o root -g root -m 0755 /opt/mastermind/wipe-7dtd-save.py /usr/local/sbin/mastermind-wipe-7dtd-save
+sudo install -o root -g root -m 0755 /opt/mastermind/fix-7dtd-save-permissions.py /usr/local/sbin/mastermind-fix-7dtd-save-permissions
 rm -f /tmp/mastermind-agent
 
 : "${MASTERMIND_ADMIN_EMAIL:?Set MASTERMIND_ADMIN_EMAIL}"
@@ -28,8 +29,17 @@ pair_token="$(printf '%s' "$pair_json" | jq -er '.token')"
 if ! id mastermind-agent >/dev/null 2>&1; then
   sudo useradd --system --home /var/lib/mastermind-agent --shell /usr/sbin/nologin mastermind-agent
 fi
+sudo usermod -aG mastermind-agent serveradmin
 sudo install -d -o mastermind-agent -g mastermind-agent -m 0700 /var/lib/mastermind-agent
 sudo install -d -o root -g mastermind-agent -m 0750 /etc/mastermind-agent
+if [[ -d /opt/7dtd/server/Mods ]]; then
+  # mastermind-agent is a member of the serveradmin group. Keep Mods shared
+  # with that group so both the game service and the management agent can read
+  # and mutate the same tree.
+  sudo chgrp -R serveradmin /opt/7dtd/server/Mods
+  sudo chmod -R g+rwX,o-rwx /opt/7dtd/server/Mods
+  sudo find /opt/7dtd/server/Mods -type d -exec chmod g+s {} +
+fi
 
 temp_config="$(mktemp)"
 chmod 0600 "$temp_config"
@@ -64,7 +74,7 @@ EOF
 sudo install -o root -g mastermind-agent -m 0640 "$temp_config" /etc/mastermind-agent/config.yaml
 rm -f "$temp_config"
 
-printf '%s\n' 'mastermind-agent ALL=(root) NOPASSWD: /usr/bin/systemctl start 7dtd.service, /usr/bin/systemctl stop 7dtd.service, /usr/bin/systemctl restart 7dtd.service, /usr/local/sbin/mastermind-wipe-7dtd-save /opt/7dtd/serverconfig.xml /opt/7dtd/userdata/Saves/Rotterdam/Builder' |
+printf '%s\n' 'mastermind-agent ALL=(root) NOPASSWD: /usr/bin/systemctl start 7dtd.service, /usr/bin/systemctl stop 7dtd.service, /usr/bin/systemctl restart 7dtd.service, /usr/bin/systemctl kill --kill-who=main --signal=SIGKILL 7dtd.service, /usr/bin/systemctl reset-failed 7dtd.service, /usr/local/sbin/mastermind-wipe-7dtd-save /opt/7dtd/serverconfig.xml /opt/7dtd/userdata/Saves/Rotterdam/Builder, /usr/local/sbin/mastermind-wipe-7dtd-save /opt/7dtd/serverconfig.xml /opt/7dtd/userdata/Saves/Rotterdam/Builder.mastermind-restore-old, /usr/local/sbin/mastermind-fix-7dtd-save-permissions /opt/7dtd/serverconfig.xml /opt/7dtd/userdata/Saves/Rotterdam/Builder' |
   sudo tee /etc/sudoers.d/mastermind-agent-7dtd >/dev/null
 sudo chmod 0440 /etc/sudoers.d/mastermind-agent-7dtd
 sudo visudo -cf /etc/sudoers.d/mastermind-agent-7dtd >/dev/null
