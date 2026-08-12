@@ -61,5 +61,5 @@ export interface HealthDashboard { hosts: HealthHost[]; samples: HealthSample[];
 export interface ChatMessage { id:string; sourceId:string; createdAt:string; payload:{playerId:string;entityId:string;playerName:string;channel:string;message:string;serverInstanceName:string}; }
 export interface PlayerRecord { id:string; serverInstanceId:string; identityKey:string; steamId:string|null; eosId:string|null; entityId:number|null; name:string; online:boolean; currentSessionStartedAt:string|null; sessionSeconds:number; lifetimeSeconds:number; firstSeenAt:string; lastSeenAt:string; }
 export interface ServerAdminRecord { platform?:string; userId:string; name?:string; permissionLevel:number; }
-export interface ModRecord { folder:string; name:string; author?:string; website?:string; version?:string; activatedAt:string; }
+export interface ModRecord { folder:string; name:string; author?:string; website?:string; version?:string; activatedAt:string; configFiles?:string[]; }
 export interface SaveRecord { id:string; createdAt:string; gameDay:number; kind:'full-world'|'region-healer'; sizeBytes:number; }

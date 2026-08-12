@@ -169,6 +169,26 @@ func (c *HTTPClient) SubmitJobResult(ctx context.Context, hostID string, jobID s
 	return nil
 }
 
+// SubmitJobProgress implements Client.
+func (c *HTTPClient) SubmitJobProgress(ctx context.Context, hostID string, jobID string, phase string, message string) error {
+	body, _ := json.Marshal(map[string]string{"phase": phase, "message": message})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/agent/hosts/"+hostID+"/jobs/"+jobID+"/progress", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.AgentKey)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if !isSuccess(resp.StatusCode) {
+		return fmt.Errorf("submit progress: %s", resp.Status)
+	}
+	return nil
+}
+
 // StreamLog implements Client.
 func (c *HTTPClient) StreamLog(ctx context.Context, hostID string, serverInstanceID string, r io.Reader) error {
 	content, err := io.ReadAll(r)

@@ -44,6 +44,7 @@
 ```
 ├── control-plane/    # NestJS API (REST + WS), Prisma, jobs, pairing, alerts
 ├── web/              # Next.js frontend
+├── discord-bot/      # Optional downloadable Discord slash-command bridge
 ├── agent/            # Go host agent (pairing, heartbeat, job runner)
 ├── infra/            # Docker Compose for local dev
 ├── docs/             # Architecture, security, design docs
@@ -57,22 +58,20 @@
 
 ---
 
-## Release 0.0.7 (August 11, 2026)
+## Release 0.0.8 (August 11, 2026)
 
 ### Highlights
 
-- Safe restart performs a one-minute player countdown, full backup, verified kick-all, and service restart; scheduled restarts use the same protocol.
-- Emergency Kill, hardened save wipe escalation, permission-safe save restores, and reliable systemd process-state verification.
-- Player-only chat history with Discord webhook relay and an operator reply box that speaks through the server.
-- Player connect/disconnect Discord alerts with per-rule delivery tests and lifecycle-event deduplication.
-- Faster incremental logs, concurrent read-only mod inventory, accurate host-scoped health charts, and game-reachability server status.
-- Customizable dashboard shortcuts plus host and server-instance rename/unregister controls.
-- Sortable mod metadata with activation timestamps and permission normalization after quarantine restore.
-- Simple day/hour/minute scheduling alongside advanced cron expressions.
+- Optional downloadable Discord bot with `/start`, `/stop`, `/reboot`, and `/safereboot`, completion replies, dedicated Mastermind accountability, and Discord role/user authorization.
+- Built-in mod configuration discovery and a constrained text editor with traversal, symlink, extension, and size protections.
+- Safe Restart jobs deferred by Blood Moon protection now visibly return to Queued and resume when the next game day starts.
+- More reliable Discord chat delivery with persisted retry records, replay deduplication, and concurrent interactive RCON while long jobs wait.
+- Disconnect alerts include session playtime, and chat ingestion survives independent player-parser failures.
+- Frigate is deprecated in the current product UI while its backend and stored configuration remain intact for compatibility.
 
 ---
 
-## Current features (v0.0.7)
+## Current features (v0.0.8)
 
 ### Implemented end-to-end
 
@@ -86,14 +85,17 @@
 - **Chat:** player-only chat extraction, stored history, per-server Discord webhook relay with mention suppression, and operator replies automatically sent as server `say` messages.
 - **Health:** host-scoped CPU, RAM, disk, agent latency, and real 7DTD reachability samples with current values, historical averages, and configurable polling intervals.
 - **Players:** authoritative `lp` polling every 60 seconds by default, reconciled Steam/EOS identity capture, online state, current/lifetime playtime, last seen, kick/ban/kick-all actions, post-kick verification, and XML-backed administrator status with promote/demote controls.
-- **Mods:** fast active/quarantined inventories, `ModInfo.xml` name/version/author/website parsing, activation timestamps, sortable columns, single/bulk selection, quarantine, permission-safe restore, and constrained permanent deletion.
+- **Mods:** fast active/quarantined inventories, `ModInfo.xml` name/version/author/website parsing, activation timestamps, sortable columns, single/bulk selection, quarantine, permission-safe restore, constrained permanent deletion, and safe discovery/editing of supported mod configuration files.
 - **RegionHealer:** status information plus start/stop jobs for a separately installed RegionHealer-v2 service.
 - **Saves:** combined full-world and RegionHealer snapshot inventory, timestamp/game-day metadata, manual full backup, confirmed server-off restore/delete, full-backup retention, and scheduled backups from every 15 minutes through daily.
 - **Schedules:** safe scheduled restarts, a simple day/hour/minute builder, advanced five-field cron entry, and automatic full-world backup intervals.
-- **Alerts and integrations:** Discord alerts, per-rule pipeline testing, deduplicated player connection/disconnection events, log-keyword alerts, player-chat relay, server/agent events, and Frigate webhook/settings support.
+- **Alerts and integrations:** Discord alerts, per-rule pipeline testing, deduplicated player connection/disconnection events with session duration, durable player-chat delivery/retries, log-keyword alerts, and server/agent events.
+- **Discord command bot:** optional downloadable slash-command bridge for start, stop, restart, and Safe Restart with completion/failure replies, dedicated-account job attribution, and Discord role/user allowlists.
 - **Host and instance registry:** role-protected rename and unregister operations with clear confirmation that unregistering does not delete game files.
 - **Responsive UI:** server-first overview, customizable Quick Access cards, full desktop, half-window compact navigation, mobile drawer, safe table overflow, custom Mastermind logo, and favicon.
 - **Game adapters:** 7 Days to Die is fully managed; Minecraft adapter and capability registry remain available for expansion.
+
+Frigate integration is currently deprecated and hidden from the Settings and new-alert interfaces. Its backend and stored configuration remain intact for compatibility and possible future reactivation.
 
 ---
 
@@ -143,6 +145,10 @@ Detailed setup options (full Docker, local dev, API reference): see **[QUICKSTAR
 | Agent | agent | See `agent/config.yaml.example` — `control_plane_url`, `pairing_token`, `agent_key_path` |
 
 Copy `.env.example` to `.env` (and `control-plane/.env.example` to `control-plane/.env`, etc.). Never commit `.env`.
+
+### Discord command bot
+
+The optional bot sends `/start`, `/stop`, `/reboot`, and `/safereboot` through the authenticated Mastermind job pipeline and reports completion or failure back to Discord. It includes Discord user/role authorization and attributes jobs to its dedicated Mastermind account. See **[discord-bot/README.md](discord-bot/README.md)**.
 
 ---
 

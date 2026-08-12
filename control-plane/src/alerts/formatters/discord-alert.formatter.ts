@@ -35,6 +35,9 @@ function buildEmbed(type: AlertType, ctx: AlertContext): DiscordEmbed {
   if (ctx.playerName) fields.push({ name: 'Player', value: String(ctx.playerName), inline: true });
   if (ctx.steamId) fields.push({ name: 'Steam ID', value: String(ctx.steamId), inline: false });
   if (ctx.eosId) fields.push({ name: 'EOS ID', value: String(ctx.eosId), inline: false });
+  if (type === 'PLAYER_DISCONNECTED' && typeof ctx.sessionSeconds === 'number') {
+    fields.push({ name: 'Session playtime', value: formatDuration(ctx.sessionSeconds), inline: true });
+  }
 
   return {
     title,
@@ -43,6 +46,14 @@ function buildEmbed(type: AlertType, ctx: AlertContext): DiscordEmbed {
     footer: { text: 'Mastermind Control Plane' },
     timestamp: new Date().toISOString(),
   };
+}
+
+function formatDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return [hours ? `${hours}h` : '', minutes ? `${minutes}m` : '', `${remainder}s`].filter(Boolean).join(' ');
 }
 
 function getTitle(type: AlertType): string {

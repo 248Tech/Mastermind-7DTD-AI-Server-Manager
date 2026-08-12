@@ -10,6 +10,7 @@ import { BatchesService } from '../batches/batches.service';
 import { JobsQueueService } from './jobs-queue.service';
 import type { ReportResultDto } from './dto/report-result.dto';
 import { reconcileNameFallback } from '../players/player-identity';
+import { AlertsService } from '../alerts/alerts.service';
 
 @Injectable()
 export class JobsService {
@@ -17,6 +18,7 @@ export class JobsService {
     private readonly prisma: PrismaService,
     private readonly batchesService: BatchesService,
     private readonly jobsQueueService: JobsQueueService,
+    private readonly alerts: AlertsService,
   ) {}
 
   /**
@@ -204,9 +206,29 @@ export class JobsService {
     }
   }
 
+  async reportJobProgress(
+    hostId: string,
+    jobRunId: string,
+    phase: string,
+    message?: string,
+  ): Promise<{ ok: boolean }> {
+    const run = await this.prisma.jobRun.findUnique({ where: { id: jobRunId } });
+    if (!run) throw new NotFoundException('Job run not found');
+    if (run.hostId !== hostId) throw new BadRequestException('Job run does not belong to this host');
+    if (run.status !== 'running') throw new BadRequestException(`Job run is not running (status: ${run.status})`);
+    await this.prisma.jobRun.update({
+      where: { id: jobRunId },
+      data: { result: { phase, ...(message ? { message } : {}), updatedAt: new Date().toISOString() } },
+    });
+    return { ok: true };
+  }
+
   private async reconcilePlayers(orgId: string, serverInstanceId: string, output: string) {
     if (!/Total of\s+\d+\s+in the game/i.test(output)) return;
     const now = new Date();
+    const server = await this.prisma.serverInstance.findUnique({
+      where: { id: serverInstanceId }, select: { name: true },
+    });
     const seen = new Set<string>();
     for (const line of output.split(/\r?\n/)) {
       const head = line.match(/^\s*\d+\.\s+id=(\d+),\s*([^,]+),/i);
@@ -233,6 +255,15 @@ export class JobsService {
         this.prisma.player.update({ where: { id: player.id }, data: { online: false, currentSessionStartedAt: null, lifetimeSeconds: { increment: duration } } }),
         this.prisma.playerSession.updateMany({ where: { playerId: player.id, endedAt: null }, data: { endedAt: end, durationSeconds: duration } }),
       ]);
+      await this.alerts.sendMatchingRules('PLAYER_DISCONNECTED', {
+        orgId,
+        serverInstanceId,
+        serverInstanceName: server?.name ?? '7DTD Server',
+        playerName: player.name,
+        steamId: player.steamId ?? undefined,
+        eosId: player.eosId ?? undefined,
+        sessionSeconds: duration,
+      }).catch(() => undefined);
     }
   }
 }

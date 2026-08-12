@@ -19,11 +19,11 @@ export async function reconcileNameFallback(
   });
   if (!fallback) return;
 
-  const stableMatches = await prisma.player.findMany({
-    where: { serverInstanceId, name: { equals: name, mode: 'insensitive' }, identityKey: { not: fallbackKey } },
+  // Resolve by the unique identity first. A stale or differently-cased stored
+  // name must not make us miss the canonical row and collide while promoting.
+  const canonical = await prisma.player.findUnique({
+    where: { serverInstanceId_identityKey: { serverInstanceId, identityKey } },
   });
-  const canonical = stableMatches.find(player => player.identityKey === identityKey);
-  if (stableMatches.length > (canonical ? 1 : 0)) return;
 
   if (!canonical) {
     await prisma.player.update({

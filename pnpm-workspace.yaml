@@ -1,3 +1,4 @@
 packages:
   - "control-plane"
   - "web"
+  - "discord-bot"

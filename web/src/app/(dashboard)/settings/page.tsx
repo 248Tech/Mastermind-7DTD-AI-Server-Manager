@@ -56,14 +56,6 @@ export default function SettingsPage() {
   const [webhookError, setWebhookError] = useState('');
   const [webhookSuccess, setWebhookSuccess] = useState('');
 
-  const [frigateUrl, setFrigateUrl] = useState('');
-  const [frigateApiKey, setFrigateApiKey] = useState('');
-  const [frigateWebhookSecret, setFrigateWebhookSecret] = useState('');
-  const [frigateLoading, setFrigateLoading] = useState(false);
-  const [frigateError, setFrigateError] = useState('');
-  const [frigateSuccess, setFrigateSuccess] = useState('');
-  const [frigateTestLoading, setFrigateTestLoading] = useState(false);
-  const [frigateTestResult, setFrigateTestResult] = useState<{ ok: boolean; version?: string; error?: string } | null>(null);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -73,6 +65,20 @@ export default function SettingsPage() {
   const [avoidBloodMoonRestart, setAvoidBloodMoonRestart] = useState(false);
   const [restartGuardSaving, setRestartGuardSaving] = useState(false);
   const [restartGuardMessage, setRestartGuardMessage] = useState('');
+  const [discordBotCopied, setDiscordBotCopied] = useState(false);
+
+  const discordBotEnvironment = `DISCORD_TOKEN=<Bot token from Discord Developer Portal>
+DISCORD_CLIENT_ID=<Discord Application ID>
+DISCORD_GUILD_ID=<Your Discord server ID>
+DISCORD_ALLOWED_ROLE_IDS=<Optional comma-separated role IDs>
+DISCORD_ALLOWED_USER_IDS=<Optional comma-separated user IDs>
+DISCORD_EPHEMERAL_REPLIES=true
+MASTERMIND_URL=http://control-plane:3001
+MASTERMIND_EMAIL=<Dedicated Mastermind operator email>
+MASTERMIND_PASSWORD=<Dedicated Mastermind operator password>
+MASTERMIND_ORG_ID=${orgId || '<Mastermind organization ID>'}
+MASTERMIND_SERVER_ID=<Optional; blank auto-detects the first 7DTD server>
+JOB_TIMEOUT_SECONDS=600`;
 
   useEffect(() => {
     if (!orgId) return;
@@ -80,39 +86,9 @@ export default function SettingsPage() {
       api.get<User>('/api/auth/me'),
       api.get<Org[]>('/api/orgs').then(orgs => orgs.find(o => o.id === orgId) || null).catch(() => null),
     ])
-      .then(([u, o]) => { setUser(u); setOrg(o); setWebhookUrl(o?.discordWebhookUrl||''); setFrigateUrl(o?.frigateUrl||''); setFrigateApiKey(o?.frigateApiKey||''); setFrigateWebhookSecret(o?.frigateWebhookSecret||''); setAvoidBloodMoonRestart(Boolean(o?.avoidBloodMoonRestart)); setLoading(false); })
+      .then(([u, o]) => { setUser(u); setOrg(o); setWebhookUrl(o?.discordWebhookUrl||''); setAvoidBloodMoonRestart(Boolean(o?.avoidBloodMoonRestart)); setLoading(false); })
       .catch((err) => { setError(err.message); setLoading(false); });
   }, [orgId]);
-
-  async function handleSaveFrigate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!orgId) return;
-    setFrigateLoading(true); setFrigateError(''); setFrigateSuccess(''); setFrigateTestResult(null);
-    try {
-      await api.patch(`/api/orgs/${orgId}`, { frigateUrl, frigateApiKey, frigateWebhookSecret });
-      setFrigateSuccess('Frigate settings saved.');
-    } catch (err: unknown) {
-      setFrigateError(err instanceof Error ? err.message : 'Failed to save Frigate settings');
-    } finally {
-      setFrigateLoading(false);
-    }
-  }
-
-  async function handleTestFrigate() {
-    if (!orgId) return;
-    setFrigateTestLoading(true); setFrigateTestResult(null);
-    try {
-      const result = await api.post<{ ok: boolean; version?: string; error?: string }>(
-        `/api/orgs/${orgId}/detection/frigate/test`,
-        {},
-      );
-      setFrigateTestResult(result);
-    } catch (err: unknown) {
-      setFrigateTestResult({ ok: false, error: err instanceof Error ? err.message : 'Request failed' });
-    } finally {
-      setFrigateTestLoading(false);
-    }
-  }
 
   async function handleUpdateWebhook(e: React.FormEvent) {
     e.preventDefault();
@@ -225,93 +201,38 @@ export default function SettingsPage() {
         </form>
       </div>
 
-      {/* Frigate Detection */}
-      <div style={card}>
-        <h2 style={{ margin: '0 0 0.375rem', fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>Frigate Detection</h2>
-        <p style={{ margin: '0 0 1.25rem', fontSize: '0.8rem', color: '#64748b' }}>
-          Connect to a Frigate NVR instance to receive camera detection events and trigger alerts.
-        </p>
-        {orgId && (
-          <div style={{ marginBottom: '1.25rem', padding: '0.75rem 0.875rem', background: '#0a0a12', borderRadius: 7, border: '1px solid #1e1e2a' }}>
-            <div style={{ fontSize: '0.72rem', color: '#64748b', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Webhook URL — paste this into Frigate → Notifications → Webhooks
-            </div>
-            <code style={{ fontSize: '0.78rem', color: '#818cf8', wordBreak: 'break-all', fontFamily: 'monospace' }}>
-              {`${process.env.NEXT_PUBLIC_CONTROL_PLANE_URL || 'http://localhost:3001'}/api/orgs/${orgId}/detection/frigate/webhook`}
-            </code>
-          </div>
-        )}
-        <form onSubmit={handleSaveFrigate} style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-          <div>
-            <label style={labelStyle}>Frigate URL</label>
-            <input
-              style={inputStyle}
-              type="url"
-              value={frigateUrl}
-              onChange={e => setFrigateUrl(e.target.value)}
-              placeholder="http://192.168.1.100:5000"
-              onFocus={onFocus}
-              onBlur={onBlur}
-            />
-            <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.3rem' }}>
-              Base URL of your Frigate instance (no trailing slash).
-            </div>
-          </div>
-          <div>
-            <label style={labelStyle}>API Key <span style={{ color: '#475569' }}>(optional)</span></label>
-            <input
-              style={inputStyle}
-              type="password"
-              value={frigateApiKey}
-              onChange={e => setFrigateApiKey(e.target.value)}
-              placeholder="Leave blank if Frigate auth is disabled"
-              onFocus={onFocus}
-              onBlur={onBlur}
-            />
-          </div>
-          <div>
-            <label style={labelStyle}>Webhook Secret <span style={{ color: '#475569' }}>(optional)</span></label>
-            <input
-              style={inputStyle}
-              type="password"
-              value={frigateWebhookSecret}
-              onChange={e => setFrigateWebhookSecret(e.target.value)}
-              placeholder="Shared secret sent in X-Webhook-Secret header"
-              onFocus={onFocus}
-              onBlur={onBlur}
-            />
-            <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.3rem' }}>
-              If set, Frigate must send this value in the <code style={{ fontFamily: 'monospace', color: '#818cf8' }}>X-Webhook-Secret</code> header. Leave blank to accept all requests.
-            </div>
-          </div>
-          {frigateError && <p style={{ color: '#f87171', margin: 0, fontSize: '0.8rem' }}>{frigateError}</p>}
-          {frigateSuccess && <p style={{ color: '#4ade80', margin: 0, fontSize: '0.8rem' }}>{frigateSuccess}</p>}
-          {frigateTestResult && (
-            <div style={{
-              padding: '0.625rem 0.875rem', borderRadius: 7, fontSize: '0.8rem',
-              background: frigateTestResult.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
-              border: `1px solid ${frigateTestResult.ok ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
-              color: frigateTestResult.ok ? '#4ade80' : '#f87171',
-            }}>
-              {frigateTestResult.ok
-                ? `Connected — Frigate v${frigateTestResult.version}`
-                : `Connection failed: ${frigateTestResult.error}`}
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="submit" style={btnPrimary} disabled={frigateLoading}>
-              {frigateLoading ? 'Saving…' : 'Save Frigate Settings'}
-            </button>
-            <button
-              type="button"
-              style={{ ...btnPrimary, background: '#0f766e', boxShadow: '0 2px 8px rgba(15,118,110,0.25)' }}
-              onClick={handleTestFrigate}
-              disabled={frigateTestLoading}
-            >
-              {frigateTestLoading ? 'Testing…' : 'Test Connection'}
-            </button>
-          </div>
-        </form>
+      {/* Discord Bot */}
+      <div style={card} id="discord-bot">
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'start',gap:16,flexWrap:'wrap'}}>
+          <div><h2 style={{margin:'0 0 .375rem',fontSize:'1rem',fontWeight:600,color:'#f1f5f9'}}>Discord Bot</h2><p style={{margin:'0 0 1rem',fontSize:'.8rem',color:'#64748b'}}>Let trusted Discord staff start, stop, or restart this server. The bot tells them when the action succeeds or fails.</p></div>
+          <a href="/downloads/Mastermind-Discord-Bot-0.1.0.zip" download style={{...btnPrimary,textDecoration:'none',display:'inline-block',flexShrink:0}}>Download bot v0.1.0</a>
+        </div>
+
+        <h3 style={{color:'#e2e8f0',fontSize:'.9rem',margin:'1rem 0 .5rem'}}>What you need</h3>
+        <div style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:'.8rem'}}><tbody>
+          {[
+            ['DISCORD_TOKEN','The bot password. Copy it from Developer Portal → Bot → Reset Token. Keep it secret.'],
+            ['DISCORD_CLIENT_ID','The bot Application ID from Developer Portal → General Information.'],
+            ['DISCORD_GUILD_ID','Your Discord server ID. This makes commands appear immediately.'],
+            ['DISCORD_ALLOWED_ROLE_IDS','Discord role IDs for staff allowed to use the commands. Separate multiple IDs with commas.'],
+            ['MASTERMIND_EMAIL / PASSWORD','The Mastermind account the bot will use to create server jobs.'],
+            ['MASTERMIND_ORG_ID',orgId||'Organization ID shown at the top of this Settings page.'],
+            ['MASTERMIND_SERVER_ID','Optional. Leave blank to use the first registered 7DTD server.'],
+          ].map(([name,description])=><tr key={name}><td style={{padding:'.55rem',borderBottom:'1px solid #1e1e2a',color:'#818cf8',fontFamily:'monospace',whiteSpace:'nowrap'}}>{name}</td><td style={{padding:'.55rem',borderBottom:'1px solid #1e1e2a',color:'#94a3b8'}}>{description}</td></tr>)}
+        </tbody></table></div>
+
+        <h3 style={{color:'#e2e8f0',fontSize:'.9rem',margin:'1.25rem 0 .5rem'}}>Quick setup</h3>
+        <ol style={{color:'#94a3b8',fontSize:'.82rem',lineHeight:1.65,paddingLeft:'1.25rem'}}>
+          <li><strong>Create:</strong> Open the <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer" style={{color:'#818cf8'}}>Discord Developer Portal</a>, click <strong>New Application</strong>, and name it Mastermind.</li>
+          <li><strong>Copy:</strong> Copy <strong>Application ID</strong> from General Information. Then open Bot → Reset Token and copy the secret token.</li>
+          <li><strong>Invite:</strong> Open OAuth2 → URL Generator. Check <code>bot</code> and <code>applications.commands</code>, then allow Send Messages and Use Application Commands.</li>
+          <li><strong>Choose staff:</strong> Enable Discord Developer Mode. Right-click your server to copy its ID, then right-click each trusted staff role to copy its role ID.</li>
+          <li><strong>Connect:</strong> Extract the download, rename <code>.env.example</code> to <code>.env</code>, and replace the bracketed values in the configuration below.</li>
+          <li><strong>Start and test:</strong> Follow the included Docker or Node instructions, then type <code>/start</code> in Discord.</li>
+        </ol>
+
+        <div style={{position:'relative'}}><pre style={{background:'#09090f',border:'1px solid #252532',borderRadius:7,padding:'1rem',color:'#cbd5e1',fontSize:'.72rem',overflowX:'auto',whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{discordBotEnvironment}</pre><button type="button" style={{...btnPrimary,position:'absolute',right:8,top:8,padding:'.35rem .65rem',fontSize:'.72rem'}} onClick={()=>{void navigator.clipboard.writeText(discordBotEnvironment);setDiscordBotCopied(true);setTimeout(()=>setDiscordBotCopied(false),1800);}}>{discordBotCopied?'Copied':'Copy configuration'}</button></div>
+        <p style={{color:'#fbbf24',fontSize:'.75rem',marginBottom:0}}>Keep the Discord token and Mastermind password out of screenshots, chat, Git, and support logs. If exposed, reset the Discord token immediately.</p>
       </div>
 
       {/* Agent Pairing */}

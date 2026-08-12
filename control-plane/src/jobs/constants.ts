@@ -27,6 +27,8 @@ export const JOB_TYPES = [
   'MOD_QUARANTINE_LIST',
   'MOD_RESTORE',
   'MOD_DELETE',
+  'MOD_CONFIG_READ',
+  'MOD_CONFIG_WRITE',
   'start',
   'stop',
   'restart',

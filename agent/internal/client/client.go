@@ -19,6 +19,8 @@ type Client interface {
 	PollJobs(ctx context.Context, hostID string, longPollSec int) ([]Job, error)
 	// SubmitJobResult sends the result of a job run.
 	SubmitJobResult(ctx context.Context, hostID string, jobID string, result *JobResultPayload) error
+	// SubmitJobProgress reports a nonterminal display phase without completing the run.
+	SubmitJobProgress(ctx context.Context, hostID string, jobID string, phase string, message string) error
 	// StreamLog uploads log chunks (e.g. multipart or chunked body). Optional for MVP.
 	StreamLog(ctx context.Context, hostID string, serverInstanceID string, r io.Reader) error
 }

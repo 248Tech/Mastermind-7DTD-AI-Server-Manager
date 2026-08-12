@@ -66,7 +66,10 @@ export class JobsController {
       latestRun: j.jobRuns[0]
         ? {
             id: j.jobRuns[0].id,
-            status: j.jobRuns[0].status,
+            status: j.jobRuns[0].status === 'running'
+              && (j.jobRuns[0].result as Record<string, unknown> | null)?.phase === 'queued'
+              ? 'queued'
+              : j.jobRuns[0].status,
             startedAt: j.jobRuns[0].startedAt?.toISOString() ?? null,
             finishedAt: j.jobRuns[0].finishedAt?.toISOString() ?? null,
             result: j.jobRuns[0].result,

@@ -21,6 +21,8 @@ export interface AlertContext {
   playerName?: string;
   steamId?: string;
   eosId?: string;
+  /** Completed play session length, primarily for disconnect alerts. */
+  sessionSeconds?: number;
   /** Arbitrary extras */
   [key: string]: unknown;
 }

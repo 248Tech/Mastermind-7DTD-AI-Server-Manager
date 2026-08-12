@@ -163,7 +163,7 @@ export default function AlertsPage() {
     <div>
       <div style={{ marginBottom: '2rem' }}>
         <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: '#f1f5f9' }}>Alert Rules</h1>
-        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Get notified via Discord when a server goes offline, restarts, or when Frigate detects events</p>
+        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Get notified via Discord about server lifecycle and player activity</p>
       </div>
 
       {error && (
@@ -193,14 +193,11 @@ export default function AlertsPage() {
                   <option value="SERVER_DOWN">Server Down</option>
                   <option value="SERVER_RESTART">Server Restart</option>
                   <option value="AGENT_OFFLINE">Agent Offline</option>
-                  <option value="FRIGATE_DETECTION">Frigate Detection</option>
                   <option value="PLAYER_CONNECTED">Player Connected</option>
                   <option value="PLAYER_DISCONNECTED">Player Disconnected</option>
                 </select>
                 <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.3rem' }}>
-                  {form.type === 'FRIGATE_DETECTION'
-                    ? 'Triggers when Frigate detects a configured object. Configure Frigate in Settings.'
-                    : form.type === 'AGENT_OFFLINE'
+                  {form.type === 'AGENT_OFFLINE'
                       ? 'Triggers when a host agent stops heartbeating.'
                       : form.type === 'PLAYER_CONNECTED' || form.type === 'PLAYER_DISCONNECTED'
                         ? 'Triggers once when the server log confirms a player connection state change.'

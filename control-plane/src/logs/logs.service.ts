@@ -19,9 +19,12 @@ export class LogsService {
     });
     if (!server) throw new NotFoundException('Server instance not found for agent host');
     await this.prisma.serverLog.create({ data: { orgId: server.orgId, serverInstanceId: server.id, content } });
-    await this.matchKeywordAlerts(server.orgId, server.id, content);
-    await this.parsePlayers(server.orgId, server.id, server.name, content);
-    await this.parseChat(server.orgId, server.id, server.name, content);
+    // Parsers enrich a persisted chunk. One enrichment failure must not reject
+    // the upload and force the agent to replay chat or Discord deliveries.
+    await this.matchKeywordAlerts(server.orgId, server.id, content).catch(() => undefined);
+    await this.parseChat(server.orgId, server.id, server.name, content).catch(() => undefined);
+    await this.parsePlayers(server.orgId, server.id, server.name, content).catch(() => undefined);
+    await this.retryChatRelays(server.orgId, server.id).catch(() => undefined);
     await this.prune(server.orgId);
     return { ok: true };
   }
@@ -38,9 +41,38 @@ export class LogsService {
       const playerName = rawName.trim().slice(0, 128);
       const message = rawMessage.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, 2000);
       if (!playerName || !message) continue;
-      await this.prisma.event.create({ data: { orgId, sourceType: 'server_instance', sourceId: serverInstanceId, eventType: 'player_chat',
-        payload: { playerId, entityId, playerName, channel, message, serverInstanceName } } });
-      await this.alerts.relayPlayerChat({ orgId, serverInstanceId, serverInstanceName, playerName, playerId, channel, message }).catch(() => undefined);
+      const logTimestamp = line.match(/^(\S+)/)?.[1] ?? '';
+      if (logTimestamp) {
+        const duplicate = await this.prisma.event.findFirst({ where: {
+          orgId, sourceId: serverInstanceId, eventType: 'player_chat',
+          payload: { path: ['logTimestamp'], equals: logTimestamp },
+        }, select: { id: true } });
+        if (duplicate) continue;
+      }
+      const event = await this.prisma.event.create({ data: { orgId, sourceType: 'server_instance', sourceId: serverInstanceId, eventType: 'player_chat',
+        payload: { playerId, entityId, playerName, channel, message, serverInstanceName, logTimestamp } } });
+      const relay = await this.alerts.relayPlayerChat({ eventId: event.id, orgId, serverInstanceId, serverInstanceName, playerName, playerId, channel, message });
+      if (relay.configured && !relay.sent) {
+        await this.prisma.event.create({ data: { orgId, sourceType: 'server_instance', sourceId: serverInstanceId, eventType: 'player_chat_relay_pending',
+          payload: { eventId: event.id, orgId, serverInstanceId, serverInstanceName, playerName, playerId, channel, message, lastError: relay.error } } });
+      }
+    }
+  }
+
+  private async retryChatRelays(orgId: string, serverInstanceId: string) {
+    const pending = await this.prisma.event.findMany({
+      where: { orgId, sourceId: serverInstanceId, eventType: 'player_chat_relay_pending' },
+      orderBy: { createdAt: 'asc' }, take: 10,
+    });
+    for (const row of pending) {
+      const payload = row.payload as Record<string, unknown>;
+      const result = await this.alerts.relayPlayerChat({
+        eventId: String(payload.eventId ?? row.id), orgId, serverInstanceId,
+        serverInstanceName: String(payload.serverInstanceName ?? '7DTD Server'),
+        playerName: String(payload.playerName ?? 'Unknown'), playerId: String(payload.playerId ?? 'unknown'),
+        channel: String(payload.channel ?? 'Global'), message: String(payload.message ?? ''),
+      });
+      if (result.sent || !result.configured) await this.prisma.event.delete({ where: { id: row.id } });
     }
   }
 
@@ -111,7 +143,7 @@ export class LogsService {
           this.prisma.player.update({ where: { id: existing.id }, data: { online: false, lastSeenAt: now, currentSessionStartedAt: null, lifetimeSeconds: { increment: duration } } }),
           this.prisma.playerSession.updateMany({ where: { playerId: existing.id, endedAt: null }, data: { endedAt: now, durationSeconds: duration } }),
         ]);
-        await this.alerts.sendMatchingRules('PLAYER_DISCONNECTED', { orgId, serverInstanceId, serverInstanceName, playerName: name, steamId: steam ?? existing.steamId ?? undefined, eosId: eos ?? existing.eosId ?? undefined }).catch(() => undefined);
+        await this.alerts.sendMatchingRules('PLAYER_DISCONNECTED', { orgId, serverInstanceId, serverInstanceName, playerName: name, steamId: steam ?? existing.steamId ?? undefined, eosId: eos ?? existing.eosId ?? undefined, sessionSeconds: duration }).catch(() => undefined);
       }
     }
   }

@@ -56,7 +56,7 @@ func Loop(ctx context.Context, c client.Client, hostID string, pollIntervalSec i
 // jobs remain strictly ordered through the single mutation worker above.
 func isReadOnly(jobType string) bool {
 	switch jobType {
-	case "MOD_LIST", "MOD_QUARANTINE_LIST":
+	case "MOD_LIST", "MOD_QUARANTINE_LIST", "MOD_CONFIG_READ", "PLAYER_LIST_SYNC", "PLAYER_ADMIN_LIST", "RCON", "SEND_COMMAND":
 		return true
 	default:
 		return false
@@ -65,6 +65,11 @@ func isReadOnly(jobType string) bool {
 
 func runOne(ctx context.Context, c client.Client, hostID string, j client.Job, exec agent.JobExecutor) {
 	started := time.Now()
+	jobCtx := agent.WithProgressReporter(ctx, func(phase, message string) {
+		if err := c.SubmitJobProgress(ctx, hostID, j.ID, phase, message); err != nil {
+			slog.Warn("report job progress failed", "jobRunId", j.ID, "err", err)
+		}
+	})
 	job := agent.Job{
 		ID:               j.ID,
 		Type:             j.Type,
@@ -72,7 +77,7 @@ func runOne(ctx context.Context, c client.Client, hostID string, j client.Job, e
 		Payload:          j.Payload,
 		ScheduleID:       j.ScheduleID,
 	}
-	result, err := exec.Execute(ctx, job)
+	result, err := exec.Execute(jobCtx, job)
 	if err != nil {
 		_ = c.SubmitJobResult(ctx, hostID, j.ID, &client.JobResultPayload{
 			Status:       "failed",

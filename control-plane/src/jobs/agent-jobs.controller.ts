@@ -3,6 +3,7 @@ import { JobsService } from './jobs.service';
 import { JobsQueueService } from './jobs-queue.service';
 import { PrismaService } from '../prisma.service';
 import { ReportResultDto } from './dto/report-result.dto';
+import { ReportProgressDto } from './dto/report-progress.dto';
 import { AgentAuthGuard } from '../pairing/agent-auth.guard';
 import type { RequestWithAgent } from '../pairing/agent-auth.guard';
 
@@ -42,5 +43,15 @@ export class AgentJobsController {
   ) {
     const hostId = req.agentHostId!;
     return this.jobsService.reportJobResult(hostId, jobRunId, dto);
+  }
+
+  /** Record a nonterminal agent phase while the job remains active. */
+  @Post(':jobRunId/progress')
+  async reportProgress(
+    @Req() req: RequestWithAgent,
+    @Param('jobRunId') jobRunId: string,
+    @Body() dto: ReportProgressDto,
+  ) {
+    return this.jobsService.reportJobProgress(req.agentHostId!, jobRunId, dto.phase, dto.message);
   }
 }

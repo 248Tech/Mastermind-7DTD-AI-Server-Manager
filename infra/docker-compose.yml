@@ -85,6 +85,28 @@ services:
       retries: 3
       start_period: 15s
 
+  discord-bot:
+    profiles: ["discord-bot"]
+    build:
+      context: ../discord-bot
+    restart: unless-stopped
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      DISCORD_ALLOWED_ROLE_IDS: ${DISCORD_ALLOWED_ROLE_IDS:-}
+      DISCORD_ALLOWED_USER_IDS: ${DISCORD_ALLOWED_USER_IDS:-}
+      DISCORD_EPHEMERAL_REPLIES: ${DISCORD_EPHEMERAL_REPLIES:-true}
+      MASTERMIND_URL: ${MASTERMIND_URL:-http://control-plane:3001}
+      MASTERMIND_EMAIL: ${MASTERMIND_EMAIL:-}
+      MASTERMIND_PASSWORD: ${MASTERMIND_PASSWORD:-}
+      MASTERMIND_ORG_ID: ${MASTERMIND_ORG_ID:-}
+      MASTERMIND_SERVER_ID: ${MASTERMIND_SERVER_ID:-}
+      JOB_TIMEOUT_SECONDS: ${JOB_TIMEOUT_SECONDS:-600}
+    depends_on:
+      control-plane:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:

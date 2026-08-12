@@ -19,6 +19,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - (none)
 
+## [0.0.8] - 2026-08-11
+
+### Added
+
+- Added an optional downloadable Discord bot with `/start`, `/stop`, `/reboot`, and `/safereboot` commands, Mastermind job completion/failure replies, dedicated-account attribution, and Discord role/user authorization.
+- Added beginner-oriented Discord bot setup and credential instructions to Settings, a copyable environment template, standalone/Docker packaging, and an optional Compose profile.
+- Added constrained mod configuration discovery, reading, and atomic saving for supported text formats up to 64 KiB, with traversal and symlink protections.
+- Added session playtime to Player Disconnected Discord messages.
+
+### Changed
+
+- Deprecated Frigate in the current UI by removing its Settings card and new-alert option while preserving backend support and stored configuration.
+- Interactive RCON and read-only player queries can run concurrently while a long Safe Restart waits for Blood Moon protection.
+- Bumped repository, control-plane, web, and health endpoint versions to `0.0.8`.
+
+### Fixed
+
+- Safe Restart jobs deferred by Blood Moon protection now report a nonterminal Queued phase with the current and target game day instead of appearing stuck Running.
+- Fixed partial/replayed Discord chat ingestion by preventing player identity reconciliation failures from rejecting otherwise valid log chunks.
+- Prevented busy Discord chat relays from silently dropping messages at the generic alert-rule rate limit; each persisted chat event now receives normal webhook delivery and retry handling.
+- Prevented a Blood Moon-deferred Safe Restart from blocking chat replies and player polling by moving interactive RCON and read-only player queries onto the agent's concurrent execution lane.
+- Added durable retry records for failed Discord chat webhooks and log-timestamp deduplication so transient delivery failures no longer lose messages and agent replays do not repost them.
+- Normalized Blood Moon-deferred Safe Restart status to `queued` in the jobs API so every dashboard consumer shows the wait state consistently.
+
 ## [0.0.7] - 2026-08-11
 
 ### Added

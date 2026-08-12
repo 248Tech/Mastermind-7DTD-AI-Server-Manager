@@ -49,6 +49,7 @@ function Badge({ status }: { status: string | null }) {
     failed:    { bg: 'rgba(239,68,68,0.1)',  color: '#f87171' },
     error:     { bg: 'rgba(239,68,68,0.1)',  color: '#f87171' },
     pending:   { bg: 'rgba(245,158,11,0.1)', color: '#fbbf24' },
+    queued:    { bg: 'rgba(245,158,11,0.1)', color: '#fbbf24' },
     running:   { bg: 'rgba(56,189,248,0.1)', color: '#38bdf8' },
   };
   const { bg, color } = map[s] || { bg: 'rgba(100,116,139,0.1)', color: '#64748b' };
@@ -62,6 +63,11 @@ function Badge({ status }: { status: string | null }) {
       {s}
     </span>
   );
+}
+
+function displayStatus(job: Job): string | null {
+  const result = job.latestRun?.result as { phase?: string } | null;
+  return job.latestRun?.status === 'running' && result?.phase === 'queued' ? 'queued' : job.latestRun?.status ?? null;
 }
 
 function formatDuration(startedAt: string | null, finishedAt: string | null): string {
@@ -252,7 +258,7 @@ export default function JobsPage() {
                       <td style={{ ...tdStyle, borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }} title={job.startedBy?.email}>
                         {job.startedBy?.name || 'Unknown'}
                       </td>
-                      <td style={{ ...tdStyle, borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}><Badge status={job.latestRun?.status ?? null} /></td>
+                      <td style={{ ...tdStyle, borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}><Badge status={displayStatus(job)} /></td>
                       <td style={{ ...tdStyle, color: '#64748b', borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}>{formatRelative(job.createdAt)}</td>
                       <td style={{ ...tdStyle, color: '#64748b', borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}>{formatDuration(job.latestRun?.startedAt ?? null, job.latestRun?.finishedAt ?? null)}</td>
                       <td style={{ ...tdStyle, borderBottom: expandedJob === job.id ? 'none' : '1px solid #1a1a24' }}>

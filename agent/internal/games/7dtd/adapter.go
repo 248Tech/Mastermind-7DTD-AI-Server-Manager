@@ -264,6 +264,22 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 		return agent.JobResult{Status: "success", Result: map[string]interface{}{"deleted": folder}}, nil
+	case "MOD_CONFIG_READ":
+		folder := getString(job.Payload, "folder", "")
+		path := getString(job.Payload, "path", "")
+		content, err := readModConfig(cfg, getString(job.Payload, "mods_path", ""), folder, path)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"folder": folder, "path": path, "content": content}}, nil
+	case "MOD_CONFIG_WRITE":
+		folder := getString(job.Payload, "folder", "")
+		path := getString(job.Payload, "path", "")
+		content := getString(job.Payload, "content", "")
+		if err := writeModConfig(cfg, getString(job.Payload, "mods_path", ""), folder, path, content); err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"folder": folder, "path": path, "saved": true}}, nil
 	default:
 		return agent.JobResult{Status: "failed", Error: "unsupported job type: " + job.Type}, nil
 	}
@@ -384,6 +400,7 @@ type modInfo struct {
 	Website     string    `json:"website,omitempty"`
 	Version     string    `json:"version,omitempty"`
 	ActivatedAt time.Time `json:"activatedAt"`
+	ConfigFiles []string  `json:"configFiles,omitempty"`
 }
 
 type serverAdmin struct {
@@ -497,10 +514,145 @@ func listModsAt(root string) ([]modInfo, error) {
 			}
 			info.Version = values["version"]
 		}
+		info.ConfigFiles = findModConfigFiles(filepath.Join(root, entry.Name()))
 		mods = append(mods, info)
 	}
 	sort.Slice(mods, func(i, j int) bool { return strings.ToLower(mods[i].Name) < strings.ToLower(mods[j].Name) })
 	return mods, nil
+}
+
+const maxModConfigBytes = 64 * 1024
+
+var editableModConfigExtensions = map[string]bool{
+	".cfg": true, ".conf": true, ".ini": true, ".json": true,
+	".toml": true, ".txt": true, ".xml": true, ".yaml": true, ".yml": true,
+}
+
+func findModConfigFiles(modRoot string) []string {
+	files := make([]string, 0)
+	_ = filepath.Walk(modRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil {
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() {
+			if path != modRoot && strings.HasPrefix(info.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, relErr := filepath.Rel(modRoot, path)
+		if relErr != nil || !isEditableModConfig(rel) || info.Size() > maxModConfigBytes {
+			return nil
+		}
+		files = append(files, filepath.ToSlash(rel))
+		if len(files) >= 100 {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	sort.Strings(files)
+	return files
+}
+
+func isEditableModConfig(relativePath string) bool {
+	clean := filepath.Clean(relativePath)
+	if clean == "." || filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return false
+	}
+	if !editableModConfigExtensions[strings.ToLower(filepath.Ext(clean))] {
+		return false
+	}
+	parts := strings.Split(filepath.ToSlash(clean), "/")
+	if len(parts) > 1 && strings.EqualFold(parts[0], "Config") {
+		return true
+	}
+	base := strings.ToLower(filepath.Base(clean))
+	return strings.Contains(base, "config") || strings.Contains(base, "settings")
+}
+
+func resolveModConfig(root, folder, relativePath string) (string, error) {
+	modRoot, err := realModDirectory(root, folder)
+	if err != nil {
+		return "", err
+	}
+	clean := filepath.Clean(strings.TrimSpace(relativePath))
+	if !isEditableModConfig(clean) {
+		return "", fmt.Errorf("invalid or unsupported mod config path")
+	}
+	target := filepath.Join(modRoot, clean)
+	info, err := os.Lstat(target)
+	if err != nil {
+		return "", fmt.Errorf("mod config not found: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("mod config must be a regular file")
+	}
+	if info.Size() > maxModConfigBytes {
+		return "", fmt.Errorf("mod config exceeds 64 KiB editor limit")
+	}
+	return target, nil
+}
+
+func readModConfig(cfg *agent.InstanceConfig, override, folder, relativePath string) (string, error) {
+	root, err := modsPath(cfg, override)
+	if err != nil {
+		return "", err
+	}
+	target, err := resolveModConfig(root, folder, relativePath)
+	if err != nil {
+		return "", err
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		return "", fmt.Errorf("read mod config: %w", err)
+	}
+	return string(content), nil
+}
+
+func writeModConfig(cfg *agent.InstanceConfig, override, folder, relativePath, content string) error {
+	if len(content) > maxModConfigBytes {
+		return fmt.Errorf("mod config exceeds 64 KiB editor limit")
+	}
+	root, err := modsPath(cfg, override)
+	if err != nil {
+		return err
+	}
+	target, err := resolveModConfig(root, folder, relativePath)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return fmt.Errorf("stat mod config: %w", err)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(target), ".mastermind-config-*")
+	if err != nil {
+		return fmt.Errorf("create temporary mod config: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if _, err = temporary.WriteString(content); err == nil {
+		err = temporary.Sync()
+	}
+	if closeErr := temporary.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("write temporary mod config: %w", err)
+	}
+	if err = os.Chmod(temporaryPath, info.Mode().Perm()); err != nil {
+		return fmt.Errorf("preserve mod config permissions: %w", err)
+	}
+	if err = os.Rename(temporaryPath, target); err != nil {
+		return fmt.Errorf("replace mod config: %w", err)
+	}
+	return nil
 }
 
 func readModInfo(path string) (map[string]string, error) {
@@ -1312,6 +1464,7 @@ func (a *Adapter) SafeRestart(ctx context.Context, cfg *agent.InstanceConfig, pa
 var gameDayPattern = regexp.MustCompile(`(?i)\bday\s+(\d+)\b`)
 
 func (a *Adapter) waitUntilRestartDay(ctx context.Context, cfg *agent.InstanceConfig) error {
+	queued := false
 	for {
 		output, err := a.SendCommand(ctx, cfg, "gettime")
 		if err != nil {
@@ -1326,7 +1479,14 @@ func (a *Adapter) waitUntilRestartDay(ctx context.Context, cfg *agent.InstanceCo
 			return fmt.Errorf("check game day before restart: %w", err)
 		}
 		if day <= 0 || day%7 != 0 {
+			if queued {
+				agent.ReportProgress(ctx, "running", fmt.Sprintf("Day %d started; beginning safe restart", day))
+			}
 			return nil
+		}
+		if !queued {
+			queued = true
+			agent.ReportProgress(ctx, "queued", fmt.Sprintf("Blood Moon protection: waiting for Day %d (currently Day %d)", day+1, day))
 		}
 		select {
 		case <-ctx.Done():

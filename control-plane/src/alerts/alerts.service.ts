@@ -138,25 +138,33 @@ export class AlertsService {
     }
   }
 
-  async relayPlayerChat(context: { orgId: string; serverInstanceId: string; serverInstanceName: string; playerName: string; playerId: string; channel: string; message: string }): Promise<void> {
+  async relayPlayerChat(context: { eventId: string; orgId: string; serverInstanceId: string; serverInstanceName: string; playerName: string; playerId: string; channel: string; message: string }): Promise<{ configured: boolean; sent: boolean; error?: string }> {
     const rules = await this.prisma.alertRule.findMany({ where: { orgId: context.orgId, enabled: true } });
     const matching = rules.filter(rule => {
       const condition = rule.condition as Record<string, unknown>;
       return condition?.type === 'chat_relay' && (!condition.serverInstanceId || condition.serverInstanceId === context.serverInstanceId);
     });
+    let configured = false;
+    let error: string | undefined;
     for (const rule of matching) {
       const channel = rule.channel as Record<string, unknown>;
       if (String(channel?.type ?? '').toLowerCase() !== 'discord') continue;
       const webhookUrl = String(channel.webhookUrl ?? '').trim();
       if (!webhookUrl) continue;
+      configured = true;
       const safeName = context.playerName.replace(/[*_`~|>]/g, '\\$&').slice(0, 80);
       const safeMessage = context.message.replace(/@/g, '@\u200b').slice(0, 1800);
-      await this.discord.send(webhookUrl, {
+      const result = await this.discord.send(webhookUrl, {
         embeds: [{ title: `💬 ${safeName}`, description: safeMessage, color: 0x5865f2,
           fields: [{ name: 'Server', value: context.serverInstanceName, inline: true }, { name: 'Channel', value: context.channel, inline: true }],
           footer: { text: `7DTD player chat · ${context.playerId}` }, timestamp: new Date().toISOString() }],
-      }, `${context.orgId}:${rule.id}`);
+      // Each persisted chat event gets its own local limiter key. Discord's
+      // webhook response still enforces its real limit and uses normal retries;
+      // busy player chat is no longer silently dropped by the alert-rule bucket.
+      }, `${context.orgId}:${rule.id}:${context.eventId}`);
+      if (!result.ok) error = result.error;
     }
+    return { configured, sent: !error, ...(error ? { error } : {}) };
   }
 
   async testRule(orgId: string, ruleId: string, userId: string) {
