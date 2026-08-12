@@ -4,6 +4,7 @@ import { OrgsService } from './orgs.service';
 import { OrgsController } from './orgs.controller';
 import { PrismaService } from '../prisma.service';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
+import { RequireOrgRoleGuard } from '../server-instances/guards/require-org-role.guard';
 
 @Module({
   imports: [
@@ -13,7 +14,7 @@ import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
     }),
   ],
   controllers: [OrgsController],
-  providers: [OrgsService, PrismaService, OrgMemberGuard],
+  providers: [OrgsService, PrismaService, OrgMemberGuard, RequireOrgRoleGuard],
   exports: [OrgsService],
 })
 export class OrgsModule {}

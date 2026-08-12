@@ -34,10 +34,15 @@ export class LogsService {
     const lines = combined.split(/\r?\n/);
     this.chatLineBuffers.set(serverInstanceId, lines.pop()?.slice(-4096) ?? '');
     for (const line of lines) {
-      const match = line.match(/\bChat \(from '([^']+)', entity id '([^']+)', to '([^']+)'\): '(.*)': (.*)$/);
-      if (!match) continue;
-      const [, playerId, entityId, channel, rawName, rawMessage] = match;
-      if (playerId === '-non-player-' || entityId === '-1') continue;
+      const playerMatch = line.match(/\bChat \(from '([^']+)', entity id '([^']+)', to '([^']+)'\): '(.*)': (.*)$/);
+      const serverMatch = line.match(/\bChat \(from '-non-player-', entity id '-1', to '([^']+)'\): (.*)$/);
+      if (!playerMatch && !serverMatch) continue;
+      const isServer = !!serverMatch;
+      const playerId = isServer ? '-non-player-' : playerMatch![1];
+      const entityId = isServer ? '-1' : playerMatch![2];
+      const channel = isServer ? serverMatch![1] : playerMatch![3];
+      const rawName = isServer ? 'Server' : playerMatch![4];
+      const rawMessage = isServer ? serverMatch![2] : playerMatch![5];
       const playerName = rawName.trim().slice(0, 128);
       const message = rawMessage.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, 2000);
       if (!playerName || !message) continue;
@@ -51,6 +56,9 @@ export class LogsService {
       }
       const event = await this.prisma.event.create({ data: { orgId, sourceType: 'server_instance', sourceId: serverInstanceId, eventType: 'player_chat',
         payload: { playerId, entityId, playerName, channel, message, serverInstanceName, logTimestamp } } });
+      // Server announcements belong in the parsed chat transcript, but the
+      // player-chat Discord relay intentionally handles player messages only.
+      if (isServer) continue;
       const relay = await this.alerts.relayPlayerChat({ eventId: event.id, orgId, serverInstanceId, serverInstanceName, playerName, playerId, channel, message });
       if (relay.configured && !relay.sent) {
         await this.prisma.event.create({ data: { orgId, sourceType: 'server_instance', sourceId: serverInstanceId, eventType: 'player_chat_relay_pending',

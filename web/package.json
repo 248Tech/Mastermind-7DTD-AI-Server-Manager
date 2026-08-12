@@ -1,6 +1,6 @@
 {
   "name": "mastermind-web",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -13,11 +13,14 @@
     "check-env": "node -e \"if (!process.env.NEXT_PUBLIC_CONTROL_PLANE_URL) { console.error('NEXT_PUBLIC_CONTROL_PLANE_URL is not set'); process.exit(1); } console.log('env ok');\""
   },
   "dependencies": {
+    "leaflet": "1.9.4",
     "next": "^14.0.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "react-leaflet": "4.2.1"
   },
   "devDependencies": {
+    "@types/leaflet": "1.9.20",
     "@types/node": "^20.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",

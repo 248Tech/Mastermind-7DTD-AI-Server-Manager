@@ -11,13 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - (none)
 
+## [0.0.9] - 2026-08-12
+
+### Added
+
+- Added an authenticated live 7DTD map using official rendered terrain tiles, live players, animals, hostiles, coordinates, game time, and region-grid overlays.
+- Added owned land-claim block markers and protection rectangles parsed from the active save.
+- Added browser-local map history with selectable 5-minute through 72-hour windows, timeline scrubbing, player-specific tracking, and selectable highlighted trail colors.
+- Integrated RussDev7's GPL-3.0 7D2D Profile Editor as an isolated service with visible credit, server profile discovery, staged editing, TTP validation, timestamped original archives, and atomic apply-on-next-start handling.
+- Added an administrator-only Accounts page for creating operator/viewer accounts and removing organization access while retaining historical attribution.
+- Added Original, Dark, and Light UI themes stored per browser.
+
 ### Changed
 
-- (none)
+- Reorganized the sidebar into scrollable Overview, Server, Automation, and System groups for compact and mobile layouts.
+- Expanded Discord bot instructions for users without technical or Discord experience, including exact file locations and an Accounts-page workflow for creating the bot login.
+- Bumped repository, control-plane, web, and health endpoint versions to `0.0.9`.
 
 ### Fixed
 
-- (none)
+- Server-authored `say` messages are now parsed into the Chat page as `Server` while remaining excluded from the player-only Discord relay.
+- Profile staging is applied only while 7DTD is fully stopped and preserves both original `.ttp` and companion `.ttp.bak` files with audit metadata.
 
 ## [0.0.8] - 2026-08-11
 

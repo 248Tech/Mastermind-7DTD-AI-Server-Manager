@@ -56,7 +56,7 @@ func Loop(ctx context.Context, c client.Client, hostID string, pollIntervalSec i
 // jobs remain strictly ordered through the single mutation worker above.
 func isReadOnly(jobType string) bool {
 	switch jobType {
-	case "MOD_LIST", "MOD_QUARANTINE_LIST", "MOD_CONFIG_READ", "PLAYER_LIST_SYNC", "PLAYER_ADMIN_LIST", "RCON", "SEND_COMMAND":
+	case "MOD_LIST", "MOD_QUARANTINE_LIST", "MOD_CONFIG_READ", "PROFILE_LIST", "PROFILE_READ", "PLAYER_LIST_SYNC", "PLAYER_ADMIN_LIST", "RCON", "SEND_COMMAND":
 		return true
 	default:
 		return false

@@ -1,9 +1,77 @@
-import { Injectable, ForbiddenException, ConflictException } from '@nestjs/common';
+import { Injectable, ForbiddenException, ConflictException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
+import { makePasswordHash } from '../auth/auth.service';
 
 @Injectable()
 export class OrgsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  getProfileEditorCredit(orgId: string) {
+    return {
+      orgId,
+      name: '7 Days to Die TTP Profile Editor',
+      upstreamAuthor: 'RussDev7 / DannyRuss',
+      upstreamRepository: 'https://github.com/RussDev7/7D2DProfileEditor',
+      upstreamCommit: '270f998adf70f3724afd93ba0e08569e3ba78c95',
+      license: 'GNU GPL v3',
+      acknowledgements: ['kani-momonga/7DaysProfileEditorPHP', 'Karlovsky120/7DaysProfileEditor'],
+      integration: 'Isolated upstream service proxied by Mastermind; source profiles are never overwritten automatically.',
+    };
+  }
+
+  async getAccounts(orgId: string) {
+    const memberships = await this.prisma.userOrg.findMany({
+      where: { orgId },
+      include: { user: { select: { id: true, email: true, name: true, createdAt: true } }, role: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    return memberships.map(membership => ({
+      id: membership.user.id,
+      email: membership.user.email,
+      name: membership.user.name,
+      role: membership.role.name,
+      createdAt: membership.user.createdAt,
+    }));
+  }
+
+  async createAccount(orgId: string, input: { email: string; password: string; name?: string; role: 'operator' | 'viewer' }) {
+    const email = input.email.trim().toLowerCase();
+    const existing = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (existing) throw new ConflictException('An account with this email already exists');
+    const role = await this.resolveRole(input.role);
+    const user = await this.prisma.user.create({
+      data: {
+        email,
+        name: input.name?.trim() || null,
+        passwordHash: makePasswordHash(input.password),
+        userOrgs: { create: { orgId, roleId: role.id } },
+      },
+      select: { id: true, email: true, name: true, createdAt: true },
+    });
+    return { ...user, role: role.name };
+  }
+
+  async deleteAccount(orgId: string, accountId: string, actingUserId: string) {
+    if (accountId === actingUserId) throw new ForbiddenException('You cannot delete your own account');
+    const membership = await this.prisma.userOrg.findUnique({
+      where: { userId_orgId: { userId: accountId, orgId } },
+      include: { role: true, user: { select: { email: true, _count: { select: { userOrgs: true } } } } },
+    });
+    if (!membership) throw new NotFoundException('Organization account not found');
+    if (membership.role.name === 'admin') {
+      const adminRole = await this.prisma.role.findUnique({ where: { name: 'admin' }, select: { id: true } });
+      const adminCount = adminRole ? await this.prisma.userOrg.count({ where: { orgId, roleId: adminRole.id } }) : 0;
+      if (adminCount <= 1) throw new ConflictException('The organization must keep at least one administrator');
+    }
+    await this.prisma.$transaction(async tx => {
+      await tx.userServerRole.deleteMany({ where: { userId: accountId, serverInstance: { orgId } } });
+      await tx.userOrg.delete({ where: { userId_orgId: { userId: accountId, orgId } } });
+      if (membership.user._count.userOrgs === 1) {
+        await tx.user.update({ where: { id: accountId }, data: { passwordHash: null } });
+      }
+    });
+    return { ok: true, email: membership.user.email, signInDisabled: membership.user._count.userOrgs === 1 };
+  }
 
   async createOrg(
     name: string,

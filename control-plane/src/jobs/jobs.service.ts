@@ -66,6 +66,10 @@ export class JobsService {
         throw new ForbiddenException('Only organization administrators or operators may manage saves');
       }
     }
+    if (normalizedJobType === 'PROFILE_STAGE') {
+      const membership = await this.prisma.userOrg.findUnique({ where: { userId_orgId: { userId, orgId } }, include: { role: true } });
+      if (!membership || !['admin', 'operator'].includes(membership.role.name)) throw new ForbiddenException('Only organization administrators or operators may stage player profiles');
+    }
     const serverInstance = await this.prisma.serverInstance.findFirst({
       where: { id: serverInstanceId, orgId },
       include: {
@@ -157,6 +161,10 @@ export class JobsService {
         result,
       },
     });
+    if (run.job.type === 'PROFILE_STAGE') {
+      const previous = (run.job.payload ?? {}) as Record<string, unknown>;
+      await this.prisma.job.update({ where: { id: run.jobId }, data: { payload: { path: previous.path, staged: runStatus === 'success' } as Prisma.InputJsonValue } });
+    }
 
     if (run.job.type === 'PLAYER_LIST_SYNC' && runStatus === 'success' && dto.output && run.job.serverInstanceId) {
       await this.reconcilePlayers(run.job.orgId, run.job.serverInstanceId, dto.output);

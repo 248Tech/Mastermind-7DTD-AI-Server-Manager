@@ -2,6 +2,8 @@ package sevendtd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -280,9 +282,289 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 		return agent.JobResult{Status: "success", Result: map[string]interface{}{"folder": folder, "path": path, "saved": true}}, nil
+	case "PROFILE_LIST":
+		profiles, err := listPlayerProfiles(job.Payload)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"profiles": profiles}}, nil
+	case "PROFILE_READ":
+		profile, content, err := readPlayerProfile(job.Payload, getString(job.Payload, "path", ""))
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"profile": profile, "contentBase64": base64.StdEncoding.EncodeToString(content)}}, nil
+	case "PROFILE_STAGE":
+		profile, err := stagePlayerProfile(job.Payload, getString(job.Payload, "path", ""), getString(job.Payload, "contentBase64", ""))
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"profile": profile, "staged": true, "appliesOnNextStart": true}}, nil
 	default:
 		return agent.JobResult{Status: "failed", Error: "unsupported job type: " + job.Type}, nil
 	}
+}
+
+// Keep the base64 job result below Nest's default JSON request limit.
+// Normal 7DTD profiles are only tens of KiB.
+const maxProfileEditorBytes = 64 * 1024
+const profileStagingRoot = "/var/lib/mastermind-agent/profile-staging"
+const profileBackupRoot = "/var/lib/mastermind-agent/profile-backups"
+
+type playerProfile struct {
+	Path       string    `json:"path"`
+	Name       string    `json:"name"`
+	World      string    `json:"world"`
+	Save       string    `json:"save"`
+	SizeBytes  int64     `json:"sizeBytes"`
+	ModifiedAt time.Time `json:"modifiedAt"`
+}
+
+func configuredSavesPath(payload map[string]interface{}) (string, error) {
+	config, _ := payload["config"].(map[string]interface{})
+	discovery, _ := config["discovery"].(map[string]interface{})
+	root, _ := discovery["savesPath"].(string)
+	root = filepath.Clean(strings.TrimSpace(root))
+	if root == "." || !filepath.IsAbs(root) {
+		return "", fmt.Errorf("configured absolute saves path required")
+	}
+	info, err := os.Lstat(root)
+	if err != nil {
+		return "", fmt.Errorf("read saves directory: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("saves path must be a real directory")
+	}
+	return root, nil
+}
+
+func listPlayerProfiles(payload map[string]interface{}) ([]playerProfile, error) {
+	root, err := configuredSavesPath(payload)
+	if err != nil {
+		return nil, err
+	}
+	profiles := []playerProfile{}
+	err = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() || !strings.EqualFold(filepath.Ext(info.Name()), ".ttp") || !strings.EqualFold(filepath.Base(filepath.Dir(path)), "Player") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) < 4 {
+			return nil
+		}
+		profiles = append(profiles, playerProfile{Path: filepath.ToSlash(rel), Name: info.Name(), World: parts[len(parts)-4], Save: parts[len(parts)-3], SizeBytes: info.Size(), ModifiedAt: info.ModTime().UTC()})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scan player profiles: %w", err)
+	}
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].ModifiedAt.After(profiles[j].ModifiedAt) })
+	return profiles, nil
+}
+
+func readPlayerProfile(payload map[string]interface{}, relative string) (playerProfile, []byte, error) {
+	root, err := configuredSavesPath(payload)
+	if err != nil {
+		return playerProfile{}, nil, err
+	}
+	relative = filepath.Clean(filepath.FromSlash(strings.TrimSpace(relative)))
+	if relative == "." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || !strings.EqualFold(filepath.Ext(relative), ".ttp") {
+		return playerProfile{}, nil, fmt.Errorf("invalid profile path")
+	}
+	target := filepath.Join(root, relative)
+	info, err := os.Lstat(target)
+	if err != nil {
+		return playerProfile{}, nil, fmt.Errorf("read player profile: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !strings.EqualFold(filepath.Base(filepath.Dir(target)), "Player") {
+		return playerProfile{}, nil, fmt.Errorf("profile must be a regular .ttp file in a Player directory")
+	}
+	if info.Size() > maxProfileEditorBytes {
+		return playerProfile{}, nil, fmt.Errorf("profile exceeds 2 MiB editor transfer limit")
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		return playerProfile{}, nil, fmt.Errorf("copy player profile: %w", err)
+	}
+	parts := strings.Split(filepath.ToSlash(relative), "/")
+	profile := playerProfile{Path: filepath.ToSlash(relative), Name: info.Name(), SizeBytes: info.Size(), ModifiedAt: info.ModTime().UTC()}
+	if len(parts) >= 4 {
+		profile.World, profile.Save = parts[len(parts)-4], parts[len(parts)-3]
+	}
+	return profile, content, nil
+}
+
+type stagedProfileMetadata struct {
+	Target   string    `json:"target"`
+	Relative string    `json:"relative"`
+	StagedAt time.Time `json:"stagedAt"`
+}
+
+type profileBackupMetadata struct {
+	OriginalPath string    `json:"originalPath"`
+	StagedAt     time.Time `json:"stagedAt"`
+	AppliedAt    time.Time `json:"appliedAt"`
+	OriginalFile string    `json:"originalFile"`
+	BackupFile   string    `json:"backupFile,omitempty"`
+}
+
+func stagePlayerProfile(payload map[string]interface{}, relative, encoded string) (playerProfile, error) {
+	profile, _, err := readPlayerProfile(payload, relative)
+	if err != nil {
+		return playerProfile{}, err
+	}
+	content, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(content) == 0 || len(content) > maxProfileEditorBytes {
+		return playerProfile{}, fmt.Errorf("invalid staged profile data")
+	}
+	if len(content) < 4 || string(content[:4]) != "ttp\x00" {
+		return playerProfile{}, fmt.Errorf("staged data does not have a valid TTP header")
+	}
+	root, err := configuredSavesPath(payload)
+	if err != nil {
+		return playerProfile{}, err
+	}
+	target := filepath.Join(root, filepath.FromSlash(profile.Path))
+	serverID := getString(payload, "server_instance_id", "")
+	if serverID == "" {
+		return playerProfile{}, fmt.Errorf("server instance ID required")
+	}
+	dir := filepath.Join(profileStagingRoot, serverID)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return playerProfile{}, fmt.Errorf("create profile staging directory: %w", err)
+	}
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(profile.Path)))
+	dataPath, metadataPath := filepath.Join(dir, key+".ttp"), filepath.Join(dir, key+".json")
+	temporary := dataPath + ".tmp"
+	if err := os.WriteFile(temporary, content, 0640); err != nil {
+		return playerProfile{}, fmt.Errorf("write staged profile: %w", err)
+	}
+	if err := os.Rename(temporary, dataPath); err != nil {
+		return playerProfile{}, fmt.Errorf("commit staged profile: %w", err)
+	}
+	metadata, _ := json.Marshal(stagedProfileMetadata{Target: target, Relative: profile.Path, StagedAt: time.Now().UTC()})
+	if err := os.WriteFile(metadataPath, metadata, 0640); err != nil {
+		_ = os.Remove(dataPath)
+		return playerProfile{}, fmt.Errorf("write staged profile metadata: %w", err)
+	}
+	return profile, nil
+}
+
+func applyStagedPlayerProfiles(serverID string) error {
+	if serverID == "" {
+		return nil
+	}
+	dir := filepath.Join(profileStagingRoot, serverID)
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read staged profiles: %w", err)
+	}
+	hasQueued := false
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+			hasQueued = true
+			break
+		}
+	}
+	if hasQueued && exec.Command("/usr/bin/systemctl", "is-active", "--quiet", "7dtd.service").Run() == nil {
+		return fmt.Errorf("7DTD must be fully stopped before applying staged profiles")
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		metadataPath := filepath.Join(dir, entry.Name())
+		metadataBytes, err := os.ReadFile(metadataPath)
+		if err != nil {
+			return err
+		}
+		var metadata stagedProfileMetadata
+		if json.Unmarshal(metadataBytes, &metadata) != nil || !filepath.IsAbs(metadata.Target) || !strings.EqualFold(filepath.Base(filepath.Dir(metadata.Target)), "Player") || !strings.EqualFold(filepath.Ext(metadata.Target), ".ttp") {
+			return fmt.Errorf("invalid staged profile metadata")
+		}
+		info, err := os.Lstat(metadata.Target)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("live profile is no longer a regular file: %s", metadata.Relative)
+		}
+		dataPath := strings.TrimSuffix(metadataPath, ".json") + ".ttp"
+		content, err := os.ReadFile(dataPath)
+		if err != nil || len(content) < 4 || string(content[:4]) != "ttp\x00" {
+			return fmt.Errorf("invalid queued profile: %s", metadata.Relative)
+		}
+		appliedAt := time.Now().UTC()
+		timestamp := appliedAt.Format("20060102T150405.000000000Z")
+		backupDir := filepath.Join(profileBackupRoot, serverID)
+		if err := os.MkdirAll(backupDir, 0750); err != nil {
+			return err
+		}
+		baseName := strings.TrimSuffix(filepath.Base(metadata.Target), filepath.Ext(metadata.Target))
+		originalName := baseName + ".original-" + timestamp + ".ttp"
+		if err := copySaveFile(metadata.Target, filepath.Join(backupDir, originalName), info.Mode().Perm()); err != nil {
+			return fmt.Errorf("back up live profile: %w", err)
+		}
+		backupName := ""
+		if bakInfo, bakErr := os.Lstat(metadata.Target + ".bak"); bakErr == nil && bakInfo.Mode().IsRegular() {
+			backupName = baseName + ".original-" + timestamp + ".ttp.bak"
+			if err := copySaveFile(metadata.Target+".bak", filepath.Join(backupDir, backupName), bakInfo.Mode().Perm()); err != nil {
+				return fmt.Errorf("back up live profile companion: %w", err)
+			}
+		}
+		archiveMetadata, _ := json.MarshalIndent(profileBackupMetadata{OriginalPath: metadata.Relative, StagedAt: metadata.StagedAt, AppliedAt: appliedAt, OriginalFile: originalName, BackupFile: backupName}, "", "  ")
+		if err := os.WriteFile(filepath.Join(backupDir, baseName+".original-"+timestamp+".json"), archiveMetadata, 0640); err != nil {
+			return fmt.Errorf("write profile backup metadata: %w", err)
+		}
+		temporary, err := os.CreateTemp(filepath.Dir(metadata.Target), ".mastermind-profile-*")
+		if err != nil {
+			return fmt.Errorf("create replacement profile: %w", err)
+		}
+		temporaryPath := temporary.Name()
+		if chmodErr := temporary.Chmod(info.Mode().Perm()); chmodErr != nil {
+			_ = temporary.Close()
+			_ = os.Remove(temporaryPath)
+			return chmodErr
+		}
+		if _, writeErr := temporary.Write(content); writeErr != nil {
+			_ = temporary.Close()
+			_ = os.Remove(temporaryPath)
+			return fmt.Errorf("write replacement profile: %w", writeErr)
+		}
+		if syncErr := temporary.Sync(); syncErr != nil {
+			_ = temporary.Close()
+			_ = os.Remove(temporaryPath)
+			return syncErr
+		}
+		if closeErr := temporary.Close(); closeErr != nil {
+			_ = os.Remove(temporaryPath)
+			return closeErr
+		}
+		if err := os.Rename(temporaryPath, metadata.Target); err != nil {
+			_ = os.Remove(temporaryPath)
+			return fmt.Errorf("install replacement profile: %w", err)
+		}
+		if err := os.Remove(dataPath); err != nil {
+			return err
+		}
+		if err := os.Remove(metadataPath); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateModFolder(folder string) error {
@@ -1318,6 +1600,9 @@ func waitFor7DTDState(ctx context.Context, active bool, timeout time.Duration) e
 }
 
 func (a *Adapter) Start(ctx context.Context, cfg *agent.InstanceConfig) error {
+	if err := applyStagedPlayerProfiles(cfg.ServerInstanceID); err != nil {
+		return fmt.Errorf("apply staged player profiles before start: %w", err)
+	}
 	if cfg.StartCommand != "" {
 		parts := strings.Fields(cfg.StartCommand)
 		if len(parts) == 0 {

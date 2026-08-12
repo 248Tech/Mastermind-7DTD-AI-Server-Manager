@@ -58,41 +58,43 @@
 
 ---
 
-## Release 0.0.8 (August 11, 2026)
+## Release 0.0.9 (August 12, 2026)
 
 ### Highlights
 
-- Optional downloadable Discord bot with `/start`, `/stop`, `/reboot`, and `/safereboot`, completion replies, dedicated Mastermind accountability, and Discord role/user authorization.
-- Built-in mod configuration discovery and a constrained text editor with traversal, symlink, extension, and size protections.
-- Safe Restart jobs deferred by Blood Moon protection now visibly return to Queued and resume when the next game day starts.
-- More reliable Discord chat delivery with persisted retry records, replay deduplication, and concurrent interactive RCON while long jobs wait.
-- Disconnect alerts include session playtime, and chat ingestion survives independent player-parser failures.
-- Frigate is deprecated in the current product UI while its backend and stored configuration remain intact for compatibility.
+- Authenticated live map with official terrain tiles, live players/animals/hostiles, land claims, player tracking, selectable trail colors, and a 72-hour history timeline.
+- Integrated 7D2D Profile Editor with server profile discovery, staged edits, timestamped originals, and safe installation during the next managed start.
+- Administrator-managed organization accounts for staff and service users, including protected account deletion.
+- Original, dark, and light UI themes plus a grouped, scrollable, responsive sidebar.
+- Server-authored `say` messages now appear in Mastermind chat without being echoed into the player-only Discord relay.
+- Expanded beginner-first Discord bot setup with exact file locations, purpose explanations, and account creation from the Accounts page.
 
 ---
 
-## Current features (v0.0.8)
+## Current features (v0.0.9)
 
 ### Implemented end-to-end
 
-- **Authentication and organizations:** register/login, JWT sessions, organization membership and roles, protected pairing-token creation, agent-key rotation, and password changes using salted scrypt with legacy-hash migration.
+- **Authentication and organizations:** register/login, JWT sessions, organization membership and roles, admin-created operator/viewer accounts, protected account deletion, protected pairing-token creation, agent-key rotation, and password changes using salted scrypt with legacy-hash migration.
 - **Host agents:** one-time pairing, persistent agent identity, heartbeat and inventory reporting, long-poll job execution, same-host Linux 7DTD autodiscovery, and automatic server registration.
 - **Server-first dashboard:** registered servers are primary; each server opens a management view with overview, controls, console, and server-filtered job history.
 - **7DTD controls:** start, graceful stop, verified restart, safe restart with countdown/save/backup/kick verification, emergency process kill, telnet console commands, and a confirmed save wipe that safely stops or escalates a hung server before deleting only the configured save and verifying fresh-world creation.
 - **Blood Moon safety:** an optional organization setting defers restart jobs on in-game days divisible by 7 until the next game day begins.
 - **Jobs and accountability:** queue-backed start/stop/restart/safe-restart/kill/RCON/custom jobs, result/output tracking, schedule and batch support, per-server filtering, initiating-account attribution, and serialized mutations with concurrent read-only inventory jobs.
 - **Logs and console:** agent log tailing, database persistence, incremental live viewing, optional auto-scroll, selectable retention, keyword alert definitions, match history, and an audited telnet command box.
-- **Chat:** player-only chat extraction, stored history, per-server Discord webhook relay with mention suppression, and operator replies automatically sent as server `say` messages.
+- **Chat:** player and server-authored chat extraction, stored history, player-only per-server Discord webhook relay with mention suppression, and operator replies automatically sent as server `say` messages.
 - **Health:** host-scoped CPU, RAM, disk, agent latency, and real 7DTD reachability samples with current values, historical averages, and configurable polling intervals.
 - **Players:** authoritative `lp` polling every 60 seconds by default, reconciled Steam/EOS identity capture, online state, current/lifetime playtime, last seen, kick/ban/kick-all actions, post-kick verification, and XML-backed administrator status with promote/demote controls.
 - **Mods:** fast active/quarantined inventories, `ModInfo.xml` name/version/author/website parsing, activation timestamps, sortable columns, single/bulk selection, quarantine, permission-safe restore, constrained permanent deletion, and safe discovery/editing of supported mod configuration files.
 - **RegionHealer:** status information plus start/stop jobs for a separately installed RegionHealer-v2 service.
+- **7D2D Profile Editor:** isolated integration of RussDev7's GPL-3.0 TTP Profile Editor with server profile discovery, staged live edits, timestamped original `.ttp`/`.ttp.bak` archives plus audit metadata, atomic installation on the next Mastermind-managed start/restart, and visible/backend attribution.
+- **Live server map:** authenticated official terrain map with live players, animals, hostiles, coordinates, game time, region grid, owned land-claim blocks and protection areas, selectable player tracking and trail colors, plus selectable 5-minute through 72-hour browser-local history. The 7DTD dashboard and telnet ports remain private.
 - **Saves:** combined full-world and RegionHealer snapshot inventory, timestamp/game-day metadata, manual full backup, confirmed server-off restore/delete, full-backup retention, and scheduled backups from every 15 minutes through daily.
 - **Schedules:** safe scheduled restarts, a simple day/hour/minute builder, advanced five-field cron entry, and automatic full-world backup intervals.
 - **Alerts and integrations:** Discord alerts, per-rule pipeline testing, deduplicated player connection/disconnection events with session duration, durable player-chat delivery/retries, log-keyword alerts, and server/agent events.
 - **Discord command bot:** optional downloadable slash-command bridge for start, stop, restart, and Safe Restart with completion/failure replies, dedicated-account job attribution, and Discord role/user allowlists.
 - **Host and instance registry:** role-protected rename and unregister operations with clear confirmation that unregistering does not delete game files.
-- **Responsive UI:** server-first overview, customizable Quick Access cards, full desktop, half-window compact navigation, mobile drawer, safe table overflow, custom Mastermind logo, and favicon.
+- **Responsive UI:** server-first overview, customizable Quick Access cards, grouped scrollable navigation, full desktop, half-window compact navigation, mobile drawer, safe table overflow, Original/Dark/Light themes, custom Mastermind logo, and favicon.
 - **Game adapters:** 7 Days to Die is fully managed; Minecraft adapter and capability registry remain available for expansion.
 
 Frigate integration is currently deprecated and hidden from the Settings and new-alert interfaces. Its backend and stored configuration remain intact for compatibility and possible future reactivation.

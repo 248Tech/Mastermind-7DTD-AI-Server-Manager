@@ -1,68 +1,161 @@
-# Mastermind Discord Bot — Easy Setup
+# Mastermind Discord Bot — Beginner Setup
 
-This bot lets approved Discord members control your 7 Days to Die server:
+This bot puts four Mastermind controls into Discord:
 
-- `/start` — start the server
-- `/stop` — safely stop the server
-- `/reboot` — restart the server
-- `/safereboot` — warn players, save, back up, kick everyone, then restart
+- `/start` starts the 7 Days to Die server.
+- `/stop` safely stops it.
+- `/reboot` restarts it immediately.
+- `/safereboot` warns players, saves and backs up the world, kicks players, and restarts.
 
-The bot replies when Mastermind finishes or if the action fails.
+The bot waits for Mastermind and tells you whether the job succeeded. Allow about 20 minutes for setup.
 
-## Before you begin
+## What you need
 
-You need:
+- A Discord account.
+- A Discord server you own or are allowed to manage. A Discord “server” is simply a private group/community inside Discord.
+- A Mastermind login allowed to control the game server.
+- The downloaded bot ZIP.
+- For the easiest Windows setup, Node.js LTS. Docker is optional.
 
-- permission to create a Discord bot;
-- a Mastermind login that can control the server;
-- Docker, or Node.js 20 or newer.
+An **ID** is only a long number Discord uses to identify a server, role, or person. A **token** is the bot's secret password.
 
-## Part 1: Create the Discord bot
+## Before copying values: make one temporary notes file
 
-1. Visit <https://discord.com/developers/applications>.
-2. Click **New Application**, enter `Mastermind`, then click **Create**.
-3. On **General Information**, copy **Application ID**. This is your `DISCORD_CLIENT_ID`.
-4. Click **Bot** in the left menu.
-5. Click **Reset Token**, confirm, then copy the token. This is `DISCORD_TOKEN`.
-6. Keep the token secret. Anyone with it can control the bot.
+Several steps ask you to copy long values. They will eventually go into the bot's `.env` configuration file, but that file is inside the download you may not have opened yet.
 
-## Part 2: Invite it to your Discord server
+1. Open Notepad.
+2. Choose **File → Save As**.
+3. Open your **Documents** folder.
+4. Name the file `Mastermind Bot Setup Notes.txt` and click **Save**.
+5. Keep this file open while following the guide.
 
-1. In the Developer Portal, open **OAuth2 → URL Generator**.
-2. Check `bot` and `applications.commands`.
-3. Under bot permissions, check **Send Messages** and **Use Application Commands**.
-4. Open the generated URL and choose your Discord server.
+When an instruction gives you a label such as `DISCORD_CLIENT_ID=`, type that label on a new line and paste the copied value after the equals sign. The label tells you which line the value belongs on later. Delete this temporary notes file after the bot works because it will contain passwords.
 
-## Part 3: Copy your server and role IDs
+## 1. Make a Discord server
 
-1. In Discord, open **User Settings → Advanced**.
-2. Turn on **Developer Mode**.
-3. Right-click your Discord server and choose **Copy Server ID**. This is `DISCORD_GUILD_ID`.
-4. To choose who can run commands, right-click an allowed role and choose **Copy Role ID**.
-5. Put multiple allowed role IDs on one line separated by commas:
+Skip this section if you already own or manage one.
+
+1. Open Discord.
+2. Click the **+** button on the far-left server list.
+3. Choose **Create My Own**.
+4. Choose **For me and my friends**.
+5. Give it any name and click **Create**.
+
+## 2. Create the bot
+
+1. Open <https://discord.com/developers/applications> and sign in.
+2. Click **New Application**.
+3. Enter `Mastermind`, accept Discord's terms, and click **Create**.
+4. The **General Information** page opens. Find **Application ID** and click **Copy**. In `Mastermind Bot Setup Notes.txt`, add `DISCORD_CLIENT_ID=` and paste the number after the equals sign.
+5. Click **Bot** in the left menu.
+6. Under Token, click **Reset Token**, approve the prompt, and click **Copy**.
+7. In the same notes file, add `DISCORD_TOKEN=` and paste the token after the equals sign.
+
+Never send the token to anyone. If it is exposed, return to this page and reset it again.
+
+## 3. Invite the bot to your Discord server
+
+1. In the Developer Portal, click **OAuth2**, then **URL Generator**.
+2. Under **Scopes**, check `bot` and `applications.commands`.
+3. A **Bot Permissions** section appears. Check **Send Messages** and **Use Application Commands**.
+4. Scroll to the generated URL, click **Copy**, and open it in your browser.
+5. Select your Discord server, click **Continue**, then **Authorize**.
+6. The bot may appear offline. That is normal until you start its program later.
+
+## 4. Copy the Discord IDs
+
+1. In the Discord desktop app, click the gear beside your name.
+2. Click **Advanced** and turn on **Developer Mode**.
+3. Close Settings.
+4. Right-click your Discord server icon and choose **Copy Server ID**. In the notes file, add `DISCORD_GUILD_ID=` and paste the number after it. This tells the bot which Discord server should receive the commands.
+5. For the simplest safe setup, right-click your own name and choose **Copy User ID**. Add `DISCORD_ALLOWED_USER_IDS=` to the notes and paste the number after it. This allows only you to run commands.
+
+Later, you can allow a staff role instead: open **Server Settings → Roles**, right-click the role, and choose **Copy Role ID**. Put that number in `DISCORD_ALLOWED_ROLE_IDS`. Separate multiple IDs with commas and no spaces.
+
+## 5. Give the bot a Mastermind login
+
+### Why this is needed
+
+Discord cannot control the game server by itself. When someone uses `/start`, the Discord bot must sign into Mastermind and ask Mastermind to start the server. Giving the bot its own login also makes the Mastermind Jobs page identify commands that came from Discord.
+
+### Create the login without signing out
+
+1. In Mastermind's left menu, click **Accounts**.
+2. Find the **Create account** box.
+3. In **Display name**, enter `Discord Bot`.
+4. In **Email used to sign in**, enter a unique email-style login you will recognize. It must be different from every existing Mastermind account.
+5. Enter a password containing at least 12 characters in both password boxes.
+6. For **Access level**, select **Operator — can control servers**.
+7. Click **Create account**. A green confirmation message appears and the new account is added to the table below.
+
+You remain signed into your normal administrator account. The bot account is automatically connected to the same organization and Operator gives it the normal controls needed for `/start`, `/stop`, `/reboot`, and `/safereboot`.
+
+### Record the three Mastermind settings
+
+1. In `Mastermind Bot Setup Notes.txt`, add `MASTERMIND_EMAIL=` followed by the email-style login you just created.
+2. Add `MASTERMIND_PASSWORD=` followed by its password. Mastermind does not display this password again.
+3. In Mastermind's left menu, click **Settings**.
+4. At the top of Settings, find the **Organization** box and its **Org ID** row.
+5. Add `MASTERMIND_ORG_ID=` to the notes and paste the displayed Org ID after it. This tells the bot which group of servers it may control.
+6. If Mastermind has only one registered 7DTD server, add `MASTERMIND_SERVER_ID=` and leave the rest of the line empty. The bot selects that server automatically.
+
+## 6. Fill in the configuration file
+
+1. Right-click the downloaded ZIP and choose **Extract All**.
+2. Open the extracted folder.
+3. In File Explorer, enable **View → Show → File name extensions**.
+4. Rename `.env.example` to `.env`. Make sure Windows did not name it `.env.txt`.
+5. Right-click `.env`, choose **Open with**, and select Notepad.
+6. The `.env` file is the real configuration file that the bot reads whenever it starts. Copy each complete line from `Mastermind Bot Setup Notes.txt` over the matching line in `.env`. Do not add spaces around `=` and do not add quotation marks.
+7. Save `.env`. Keep this file in the extracted bot folder because the bot needs it each time it starts.
+8. After the bot passes the test later in this guide, delete `Mastermind Bot Setup Notes.txt` from Documents. It was only temporary and contains sensitive values.
+
+Example with fake values:
 
 ```env
-DISCORD_ALLOWED_ROLE_IDS=111111111111111111,222222222222222222
+DISCORD_TOKEN=fake.secret.bot-token
+DISCORD_CLIENT_ID=123456789012345678
+DISCORD_GUILD_ID=234567890123456789
+DISCORD_ALLOWED_ROLE_IDS=
+DISCORD_ALLOWED_USER_IDS=345678901234567890
+DISCORD_EPHEMERAL_REPLIES=true
+MASTERMIND_URL=http://127.0.0.1:3001
+MASTERMIND_EMAIL=discord-bot@example.com
+MASTERMIND_PASSWORD=replace-this-with-your-password
+MASTERMIND_ORG_ID=replace-this-with-the-org-id
+MASTERMIND_SERVER_ID=
+JOB_TIMEOUT_SECONDS=600
 ```
 
-When this line contains role IDs, members without one of those roles are denied. You can also allow specific people with `DISCORD_ALLOWED_USER_IDS`.
+Use `MASTERMIND_URL=http://127.0.0.1:3001` when the standalone bot runs on the same computer as Mastermind. If it runs elsewhere, use the Mastermind API address reachable from that computer.
 
-## Part 4: Connect it to Mastermind
+## 7. Start it on Windows
 
-Use a dedicated Mastermind operator account if possible. Its name will appear on the Jobs page for every Discord action.
+1. Download and install **Node.js LTS** from <https://nodejs.org/en/download>. Accept the normal installer defaults.
+2. Open the extracted bot folder in File Explorer.
+3. Click the address bar, type `powershell`, and press Enter. PowerShell opens in the correct folder.
+4. Paste this command and press Enter:
 
-1. Copy `.env.example` to a new file named `.env`.
-2. Open `.env` in a text editor.
-3. Fill in the Discord values from Parts 1–3.
-4. Set `MASTERMIND_EMAIL` and `MASTERMIND_PASSWORD` to the bot’s Mastermind login.
-5. Set `MASTERMIND_ORG_ID` to the ID shown on Mastermind’s Settings page.
-6. Leave `MASTERMIND_SERVER_ID` blank if you have one 7DTD server.
+```powershell
+npm install --omit=dev
+```
 
-Do not add quotes unless the value itself contains spaces.
+5. After it finishes, paste this command and press Enter:
 
-## Part 5: Start the bot
+```powershell
+Get-Content .env | ForEach-Object { if ($_ -match '^([^#=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }; npm start
+```
 
-### Docker Compose
+6. Leave the PowerShell window open. A message saying the bot logged in means it is running. Closing the window stops the bot.
+
+## 8. Test it
+
+1. Return to your Discord server.
+2. Type `/start` and select the Mastermind command.
+3. Discord should first show that Mastermind is working, then show success or failure.
+4. Use `/safereboot` only when you truly want to restart the game server.
+
+## Docker setup (advanced alternative)
 
 From the Mastermind repository:
 
@@ -71,32 +164,22 @@ docker compose --env-file discord-bot/.env -f infra/docker-compose.yml --profile
 docker compose -f infra/docker-compose.yml logs -f discord-bot
 ```
 
-### Standalone Node.js
+When using Compose, set `MASTERMIND_URL=http://control-plane:3001`.
 
-From the extracted `discord-bot` folder:
+## Common problems
 
-```sh
-npm install --omit=dev
-```
+- **Commands do not appear:** check `DISCORD_CLIENT_ID` and `DISCORD_GUILD_ID`, then stop and restart the bot. Also confirm the invite included `applications.commands`.
+- **Bot looks offline:** its PowerShell window or container is not running, or `DISCORD_TOKEN` is wrong.
+- **You are denied:** confirm your User ID is in `DISCORD_ALLOWED_USER_IDS`, or your role ID is in `DISCORD_ALLOWED_ROLE_IDS`.
+- **Mastermind login failed:** sign into the Mastermind website using the same email/password. Correct `.env`, then restart the bot.
+- **No server was found:** confirm the 7DTD server appears in Mastermind. If several exist, put the intended instance ID in `MASTERMIND_SERVER_ID`.
+- **PowerShell says `npm` is unknown:** install Node.js LTS, close PowerShell, then open a new PowerShell window.
+- **`.env` values seem ignored:** confirm the file is named exactly `.env`, not `.env.txt`, and restart the bot after every edit.
 
-Load the values from `.env` using your operating system or secret manager, then run:
-
-```sh
-npm start
-```
-
-## Test it
-
-1. Return to your Discord server.
-2. Type `/start` and select the Mastermind command.
-3. The bot should first say it is waiting for Mastermind.
-4. The same message will change to success or failure when the job finishes.
-
-If commands do not appear, confirm `DISCORD_CLIENT_ID` and `DISCORD_GUILD_ID`, then restart the bot.
-
-## Security
+## Safety
 
 - Never post or commit `.env`.
 - Never share `DISCORD_TOKEN` or the Mastermind password.
-- If the Discord token is exposed, reset it in **Developer Portal → Bot**.
-- Use `DISCORD_ALLOWED_ROLE_IDS` so only trusted staff can control the server.
+- Restrict commands with allowed user or role IDs.
+- Use a dedicated Mastermind bot account when possible.
+- If the Discord token is exposed, reset it immediately in **Developer Portal → Bot** and update `.env`.

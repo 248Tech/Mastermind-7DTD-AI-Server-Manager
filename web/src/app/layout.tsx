@@ -4,20 +4,31 @@ import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { isLoggedIn, clearAuth } from '../lib/auth';
 
-const NAV = [
-  { href: '/dashboard', label: 'Dashboard', icon: '◈', title: 'Overview of all your servers and recent activity' },
-  { href: '/health', label: 'Health', icon: '♥', title: 'Server health, latency, CPU, and memory' },
-  { href: '/players', label: 'Players', icon: '♟', title: 'Player identities, playtime, kick, and ban controls' },
-  { href: '/mods', label: 'Mods', icon: '◇', title: 'Installed server mods and removal controls' },
-  { href: '/saves', label: 'Saves', icon: '▣', title: 'Back up, restore, and manage world saves' },
-  { href: '/hosts', label: 'Hosts', icon: '⬡', title: 'Machines running the agent + game server processes on them' },
-  { href: '/jobs', label: 'Jobs', icon: '⚡', title: 'Send one-off commands to your servers (restart, backup, etc.)' },
-  { href: '/logs', label: 'Logs', icon: '≡', title: 'Live and recorded server logs' },
-  { href: '/chat', label: 'Chat', icon: '💬', title: 'Player-only chat history and Discord relay' },
-  { href: '/region-healer', label: 'Region Healer', icon: '✚', title: 'Automatic corrupt-region recovery' },
-  { href: '/schedules', label: 'Schedules', icon: '◷', title: 'Run jobs automatically on a cron schedule' },
-  { href: '/alerts', label: 'Alerts', icon: '◎', title: 'Get notified via Discord when servers go offline' },
-  { href: '/settings', label: 'Settings', icon: '⚙', title: 'Organisation info and account settings' },
+const NAV_GROUPS = [
+  { label: 'Overview', items: [
+    { href: '/dashboard', label: 'Dashboard', icon: '◈', title: 'Overview of all your servers and recent activity' },
+    { href: '/health', label: 'Health', icon: '♥', title: 'Server health, latency, CPU, and memory' },
+  ]},
+  { label: 'Server', items: [
+    { href: '/players', label: 'Players', icon: '♟', title: 'Player identities, playtime, kick, and ban controls' },
+    { href: '/mods', label: 'Mods', icon: '◇', title: 'Installed server mods and removal controls' },
+    { href: '/saves', label: 'Saves', icon: '▣', title: 'Back up, restore, and manage world saves' },
+    { href: '/logs', label: 'Logs', icon: '≡', title: 'Live and recorded server logs' },
+    { href: '/chat', label: 'Chat', icon: '💬', title: 'Player-only chat history and Discord relay' },
+    { href: '/region-healer', label: 'Region Healer', icon: '✚', title: 'Automatic corrupt-region recovery' },
+    { href: '/profile-editor', label: 'Profile Editor', icon: '✎', title: 'Inspect and edit downloaded 7DTD player profile files' },
+    { href: '/live-map', label: 'Live Map', icon: '⌖', title: 'Live terrain, players, entities, and region coordinates' },
+  ]},
+  { label: 'Automation', items: [
+    { href: '/jobs', label: 'Jobs', icon: '⚡', title: 'Send one-off commands to your servers' },
+    { href: '/schedules', label: 'Schedules', icon: '◷', title: 'Run jobs automatically on a schedule' },
+    { href: '/alerts', label: 'Alerts', icon: '◎', title: 'Get notified via Discord when servers go offline' },
+  ]},
+  { label: 'System', items: [
+    { href: '/hosts', label: 'Hosts', icon: '⬡', title: 'Machines running the agent and game servers' },
+    { href: '/accounts', label: 'Accounts', icon: '♙', title: 'Create and view Mastermind organization accounts' },
+    { href: '/settings', label: 'Settings', icon: '⚙', title: 'Organisation info and account settings' },
+  ]},
 ];
 
 const PUBLIC = ['/', '/login'];
@@ -28,6 +39,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const [ready, setReady] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
+  useEffect(() => {
+    const applyTheme=()=>{
+      const saved=localStorage.getItem('mm_ui_theme');
+      document.documentElement.dataset.theme=saved==='light'||saved==='dark'?saved:'original';
+    };
+    applyTheme();
+    window.addEventListener('mastermind-theme-change',applyTheme);
+    return()=>window.removeEventListener('mastermind-theme-change',applyTheme);
+  }, []);
   useEffect(() => {
     if (!PUBLIC.includes(pathname) && !isLoggedIn()) {
       router.replace('/login');
@@ -79,10 +99,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
 
             {/* Nav items */}
-            <div style={{ padding: '0.75rem 0.75rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              {NAV.map((n) => {
-                const active = pathname.startsWith(n.href);
-                return (
+            <div className="nav-scroll" style={{ padding: '0.6rem 0.75rem', flex: 1, overflowY:'auto', overscrollBehavior:'contain' }}>
+              {NAV_GROUPS.map((group) => <div className="nav-group" key={group.label}>
+                <div className="nav-section-label">{group.label}</div>
+                {group.items.map((n) => {
+                  const active = pathname.startsWith(n.href);
+                  return (
                   <a
                     key={n.href}
                     href={n.href}
@@ -91,7 +113,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                       display: 'flex',
                       alignItems: 'center',
                       gap: '0.625rem',
-                      padding: '0.5rem 0.75rem',
+                      padding: '0.43rem 0.75rem',
                       borderRadius: 6,
                       textDecoration: 'none',
                       fontSize: '0.875rem',
@@ -105,12 +127,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     <span style={{ fontSize: '0.875rem', width: 18, textAlign: 'center', opacity: active ? 1 : 0.6 }}>{n.icon}</span>
                     <span className="nav-label">{n.label}</span>
                   </a>
-                );
-              })}
+                  );
+                })}
+              </div>)}
             </div>
 
             {/* Setup Guide */}
-            <div className="nav-setup" style={{ padding: '0 0.75rem 0.5rem' }}>
+            <div className="nav-setup" style={{ padding: '0.5rem 0.75rem', borderTop:'1px solid #1e1e2a', flexShrink:0 }}>
               <a
                 href="/hosts"
                 onClick={() => localStorage.setItem('mm_tutorial_open', '1')}
@@ -127,7 +150,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
 
             {/* Logout */}
-            <div style={{ padding: '0.75rem', borderTop: '1px solid #1e1e2a' }}>
+            <div style={{ padding: '0 0.75rem 0.75rem', flexShrink:0 }}>
               <button
                 onClick={handleLogout}
                 style={{

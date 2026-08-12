@@ -75,8 +75,22 @@ services:
       - "${WEB_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
+      PROFILE_EDITOR_INTERNAL_URL: http://profile-editor:8000
+      CONTROL_PLANE_INTERNAL_URL: http://control-plane:3001
+      SEVENDTD_WEB_URL: http://host.docker.internal:8080
+      SEVENDTD_WEB_API_TOKEN_NAME: ${SEVENDTD_WEB_API_TOKEN_NAME:-mastermind}
+      SEVENDTD_WEB_API_SECRET: ${SEVENDTD_WEB_API_SECRET:-}
+      SEVENDTD_TELNET_HOST: host.docker.internal
+      SEVENDTD_TELNET_PORT: 18081
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /opt/7dtd/userdata/Saves/Rotterdam/Builder/map:/7dtd-map:ro
+      - /opt/7dtd/userdata/Saves/Rotterdam/Builder:/7dtd-save:ro
     depends_on:
       control-plane:
+        condition: service_healthy
+      profile-editor:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000"]
@@ -84,6 +98,29 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  # Makes host-loopback-only 7DTD telnet reachable solely through Docker's
+  # bridge address. Port 18081 is not bound to a LAN or public interface.
+  telnet-relay:
+    image: alpine/socat:1.8.0.3
+    network_mode: host
+    restart: unless-stopped
+    command: ["TCP-LISTEN:18081,bind=172.17.0.1,reuseaddr,fork", "TCP:127.0.0.1:8081"]
+
+  profile-editor:
+    build:
+      context: ../integrations/7d2d-profile-editor
+      args:
+        UPSTREAM_COMMIT: 270f998adf70f3724afd93ba0e08569e3ba78c95
+    restart: unless-stopped
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "php", "-r", "$$s=@fsockopen('127.0.0.1',8000); exit($$s?0:1);"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
   discord-bot:
     profiles: ["discord-bot"]

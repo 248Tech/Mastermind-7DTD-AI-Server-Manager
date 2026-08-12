@@ -18,7 +18,7 @@ function hashPassword(password: string, salt: string): string {
   return createHash('sha256').update(salt + password).digest('hex');
 }
 
-function makePasswordHash(password: string): string {
+export function makePasswordHash(password: string): string {
   const salt = generateSalt();
   const hash = scryptSync(password, salt, 64).toString('hex');
   return `scrypt$${salt}$${hash}`;

@@ -66,6 +66,7 @@ export default function SettingsPage() {
   const [restartGuardSaving, setRestartGuardSaving] = useState(false);
   const [restartGuardMessage, setRestartGuardMessage] = useState('');
   const [discordBotCopied, setDiscordBotCopied] = useState(false);
+  const [uiTheme, setUiTheme] = useState<'original'|'dark'|'light'>('original');
 
   const discordBotEnvironment = `DISCORD_TOKEN=<Bot token from Discord Developer Portal>
 DISCORD_CLIENT_ID=<Discord Application ID>
@@ -79,6 +80,18 @@ MASTERMIND_PASSWORD=<Dedicated Mastermind operator password>
 MASTERMIND_ORG_ID=${orgId || '<Mastermind organization ID>'}
 MASTERMIND_SERVER_ID=<Optional; blank auto-detects the first 7DTD server>
 JOB_TIMEOUT_SECONDS=600`;
+
+  useEffect(() => {
+    const saved=localStorage.getItem('mm_ui_theme');
+    if(saved==='dark'||saved==='light'||saved==='original')setUiTheme(saved);
+  }, []);
+
+  function applyUiTheme(theme:'original'|'dark'|'light') {
+    setUiTheme(theme);
+    localStorage.setItem('mm_ui_theme',theme);
+    document.documentElement.dataset.theme=theme;
+    window.dispatchEvent(new Event('mastermind-theme-change'));
+  }
 
   useEffect(() => {
     if (!orgId) return;
@@ -160,6 +173,19 @@ JOB_TIMEOUT_SECONDS=600`;
         )}
       </div>
 
+      {/* Appearance */}
+      <div style={card}>
+        <h2 style={{margin:'0 0 .375rem',fontSize:'1rem',fontWeight:600,color:'#f1f5f9'}}>Appearance</h2>
+        <p style={{margin:'0 0 1rem',fontSize:'.8rem',color:'#64748b'}}>Choose how Mastermind looks on this browser. The setting applies immediately and does not affect other users.</p>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:10}}>
+          {([
+            ['original','Original UI','Purple-black Mastermind colors','#111118','#6366f1'],
+            ['dark','Dark UI','Neutral charcoal and slate','#0f172a','#38bdf8'],
+            ['light','Light UI','Bright panels and dark text','#f8fafc','#2563eb'],
+          ] as const).map(([value,title,description,background,accent])=><button key={value} type="button" onClick={()=>applyUiTheme(value)} aria-pressed={uiTheme===value} style={{textAlign:'left',padding:12,borderRadius:8,cursor:'pointer',background,border:`2px solid ${uiTheme===value?accent:'#334155'}`,color:value==='light'?'#0f172a':'#f1f5f9',boxShadow:uiTheme===value?`0 0 0 2px ${accent}33`:'none'}}><span style={{display:'block',fontWeight:700,marginBottom:4}}>{title}{uiTheme===value?' ✓':''}</span><span style={{display:'block',fontSize:'.72rem',opacity:.75}}>{description}</span><span style={{display:'flex',gap:4,marginTop:9}}><i style={{width:20,height:8,borderRadius:4,background:accent}}/><i style={{width:20,height:8,borderRadius:4,background:value==='light'?'#cbd5e1':'#334155'}}/></span></button>)}
+        </div>
+      </div>
+
       <div style={card}>
         <h2 style={{ margin: '0 0 0.375rem', fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>7DTD Restart Protection</h2>
         <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748b' }}>
@@ -221,15 +247,19 @@ JOB_TIMEOUT_SECONDS=600`;
           ].map(([name,description])=><tr key={name}><td style={{padding:'.55rem',borderBottom:'1px solid #1e1e2a',color:'#818cf8',fontFamily:'monospace',whiteSpace:'nowrap'}}>{name}</td><td style={{padding:'.55rem',borderBottom:'1px solid #1e1e2a',color:'#94a3b8'}}>{description}</td></tr>)}
         </tbody></table></div>
 
-        <h3 style={{color:'#e2e8f0',fontSize:'.9rem',margin:'1.25rem 0 .5rem'}}>Quick setup</h3>
-        <ol style={{color:'#94a3b8',fontSize:'.82rem',lineHeight:1.65,paddingLeft:'1.25rem'}}>
-          <li><strong>Create:</strong> Open the <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer" style={{color:'#818cf8'}}>Discord Developer Portal</a>, click <strong>New Application</strong>, and name it Mastermind.</li>
-          <li><strong>Copy:</strong> Copy <strong>Application ID</strong> from General Information. Then open Bot → Reset Token and copy the secret token.</li>
-          <li><strong>Invite:</strong> Open OAuth2 → URL Generator. Check <code>bot</code> and <code>applications.commands</code>, then allow Send Messages and Use Application Commands.</li>
-          <li><strong>Choose staff:</strong> Enable Discord Developer Mode. Right-click your server to copy its ID, then right-click each trusted staff role to copy its role ID.</li>
-          <li><strong>Connect:</strong> Extract the download, rename <code>.env.example</code> to <code>.env</code>, and replace the bracketed values in the configuration below.</li>
-          <li><strong>Start and test:</strong> Follow the included Docker or Node instructions, then type <code>/start</code> in Discord.</li>
-        </ol>
+        <h3 style={{color:'#e2e8f0',fontSize:'.9rem',margin:'1.25rem 0 .5rem'}}>Setup for first-time users</h3>
+        <p style={{color:'#94a3b8',fontSize:'.82rem',lineHeight:1.6}}>Allow about 20 minutes. You need a Discord account, a Discord server you own or manage, and the ability to install Node.js on the computer that runs Mastermind. An ID is only a long number that Discord uses to identify a server, role, or person.</p>
+        <div style={{background:'#0a0a12',border:'1px solid #252532',borderRadius:7,padding:'.75rem .85rem',marginBottom:8,color:'#cbd5e1',fontSize:'.8rem',lineHeight:1.55}}><strong>Before copying anything:</strong> Open Notepad and create a temporary file named <code>Mastermind Bot Setup Notes.txt</code> in your Documents folder. Each instruction below tells you which label to put before a copied value. These labels match the lines in the bot&apos;s <code>.env</code> configuration file. The notes prevent values from being lost while moving between Discord and Mastermind. Delete this temporary notes file after the bot works because it contains passwords.</div>
+        {[
+          ['1. Make a Discord server (skip if you already have one)',<ol key="server"><li>Open Discord and click the <strong>+</strong> button on the far-left server list.</li><li>Choose <strong>Create My Own</strong>, then <strong>For me and my friends</strong>.</li><li>Name it anything you like. You are now its owner.</li></ol>],
+          ['2. Create the bot',<ol key="create"><li>Open the <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer" style={{color:'#818cf8'}}>Discord Developer Portal</a> and sign in with Discord.</li><li>Click <strong>New Application</strong>, enter <code>Mastermind</code>, accept the terms, and click <strong>Create</strong>.</li><li>On <strong>General Information</strong>, copy <strong>Application ID</strong>. In your temporary setup-notes file, add a new line containing <code>DISCORD_CLIENT_ID=</code> and paste the number after the equals sign.</li><li>Click <strong>Bot</strong> on the left, then <strong>Reset Token</strong>. Copy the token. Add a line containing <code>DISCORD_TOKEN=</code> to the same notes file and paste the token after it. Treat this file like a password.</li></ol>],
+          ['3. Invite the bot',<ol key="invite"><li>In the Developer Portal, click <strong>OAuth2</strong>, then <strong>URL Generator</strong>.</li><li>Under Scopes, check <code>bot</code> and <code>applications.commands</code>.</li><li>Under Bot Permissions, check <strong>Send Messages</strong> and <strong>Use Application Commands</strong>.</li><li>Copy the generated URL at the bottom, open it in a browser, select your Discord server, and click <strong>Authorize</strong>.</li></ol>],
+          ['4. Copy your Discord server ID',<ol key="ids"><li>In the Discord desktop app, click the gear beside your name.</li><li>Open <strong>Advanced</strong> and turn on <strong>Developer Mode</strong>.</li><li>Close Settings, right-click your server icon, and click <strong>Copy Server ID</strong>. In the same setup-notes file, add <code>DISCORD_GUILD_ID=</code> and paste the number after it.</li><li>For the simplest safe setup, right-click your own name and click <strong>Copy User ID</strong>. Add <code>DISCORD_ALLOWED_USER_IDS=</code> to the notes and paste the number after it. This setting allows only you to use the bot.</li></ol>],
+          ['5. Create the bot’s Mastermind account',<ol key="mastermind"><li><strong>Why:</strong> The Discord bot signs into Mastermind to perform commands. Its own account makes Discord actions easy to identify on the Jobs page.</li><li>Open <a href="/accounts" style={{color:'#818cf8'}}><strong>Accounts</strong></a> from Mastermind&apos;s left menu and find <strong>Create account</strong>.</li><li>Enter <code>Discord Bot</code> for the display name. Enter a unique email-style login and create a password containing at least 12 characters.</li><li>For Access level, select <strong>Operator — can control servers</strong>, then click <strong>Create account</strong>.</li><li>In your setup notes, add <code>MASTERMIND_EMAIL=</code> and <code>MASTERMIND_PASSWORD=</code> using the login you just created.</li><li>Return to <strong>Settings</strong>. In the Organization box at the top, copy <strong>Org ID</strong>. Add <code>MASTERMIND_ORG_ID=</code> and paste it after the equals sign.</li><li>Add <code>MASTERMIND_SERVER_ID=</code> and leave it empty if you have only one 7DTD server. The bot selects that server automatically.</li></ol>],
+          ['6. Download and fill in the real configuration file',<ol key="file"><li>Click <strong>Download bot v0.1.0</strong> above. Right-click the ZIP in Downloads, choose <strong>Extract All</strong>, then open the extracted folder.</li><li>In File Explorer, enable <strong>View → Show → File name extensions</strong>.</li><li>Rename <code>.env.example</code> to <code>.env</code>. Confirm the name change, then open it with Notepad. This <code>.env</code> file is where the bot actually reads its settings when it starts.</li><li>Copy the values from your temporary setup-notes file into the matching lines in <code>.env</code>. Do not add spaces around <code>=</code>. Save <code>.env</code>.</li><li>After the bot passes the test in step 8, delete <code>Mastermind Bot Setup Notes.txt</code>. Keep <code>.env</code>; the bot needs it each time it starts.</li></ol>],
+          ['7. Start it on Windows',<ol key="start"><li>Install <a href="https://nodejs.org/en/download" target="_blank" rel="noreferrer" style={{color:'#818cf8'}}>Node.js LTS</a> using the normal Windows installer and its default choices.</li><li>Open the extracted bot folder. Click the File Explorer address bar, type <code>powershell</code>, and press Enter.</li><li>Run <code>npm install --omit=dev</code>. Wait until it finishes.</li><li>Run <code>Get-Content .env | ForEach-Object {'{'} if ($_ -match '^([^#=]+)=(.*)$') {'{'} [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') {'}'} {'}'}; npm start</code>.</li><li>Leave that PowerShell window open. A message saying the bot logged in means it is running.</li></ol>],
+          ['8. Test it',<ol key="test"><li>Return to your Discord server and type <code>/start</code>.</li><li>Select the Mastermind command. The bot should say it is waiting, then report success or failure.</li><li>Try <code>/safereboot</code> only when you actually want the game server to restart.</li></ol>],
+        ].map(([title,body])=><details key={String(title)} style={{border:'1px solid #252532',borderRadius:7,padding:'.7rem .85rem',marginBottom:8,color:'#94a3b8',fontSize:'.82rem',lineHeight:1.65}}><summary style={{cursor:'pointer',color:'#e2e8f0',fontWeight:600}}>{title}</summary><div style={{marginTop:8}}>{body}</div></details>)}
 
         <div style={{position:'relative'}}><pre style={{background:'#09090f',border:'1px solid #252532',borderRadius:7,padding:'1rem',color:'#cbd5e1',fontSize:'.72rem',overflowX:'auto',whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{discordBotEnvironment}</pre><button type="button" style={{...btnPrimary,position:'absolute',right:8,top:8,padding:'.35rem .65rem',fontSize:'.72rem'}} onClick={()=>{void navigator.clipboard.writeText(discordBotEnvironment);setDiscordBotCopied(true);setTimeout(()=>setDiscordBotCopied(false),1800);}}>{discordBotCopied?'Copied':'Copy configuration'}</button></div>
         <p style={{color:'#fbbf24',fontSize:'.75rem',marginBottom:0}}>Keep the Discord token and Mastermind password out of screenshots, chat, Git, and support logs. If exposed, reset the Discord token immediately.</p>
