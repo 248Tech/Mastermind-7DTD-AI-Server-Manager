@@ -1,4 +1,4 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { JobsService } from '../jobs/jobs.service';
 import { reconcileNameFallback } from './player-identity';
@@ -28,6 +28,22 @@ export class PlayersService implements OnModuleInit, OnModuleDestroy {
         if (!recent) await this.jobs.createJob(server.orgId, member.userId, server.id, 'PLAYER_LIST_SYNC', {});
       }
     } finally { this.polling = false; }
+  }
+  async getProtectionSettings(orgId:string,serverInstanceId:string){
+    const server=await this.prisma.serverInstance.findFirst({where:{id:serverInstanceId,orgId}});
+    if(!server)throw new NotFoundException('Server instance not found');
+    return this.prisma.serverProtectionSettings.upsert({where:{serverInstanceId},create:{serverInstanceId},update:{}});
+  }
+  async updateProtectionSettings(orgId:string,serverInstanceId:string,body:Record<string,unknown>){
+    const server=await this.prisma.serverInstance.findFirst({where:{id:serverInstanceId,orgId}});
+    if(!server)throw new NotFoundException('Server instance not found');
+    const threshold=Number(body.highPingThresholdMs??250),samples=Number(body.highPingSamples??3);
+    if(!Number.isInteger(threshold)||threshold<50||threshold>5000)throw new BadRequestException('Ping threshold must be 50-5000 ms');
+    if(!Number.isInteger(samples)||samples<2||samples>20)throw new BadRequestException('Bad sample count must be 2-20');
+    const codes=Array.isArray(body.blockedCountryCodes)?[...new Set(body.blockedCountryCodes.map(String).map(x=>x.trim().toUpperCase()).filter(x=>/^[A-Z]{2}$/.test(x)))]:[];
+    const action=body.countryAction==='ban'?'ban':'kick';
+    const clean=(value:unknown,fallback:string,max=200)=>String(value??fallback).replace(/[\r\n]/g,' ').trim().slice(0,max)||fallback;
+    return this.prisma.serverProtectionSettings.upsert({where:{serverInstanceId},create:{serverInstanceId,highPingEnabled:Boolean(body.highPingEnabled),highPingThresholdMs:threshold,highPingSamples:samples,highPingReason:clean(body.highPingReason,'Connection latency remained too high'),countryBanEnabled:Boolean(body.countryBanEnabled),blockedCountryCodes:codes,countryAction:action,countryBanDuration:clean(body.countryBanDuration,'365 days',40),countryReason:clean(body.countryReason,'Connections from your country are not allowed')},update:{highPingEnabled:Boolean(body.highPingEnabled),highPingThresholdMs:threshold,highPingSamples:samples,highPingReason:clean(body.highPingReason,'Connection latency remained too high'),countryBanEnabled:Boolean(body.countryBanEnabled),blockedCountryCodes:codes,countryAction:action,countryBanDuration:clean(body.countryBanDuration,'365 days',40),countryReason:clean(body.countryReason,'Connections from your country are not allowed')}});
   }
   async list(orgId: string, serverInstanceId?: string) {
     const stablePlayers = await this.prisma.player.findMany({

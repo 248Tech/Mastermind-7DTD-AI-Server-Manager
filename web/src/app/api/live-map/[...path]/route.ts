@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
-import { readFile } from "fs/promises";
+import { readFile, readdir } from "fs/promises";
 import pathModule from "path";
 import net from "net";
 export const dynamic = "force-dynamic";
 const allowed =
-  /^(entities-live|claims-live|api\/(map\/config|serverstats)|map\/\d+\/-?\d+\/-?\d+\.png)$/;
+  /^(entities-live|claims-live|regions-live|api\/(map\/config|serverstats)|map\/\d+\/-?\d+\/-?\d+\.png)$/;
 type LiveEntity = {
   id: number;
   name: string;
@@ -148,6 +148,29 @@ export async function GET(
           message:
             error instanceof Error ? error.message : "Land claims unavailable",
         },
+        { status: 503 },
+      );
+    }
+  }
+  if (path === "regions-live") {
+    try {
+      const files = await readdir("/7dtd-save/Region", { withFileTypes: true });
+      const regions = files
+        .filter((entry) => entry.isFile())
+        .map((entry) => {
+          const match = /^r\.(-?\d+)\.(-?\d+)\.7rg$/i.exec(entry.name);
+          return match
+            ? { name: entry.name, x: Number(match[1]), z: Number(match[2]) }
+            : null;
+        })
+        .filter((region): region is { name: string; x: number; z: number } => Boolean(region));
+      return Response.json(
+        { data: { regions } },
+        { headers: { "cache-control": "no-store" } },
+      );
+    } catch (error) {
+      return Response.json(
+        { message: error instanceof Error ? error.message : "Regions unavailable" },
         { status: 503 },
       );
     }

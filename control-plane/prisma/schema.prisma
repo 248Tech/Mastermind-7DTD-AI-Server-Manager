@@ -22,6 +22,8 @@ model Org {
   logRetentionDays    Int      @default(7) @map("log_retention_days")
   healthIntervalSec   Int      @default(10) @map("health_interval_sec")
   avoidBloodMoonRestart Boolean @default(false) @map("avoid_blood_moon_restart")
+  openaiApiKeyEncrypted String?  @map("openai_api_key_encrypted") @db.Text
+  openaiModel           String   @default("gpt-5.3-codex") @map("openai_model")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
@@ -180,6 +182,7 @@ model ServerInstance {
   schedules       Schedule[]
   serverLogs      ServerLog[]
   players         Player[]
+  protectionSettings ServerProtectionSettings?
 
   @@index([orgId])
   @@index([hostId])
@@ -198,6 +201,24 @@ model ServerLog {
 
   @@index([orgId, createdAt(sort: Desc)])
   @@index([serverInstanceId, createdAt(sort: Desc)])
+}
+
+model ServerProtectionSettings {
+  id                    String   @id @default(cuid())
+  serverInstanceId      String   @unique @map("server_instance_id")
+  highPingEnabled       Boolean  @default(false) @map("high_ping_enabled")
+  highPingThresholdMs   Int      @default(250) @map("high_ping_threshold_ms")
+  highPingSamples       Int      @default(3) @map("high_ping_samples")
+  highPingReason        String   @default("Connection latency remained too high") @map("high_ping_reason")
+  countryBanEnabled     Boolean  @default(false) @map("country_ban_enabled")
+  blockedCountryCodes   Json     @default("[]") @map("blocked_country_codes")
+  countryAction         String   @default("kick") @map("country_action")
+  countryBanDuration    String   @default("365 days") @map("country_ban_duration")
+  countryReason         String   @default("Connections from your country are not allowed") @map("country_reason")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  serverInstance ServerInstance @relation(fields: [serverInstanceId], references: [id], onDelete: Cascade)
 }
 
 model HealthSample {
@@ -227,10 +248,15 @@ model Player {
   steamId                 String?   @map("steam_id")
   eosId                   String?   @map("eos_id")
   entityId                Int?      @map("entity_id")
+  ipAddress               String?   @map("ip_address")
   name                    String
   online                  Boolean   @default(false)
   currentSessionStartedAt DateTime? @map("current_session_started_at")
   lifetimeSeconds         Int       @default(0) @map("lifetime_seconds")
+  zombieKills             Int       @default(0) @map("zombie_kills")
+  playerKills             Int       @default(0) @map("player_kills")
+  deaths                  Int       @default(0)
+  level                   Int       @default(1)
   firstSeenAt             DateTime  @default(now()) @map("first_seen_at")
   lastSeenAt              DateTime  @default(now()) @map("last_seen_at")
 

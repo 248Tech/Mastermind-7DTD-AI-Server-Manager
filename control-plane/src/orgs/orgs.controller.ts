@@ -13,7 +13,7 @@ import { OrgsService } from './orgs.service';
 import { JwtAuthGuard, RequestWithUser } from '../server-instances/guards/jwt-auth.guard';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
 import { RequireOrgRoleGuard, RequireOrgRoles } from '../server-instances/guards/require-org-role.guard';
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 class CreateOrgDto {
   name!: string;
@@ -53,6 +53,13 @@ class CreateOrgAccountDto {
   @IsIn(['operator', 'viewer'])
   role!: 'operator' | 'viewer';
 }
+
+class ResetOrgAccountPasswordDto {
+  @IsString()
+  @MinLength(12)
+  newPassword!: string;
+}
+class OpenAiSettingsDto{@IsOptional()@IsString()@MinLength(20)@MaxLength(256) apiKey?:string;@IsString()@MinLength(1)@MaxLength(100) model!:string;}
 
 @Controller('api/orgs')
 @UseGuards(JwtAuthGuard)
@@ -106,6 +113,18 @@ export class OrgsController {
     return this.orgsService.deleteAccount(orgId, accountId, req.user!.id);
   }
 
+  @Patch(':orgId/accounts/:accountId/password')
+  @UseGuards(OrgMemberGuard, RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  async resetAccountPassword(
+    @Param('orgId') orgId: string,
+    @Param('accountId') accountId: string,
+    @Req() req: RequestWithUser,
+    @Body() dto: ResetOrgAccountPasswordDto,
+  ) {
+    return this.orgsService.resetAccountPassword(orgId, accountId, req.user!.id, dto.newPassword);
+  }
+
   @Patch(':orgId')
   @UseGuards(OrgMemberGuard)
   async updateOrg(
@@ -115,6 +134,21 @@ export class OrgsController {
   ) {
     return this.orgsService.updateOrg(orgId, req.user!.id, dto);
   }
+
+  @Post(':orgId/integrations/openai')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  saveOpenAi(@Param('orgId')orgId:string,@Req()req:RequestWithUser,@Body()dto:OpenAiSettingsDto){return this.orgsService.saveOpenAiSettings(orgId,req.user!.id,dto);}
+
+  @Post(':orgId/integrations/openai/test')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  testOpenAi(@Param('orgId')orgId:string){return this.orgsService.testOpenAi(orgId);}
+
+  @Delete(':orgId/integrations/openai')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  clearOpenAi(@Param('orgId')orgId:string){return this.orgsService.clearOpenAiSettings(orgId);}
 
   @Post(':orgId/detection/frigate/test')
   @UseGuards(OrgMemberGuard)

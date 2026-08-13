@@ -67,6 +67,7 @@ export default function SettingsPage() {
   const [restartGuardMessage, setRestartGuardMessage] = useState('');
   const [discordBotCopied, setDiscordBotCopied] = useState(false);
   const [uiTheme, setUiTheme] = useState<'original'|'dark'|'light'>('original');
+  const [openaiKey,setOpenaiKey]=useState('');const [openaiModel,setOpenaiModel]=useState('gpt-5.3-codex');const [openaiConfigured,setOpenaiConfigured]=useState(false);const [openaiBusy,setOpenaiBusy]=useState(false);const [openaiMessage,setOpenaiMessage]=useState('');
 
   const discordBotEnvironment = `DISCORD_TOKEN=<Bot token from Discord Developer Portal>
 DISCORD_CLIENT_ID=<Discord Application ID>
@@ -99,7 +100,7 @@ JOB_TIMEOUT_SECONDS=600`;
       api.get<User>('/api/auth/me'),
       api.get<Org[]>('/api/orgs').then(orgs => orgs.find(o => o.id === orgId) || null).catch(() => null),
     ])
-      .then(([u, o]) => { setUser(u); setOrg(o); setWebhookUrl(o?.discordWebhookUrl||''); setAvoidBloodMoonRestart(Boolean(o?.avoidBloodMoonRestart)); setLoading(false); })
+      .then(([u, o]) => { setUser(u); setOrg(o); setWebhookUrl(o?.discordWebhookUrl||''); setAvoidBloodMoonRestart(Boolean(o?.avoidBloodMoonRestart));setOpenaiConfigured(Boolean(o?.openaiConfigured));setOpenaiModel(o?.openaiModel||'gpt-5.3-codex'); setLoading(false); })
       .catch((err) => { setError(err.message); setLoading(false); });
   }, [orgId]);
 
@@ -141,6 +142,9 @@ JOB_TIMEOUT_SECONDS=600`;
       setRestartGuardMessage(err instanceof Error ? err.message : 'Failed to save restart protection');
     } finally { setRestartGuardSaving(false); }
   }
+  async function saveOpenAi(e:React.FormEvent){e.preventDefault();if(!orgId)return;setOpenaiBusy(true);setOpenaiMessage('');try{const result=await api.post<{configured:boolean;model:string}>(`/api/orgs/${orgId}/integrations/openai`,{model:openaiModel,...(openaiKey.trim()?{apiKey:openaiKey.trim()}:{})});setOpenaiConfigured(result.configured);setOpenaiModel(result.model);setOpenaiKey('');setOpenaiMessage('OpenAI settings saved. API key encrypted and hidden.');}catch(error){setOpenaiMessage(error instanceof Error?error.message:'Could not save OpenAI settings');}finally{setOpenaiBusy(false);}}
+  async function testOpenAi(){if(!orgId)return;setOpenaiBusy(true);setOpenaiMessage('Testing API key and model access…');try{const result=await api.post<{ok:boolean;model?:string;error?:string;latencyMs?:number}>(`/api/orgs/${orgId}/integrations/openai/test`,{});setOpenaiMessage(result.ok?`Connected. ${result.model} is accessible${result.latencyMs?` (${result.latencyMs} ms)`:''}.`:result.error||'Connection failed.');}catch(error){setOpenaiMessage(error instanceof Error?error.message:'Connection failed');}finally{setOpenaiBusy(false);}}
+  async function clearOpenAi(){if(!orgId||!confirm('Remove stored OpenAI API key? Codex mod editing will stop working.'))return;setOpenaiBusy(true);try{await api.delete(`/api/orgs/${orgId}/integrations/openai`);setOpenaiConfigured(false);setOpenaiKey('');setOpenaiMessage('OpenAI API key removed.');}catch(error){setOpenaiMessage(error instanceof Error?error.message:'Could not remove key');}finally{setOpenaiBusy(false);}}
 
   return (
     <div>
@@ -196,6 +200,13 @@ JOB_TIMEOUT_SECONDS=600`;
           Do not restart during Blood Moon days <strong style={{color:avoidBloodMoonRestart?'#4ade80':'#64748b'}}>({avoidBloodMoonRestart?'Enabled':'Disabled'})</strong>
         </label>
         {restartGuardMessage&&<p style={{color:restartGuardMessage.includes('enabled')||restartGuardMessage.includes('disabled')?'#4ade80':'#f87171',fontSize:'.8rem',marginBottom:0}}>{restartGuardMessage}</p>}
+      </div>
+
+      {/* Discord Webhook */}
+      <div style={card}>
+        <h2 style={{margin:'0 0 .375rem',fontSize:'1rem',fontWeight:600,color:'#f1f5f9'}}>Codex Mod Editor</h2><p style={{margin:'0 0 1rem',fontSize:'.8rem',color:'#64748b'}}>Connect your OpenAI API account. Key stays server-side, is encrypted at rest, and is never returned to browser. API usage is billed to your OpenAI account.</p>
+        <form onSubmit={saveOpenAi} style={{display:'grid',gap:'.875rem'}}><div><label style={labelStyle}>OpenAI API key {openaiConfigured&&<span style={{color:'#4ade80'}}>· Configured</span>}</label><input type="password" autoComplete="off" value={openaiKey} onChange={e=>setOpenaiKey(e.target.value)} placeholder={openaiConfigured?'Leave blank to keep existing key':'sk-…'} style={inputStyle}/></div><div><label style={labelStyle}>Model</label><select value={openaiModel} onChange={e=>setOpenaiModel(e.target.value)} style={inputStyle}><option value="gpt-5.3-codex">gpt-5.3-codex (recommended)</option><option value="gpt-5.2-codex">gpt-5.2-codex</option><option value="gpt-5.1-codex">gpt-5.1-codex</option><option value="gpt-5.1-codex-mini">gpt-5.1-codex-mini</option><option value="gpt-5.1-codex-max">gpt-5.1-codex-max</option></select></div><div style={{display:'flex',gap:8,flexWrap:'wrap'}}><button disabled={openaiBusy||(!openaiConfigured&&!openaiKey.trim())} style={btnPrimary}>{openaiBusy?'Working…':'Save OpenAI settings'}</button><button type="button" disabled={openaiBusy||!openaiConfigured} onClick={()=>void testOpenAi()} style={{...btnPrimary,background:'#334155'}}>Test connection</button>{openaiConfigured&&<button type="button" disabled={openaiBusy} onClick={()=>void clearOpenAi()} style={{...btnPrimary,background:'#991b1b'}}>Remove key</button>}</div>{openaiMessage&&<p style={{margin:0,color:/saved|Connected|removed/i.test(openaiMessage)?'#4ade80':'#f87171',fontSize:'.8rem'}}>{openaiMessage}</p>}</form>
+        <p style={{color:'#64748b',fontSize:'.75rem',margin:'1rem 0 0'}}>Create key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" style={{color:'#818cf8'}}>OpenAI API keys</a>. ChatGPT subscriptions do not include API usage.</p>
       </div>
 
       {/* Discord Webhook */}

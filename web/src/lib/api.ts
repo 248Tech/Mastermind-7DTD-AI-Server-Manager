@@ -46,7 +46,7 @@ export const api = {
 export interface AuthResponse { access_token: string; userId: string; orgId: string; }
 export interface User { id: string; email: string; name?: string; }
 export interface OrgAccount { id:string; email:string; name:string|null; role:'admin'|'operator'|'viewer'; createdAt:string; }
-export interface Org { id: string; name: string; slug: string; discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string; avoidBloodMoonRestart?: boolean; }
+export interface Org { id: string; name: string; slug: string; discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string; avoidBloodMoonRestart?: boolean; openaiConfigured?:boolean; openaiModel?:string; }
 export interface Host { id: string; orgId: string; name: string; status: string | null; lastHeartbeatAt: string | null; lastMetrics: Record<string,unknown> | null; agentVersion: string | null; createdAt: string; serverInstances: { id: string; name: string }[]; }
 export interface ServerInstance { id: string; orgId: string; hostId: string; name: string; gameType: string; capabilities: string[]; installPath: string | null; startCommand: string | null; telnetHost: string | null; telnetPort: number | null; createdAt: string; }
 export interface Job { id: string; orgId: string; serverInstanceId: string | null; serverName?: string; type: string; payload: unknown; createdAt: string; startedBy?: { id:string; name:string; email:string } | null; latestRun: { id: string; status: string; startedAt: string | null; finishedAt: string | null; result: unknown } | null; }
@@ -60,7 +60,7 @@ export interface HealthSample { id: string; hostId: string; cpuPercent: number; 
 export interface HealthHost { id: string; name: string; status: string; lastHeartbeatAt: string|null; lastMetrics: { cpu?:number; ramUsedMb?:number; ramTotalMb?:number; diskUsedGb?:number; latencyMs?:number; gameReachable?:boolean }|null; }
 export interface HealthDashboard { hosts: HealthHost[]; samples: HealthSample[]; intervalSec: number; }
 export interface ChatMessage { id:string; sourceId:string; createdAt:string; payload:{playerId:string;entityId:string;playerName:string;channel:string;message:string;serverInstanceName:string}; }
-export interface PlayerRecord { id:string; serverInstanceId:string; identityKey:string; steamId:string|null; eosId:string|null; entityId:number|null; name:string; online:boolean; currentSessionStartedAt:string|null; sessionSeconds:number; lifetimeSeconds:number; firstSeenAt:string; lastSeenAt:string; }
+export interface PlayerRecord { id:string; serverInstanceId:string; identityKey:string; steamId:string|null; eosId:string|null; entityId:number|null; ipAddress:string|null; name:string; online:boolean; currentSessionStartedAt:string|null; sessionSeconds:number; lifetimeSeconds:number; zombieKills:number; playerKills:number; deaths:number; level:number; firstSeenAt:string; lastSeenAt:string; }
 export interface ServerAdminRecord { platform?:string; userId:string; name?:string; permissionLevel:number; }
 export interface ModRecord { folder:string; name:string; author?:string; website?:string; version?:string; activatedAt:string; configFiles?:string[]; }
 export interface SaveRecord { id:string; createdAt:string; gameDay:number; kind:'full-world'|'region-healer'; sizeBytes:number; }

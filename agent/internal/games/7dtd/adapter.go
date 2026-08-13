@@ -314,10 +314,52 @@ const profileBackupRoot = "/var/lib/mastermind-agent/profile-backups"
 type playerProfile struct {
 	Path       string    `json:"path"`
 	Name       string    `json:"name"`
+	PlayerName string    `json:"playerName,omitempty"`
 	World      string    `json:"world"`
 	Save       string    `json:"save"`
 	SizeBytes  int64     `json:"sizeBytes"`
 	ModifiedAt time.Time `json:"modifiedAt"`
+}
+
+type persistentPlayerData struct {
+	Players []struct {
+		UserID       string `xml:"userid,attr"`
+		NativeUserID string `xml:"nativeuserid,attr"`
+		PlayerName   string `xml:"playername,attr"`
+	} `xml:"player"`
+}
+
+func profilePlayerNames(saveDir string) map[string]string {
+	names := map[string]string{}
+	content, err := os.ReadFile(filepath.Join(saveDir, "players.xml"))
+	if err != nil {
+		return names
+	}
+	var data persistentPlayerData
+	if xml.Unmarshal(content, &data) != nil {
+		return names
+	}
+	for _, player := range data.Players {
+		for _, id := range []string{player.UserID, player.NativeUserID} {
+			id = strings.TrimSpace(id)
+			if id != "" && player.PlayerName != "" {
+				names[strings.ToLower(id)] = player.PlayerName
+			}
+		}
+	}
+	return names
+}
+
+func profileOwner(path string, cache map[string]map[string]string) string {
+	saveDir := filepath.Dir(filepath.Dir(path))
+	names, ok := cache[saveDir]
+	if !ok {
+		names = profilePlayerNames(saveDir)
+		cache[saveDir] = names
+	}
+	id := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	id = strings.TrimPrefix(strings.TrimPrefix(id, "EOS_"), "Steam_")
+	return names[strings.ToLower(id)]
 }
 
 func configuredSavesPath(payload map[string]interface{}) (string, error) {
@@ -344,6 +386,7 @@ func listPlayerProfiles(payload map[string]interface{}) ([]playerProfile, error)
 		return nil, err
 	}
 	profiles := []playerProfile{}
+	ownerCache := map[string]map[string]string{}
 	err = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -365,7 +408,7 @@ func listPlayerProfiles(payload map[string]interface{}) ([]playerProfile, error)
 		if len(parts) < 4 {
 			return nil
 		}
-		profiles = append(profiles, playerProfile{Path: filepath.ToSlash(rel), Name: info.Name(), World: parts[len(parts)-4], Save: parts[len(parts)-3], SizeBytes: info.Size(), ModifiedAt: info.ModTime().UTC()})
+		profiles = append(profiles, playerProfile{Path: filepath.ToSlash(rel), Name: info.Name(), PlayerName: profileOwner(path, ownerCache), World: parts[len(parts)-4], Save: parts[len(parts)-3], SizeBytes: info.Size(), ModifiedAt: info.ModTime().UTC()})
 		return nil
 	})
 	if err != nil {
@@ -400,7 +443,7 @@ func readPlayerProfile(payload map[string]interface{}, relative string) (playerP
 		return playerProfile{}, nil, fmt.Errorf("copy player profile: %w", err)
 	}
 	parts := strings.Split(filepath.ToSlash(relative), "/")
-	profile := playerProfile{Path: filepath.ToSlash(relative), Name: info.Name(), SizeBytes: info.Size(), ModifiedAt: info.ModTime().UTC()}
+	profile := playerProfile{Path: filepath.ToSlash(relative), Name: info.Name(), PlayerName: profileOwner(target, map[string]map[string]string{}), SizeBytes: info.Size(), ModifiedAt: info.ModTime().UTC()}
 	if len(parts) >= 4 {
 		profile.World, profile.Save = parts[len(parts)-4], parts[len(parts)-3]
 	}

@@ -50,6 +50,7 @@ services:
       REDIS_PORT: "6379"
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       JWT_AGENT_SECRET: ${JWT_AGENT_SECRET:-change-me-in-production}
+      OPENAI_KEY_ENCRYPTION_SECRET: ${OPENAI_KEY_ENCRYPTION_SECRET:-${JWT_SECRET:-change-me-in-production}}
     depends_on:
       postgres:
         condition: service_healthy

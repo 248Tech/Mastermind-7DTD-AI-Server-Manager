@@ -14,6 +14,9 @@ import { AlertsService } from '../alerts/alerts.service';
 
 @Injectable()
 export class JobsService {
+  private readonly badPingSamples = new Map<string, number>();
+  private readonly protectionCooldown = new Map<string, number>();
+  private readonly countryCache = new Map<string, { code: string; expires: number }>();
   constructor(
     private readonly prisma: PrismaService,
     private readonly batchesService: BatchesService,
@@ -168,6 +171,7 @@ export class JobsService {
 
     if (run.job.type === 'PLAYER_LIST_SYNC' && runStatus === 'success' && dto.output && run.job.serverInstanceId) {
       await this.reconcilePlayers(run.job.orgId, run.job.serverInstanceId, dto.output);
+      await this.enforceConnectionTools(run.job.orgId, run.job.serverInstanceId, dto.output);
     }
 
     const orgId = run.job.orgId;
@@ -243,6 +247,13 @@ export class JobsService {
       if (!head) continue;
       const steam = line.match(/(?:pltfmid|steamid)=Steam_([0-9]{15,20})/i)?.[1] ?? null;
       const eos = line.match(/(?:crossid|pltfmid)=EOS_([a-f0-9]{20,64})/i)?.[1] ?? null;
+      const ipAddress = line.match(/\bip\s*=\s*(\[[^\]]+\]|[^,\s]+)/i)?.[1]?.replace(/^\[|\]$/g, '') ?? null;
+      // 7DTD's `lp` response exposes authoritative lifetime combat counters.
+      // Names vary slightly between game versions, so accept both forms.
+      const zombieKills = Number(line.match(/(?:zombies|zombiekills)\s*=\s*(\d+)/i)?.[1] ?? 0);
+      const playerKills = Number(line.match(/(?:players|playerkills)\s*=\s*(\d+)/i)?.[1] ?? 0);
+      const deaths = Number(line.match(/deaths\s*=\s*(\d+)/i)?.[1] ?? 0);
+      const level = Number(line.match(/level\s*=\s*(\d+)/i)?.[1] ?? 1);
       const name = head[2].trim();
       const identityKey = steam ? `steam:${steam}` : eos ? `eos:${eos}` : `name:${name.toLowerCase()}`;
       seen.add(identityKey);
@@ -250,8 +261,8 @@ export class JobsService {
       const existing = await this.prisma.player.findUnique({ where: { serverInstanceId_identityKey: { serverInstanceId, identityKey } } });
       const player = await this.prisma.player.upsert({
         where: { serverInstanceId_identityKey: { serverInstanceId, identityKey } },
-        create: { orgId, serverInstanceId, identityKey, steamId: steam, eosId: eos, entityId: Number(head[1]), name, online: true, currentSessionStartedAt: now, lastSeenAt: now },
-        update: { steamId: steam ?? existing?.steamId, eosId: eos ?? existing?.eosId, entityId: Number(head[1]), name, online: true, lastSeenAt: now, ...(!existing?.online ? { currentSessionStartedAt: now } : {}) },
+        create: { orgId, serverInstanceId, identityKey, steamId: steam, eosId: eos, entityId: Number(head[1]), ipAddress, name, online: true, currentSessionStartedAt: now, lastSeenAt: now, zombieKills, playerKills, deaths, level },
+        update: { steamId: steam ?? existing?.steamId, eosId: eos ?? existing?.eosId, entityId: Number(head[1]), ...(ipAddress ? { ipAddress } : {}), name, online: true, lastSeenAt: now, zombieKills, playerKills, deaths, level, ...(!existing?.online ? { currentSessionStartedAt: now } : {}) },
       });
       if (!existing?.online) await this.prisma.playerSession.create({ data: { playerId: player.id, startedAt: now } });
     }
@@ -273,5 +284,42 @@ export class JobsService {
         sessionSeconds: duration,
       }).catch(() => undefined);
     }
+  }
+
+  private async enforceConnectionTools(orgId:string,serverInstanceId:string,output:string){
+    const settings=await this.prisma.serverProtectionSettings.findUnique({where:{serverInstanceId}});
+    if(!settings||(!settings.highPingEnabled&&!settings.countryBanEnabled))return;
+    const member=await this.prisma.userOrg.findFirst({where:{orgId},orderBy:{createdAt:'asc'},select:{userId:true}});
+    if(!member)return;
+    for(const line of output.split(/\r?\n/)){
+      const head=line.match(/^\s*\d+\.\s+id=(\d+),\s*([^,]+),/i);if(!head)continue;
+      const steam=line.match(/(?:pltfmid|steamid)=Steam_([0-9]{15,20})/i)?.[1];
+      const eos=line.match(/(?:crossid|pltfmid)=EOS_([a-f0-9]{20,64})/i)?.[1];
+      const identifier=steam||eos||head[1];const key=`${serverInstanceId}:${identifier}`;
+      if((this.protectionCooldown.get(key)||0)>Date.now())continue;
+      const ping=Number(line.match(/\bping\s*=\s*(\d+)/i)?.[1]??NaN);
+      if(settings.highPingEnabled&&Number.isFinite(ping)){
+        const count=ping>settings.highPingThresholdMs?(this.badPingSamples.get(key)||0)+1:0;this.badPingSamples.set(key,count);
+        if(count>=settings.highPingSamples){
+          await this.createJob(orgId,member.userId,serverInstanceId,'PLAYER_KICK',{identifier,reason:`${settings.highPingReason} (${ping} ms)`});
+          this.badPingSamples.set(key,0);this.protectionCooldown.set(key,Date.now()+5*60_000);continue;
+        }
+      }
+      if(settings.countryBanEnabled){
+        const ip=line.match(/\bip\s*=\s*(\[[^\]]+\]|[^,\s]+)/i)?.[1]?.replace(/^\[|\]$/g,'').split(':')[0];
+        if(!ip||this.isPrivateAddress(ip))continue;
+        const code=await this.countryForIp(ip);const blocked=Array.isArray(settings.blockedCountryCodes)?settings.blockedCountryCodes.map(String):[];
+        if(code&&blocked.includes(code)){
+          const type=settings.countryAction==='ban'?'PLAYER_BAN':'PLAYER_KICK';
+          await this.createJob(orgId,member.userId,serverInstanceId,type,{identifier,reason:`${settings.countryReason} (${code})`,...(type==='PLAYER_BAN'?{duration:settings.countryBanDuration}:{})});
+          this.protectionCooldown.set(key,Date.now()+24*60*60_000);
+        }
+      }
+    }
+  }
+  private isPrivateAddress(ip:string){return /^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1$|fc|fd)/i.test(ip);}
+  private async countryForIp(ip:string){
+    const cached=this.countryCache.get(ip);if(cached&&cached.expires>Date.now())return cached.code;
+    try{const response=await fetch(`https://api.country.is/${encodeURIComponent(ip)}`,{signal:AbortSignal.timeout(3000)});if(!response.ok)return'';const data=await response.json() as {country?:string};const code=String(data.country||'').toUpperCase();if(/^[A-Z]{2}$/.test(code)){this.countryCache.set(ip,{code,expires:Date.now()+24*60*60_000});return code;}}catch{return'';}return'';
   }
 }

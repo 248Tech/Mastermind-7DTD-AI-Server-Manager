@@ -39,6 +39,7 @@ type Claim = {
   position: { x: number; y: number; z: number };
   size: number;
 };
+type Region = { name: string; x: number; z: number };
 const HISTORY_KEY = "mm_live_map_history_v1",
   HISTORY_RETENTION_MS = 72 * 60 * 60 * 1000,
   MAX_HISTORY = 25_920;
@@ -98,6 +99,7 @@ export default function LiveMapClient() {
     [animals, setAnimals] = useState<Entity[]>([]),
     [hostiles, setHostiles] = useState<Entity[]>([]),
     [claims, setClaims] = useState<Claim[]>([]),
+    [regionFiles, setRegionFiles] = useState<Region[]>([]),
     [gameTime, setGameTime] = useState(""),
     [history, setHistory] = useState<Snapshot[]>([]),
     [historyIndex, setHistoryIndex] = useState<number | null>(null),
@@ -178,6 +180,9 @@ export default function LiveMapClient() {
       void get("claims-live")
         .then((c) => active && setClaims(c.claims ?? []))
         .catch((e) => active && setFeedError(`Claims: ${e.message}`));
+      void get("regions-live")
+        .then((r) => active && setRegionFiles(r.regions ?? []))
+        .catch((e) => active && setFeedError(`Regions: ${e.message}`));
       void get("api/serverstats")
         .then((s) => {
           if (!active) return;
@@ -232,28 +237,41 @@ export default function LiveMapClient() {
       </div>
     );
   const size = config.mapSize || { x: 8192, y: 255, z: 8192 };
-  const regions = [];
-  for (let x = Math.floor(-size.x / 1024); x < Math.ceil(size.x / 1024); x++)
-    for (
-      let z = Math.floor(-size.z / 1024);
-      z < Math.ceil(size.z / 1024);
-      z++
-    ) {
-      const x0 = x * 512,
-        z0 = z * 512;
-      regions.push(
-        <Rectangle
-          key={`${x}.${z}`}
-          bounds={[
-            [x0, z0],
-            [x0 + 512, z0 + 512],
-          ]}
-          pathOptions={{ color: "#94a3b8", weight: 1, fill: false }}
-        >
-          <Tooltip>{`r.${x}.${z}.7rg`}</Tooltip>
-        </Rectangle>,
+  const regionDefinitions = regionFiles.length
+    ? regionFiles
+    : Array.from(
+        { length: Math.ceil(size.x / 512) * Math.ceil(size.z / 512) },
+        (_, index) => {
+          const width = Math.ceil(size.z / 512);
+          const x = Math.floor(-size.x / 1024) + Math.floor(index / width);
+          const z = Math.floor(-size.z / 1024) + (index % width);
+          return { name: `r.${x}.${z}.7rg`, x, z };
+        },
       );
-    }
+  const regions = regionDefinitions.map((region) => {
+    const x0 = region.x * 512,
+      z0 = region.z * 512;
+    return (
+      <Rectangle
+        key={region.name}
+        bounds={[
+          [x0, z0],
+          [x0 + 512, z0 + 512],
+        ]}
+        pathOptions={{ color: "#94a3b8", weight: 1, fill: false }}
+      >
+        <Tooltip
+          permanent
+          direction="center"
+          opacity={0.9}
+          interactive={false}
+          className="region-grid-label"
+        >
+          {region.name}
+        </Tooltip>
+      </Rectangle>
+    );
+  });
   const divisor = 2 ** (config.maxZoom ?? 4);
   const crs = L.extend({}, L.CRS.Simple, {
     projection: {
