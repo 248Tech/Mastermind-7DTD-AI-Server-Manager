@@ -150,3 +150,11 @@ html[data-theme="light"] .app-main code { background-color: #e2e8f0 !important; 
 html[data-theme="light"] .app-main a { color: #1d4ed8 !important; }
 html[data-theme="light"] .mobile-menu-button { background:#fff;color:#0f172a;border-color:#94a3b8; }
 @import 'leaflet/dist/leaflet.css';
+
+.player-summary-grid { display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:.75rem;margin-bottom:1rem; }
+.player-summary { background:#111118;border:1px solid #252532;border-radius:9px;padding:.8rem 1rem;display:flex;justify-content:space-between;align-items:center; }
+.player-summary small { color:#64748b; }.player-summary strong { font-size:1.35rem; }
+.player-toolbar { display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:1rem;background:#111118;border:1px solid #252532;border-radius:9px;padding:.7rem; }
+.player-toolbar input { flex:1;min-width:240px; }.player-toolbar input,.player-toolbar select { background:#0d0d14;color:#e2e8f0;border:1px solid #303044;border-radius:6px;padding:.55rem; }
+.player-card-list { display:none; }.player-card { background:#111118;border:1px solid #252532;border-radius:9px;padding:1rem;color:#cbd5e1; }.player-card-head { display:flex;justify-content:space-between;gap:10px;align-items:start; }.player-card-head strong { color:#f1f5f9;font-size:1rem; }.player-level { color:#38bdf8;font-weight:700;font-size:.8rem; }.player-id { display:block;margin:.75rem 0;color:#94a3b8;overflow-wrap:anywhere; }.player-stat-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:.65rem;margin-bottom:1rem; }.player-stat-grid span { display:flex;flex-direction:column;gap:2px;font-weight:600; }.player-stat-grid small { color:#64748b;font-size:.68rem;font-weight:400;text-transform:uppercase; }.player-actions button:disabled { opacity:.4;cursor:not-allowed; }
+@media (max-width: 768px) { .player-summary-grid { grid-template-columns:repeat(2,1fr)!important; }.player-table { display:none; }.player-card-list { display:grid;gap:.75rem; }.player-toolbar input { min-width:100%; }.player-toolbar select { flex:1; }.player-actions { display:grid!important;grid-template-columns:repeat(2,1fr); }.player-actions button { width:100%;padding:.55rem!important; } }

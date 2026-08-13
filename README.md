@@ -58,24 +58,24 @@
 
 ---
 
-## Release 0.0.9 (August 12, 2026)
+## Release 0.0.10 (August 13, 2026)
 
 ### Highlights
 
-- Authenticated live map with official terrain tiles, live players/animals/hostiles, land claims, player tracking, selectable trail colors, and a 72-hour history timeline.
-- Integrated 7D2D Profile Editor with server profile discovery, staged edits, timestamped originals, and safe installation during the next managed start.
-- Administrator-managed organization accounts for staff and service users, including protected account deletion.
-- Original, dark, and light UI themes plus a grouped, scrollable, responsive sidebar.
-- Server-authored `say` messages now appear in Mastermind chat without being echoed into the player-only Discord relay.
-- Expanded beginner-first Discord bot setup with exact file locations, purpose explanations, and account creation from the Accounts page.
+- Codex-assisted mod configuration editing through the OpenAI Responses API, with encrypted API-key storage, model testing, structured proposals, mandatory line diff review, explicit approval, and no automatic writes.
+- Server Tools page with configurable high-ping enforcement and country-based kick/ban policies.
+- Improved Players experience with search, filters, sorting, summary cards, responsive mobile cards, level/combat statistics, inventory inspection, administrator controls, and last-known IP addresses.
+- Live map region labels now use actual save filenames for every loaded region tile.
+- Profile Editor associates EOS/Steam `.ttp` files with player names from `players.xml` when possible.
+- Organization administrators can reset lower-tier account passwords without seeing or knowing the original password.
 
 ---
 
-## Current features (v0.0.9)
+## Current features (v0.0.10)
 
 ### Implemented end-to-end
 
-- **Authentication and organizations:** register/login, JWT sessions, organization membership and roles, admin-created operator/viewer accounts, protected account deletion, protected pairing-token creation, agent-key rotation, and password changes using salted scrypt with legacy-hash migration.
+- **Authentication and organizations:** register/login, JWT sessions, organization membership and roles, admin-created operator/viewer accounts, protected account deletion, administrator resets for lower-tier passwords, protected pairing-token creation, agent-key rotation, and password changes using salted scrypt with legacy-hash migration.
 - **Host agents:** one-time pairing, persistent agent identity, heartbeat and inventory reporting, long-poll job execution, same-host Linux 7DTD autodiscovery, and automatic server registration.
 - **Server-first dashboard:** registered servers are primary; each server opens a management view with overview, controls, console, and server-filtered job history.
 - **7DTD controls:** start, graceful stop, verified restart, safe restart with countdown/save/backup/kick verification, emergency process kill, telnet console commands, and a confirmed save wipe that safely stops or escalates a hung server before deleting only the configured save and verifying fresh-world creation.
@@ -84,8 +84,9 @@
 - **Logs and console:** agent log tailing, database persistence, incremental live viewing, optional auto-scroll, selectable retention, keyword alert definitions, match history, and an audited telnet command box.
 - **Chat:** player and server-authored chat extraction, stored history, player-only per-server Discord webhook relay with mention suppression, and operator replies automatically sent as server `say` messages.
 - **Health:** host-scoped CPU, RAM, disk, agent latency, and real 7DTD reachability samples with current values, historical averages, and configurable polling intervals.
-- **Players:** authoritative `lp` polling every 60 seconds by default, reconciled Steam/EOS identity capture, online state, current/lifetime playtime, last seen, kick/ban/kick-all actions, post-kick verification, and XML-backed administrator status with promote/demote controls.
-- **Mods:** fast active/quarantined inventories, `ModInfo.xml` name/version/author/website parsing, activation timestamps, sortable columns, single/bulk selection, quarantine, permission-safe restore, constrained permanent deletion, and safe discovery/editing of supported mod configuration files.
+- **Players:** authoritative `lp` polling every 60 seconds by default, reconciled Steam/EOS identity capture, last-known IP address, online state, current/lifetime playtime, last seen, level, zombie/player kills, deaths, inventory inspection, search/filter/sort controls, responsive mobile cards, kick/ban/kick-all actions, post-kick verification, and XML-backed administrator status with promote/demote controls.
+- **Mods:** fast active/quarantined inventories, `ModInfo.xml` name/version/author/website parsing, activation timestamps, sortable columns, single/bulk selection, quarantine, permission-safe restore, constrained permanent deletion, safe configuration editing, and optional Codex-assisted changes with mandatory diff review and approval before an atomic save.
+- **Connection protection tools:** per-server high-ping kicker with consecutive-sample threshold and cooldown, plus country-based kick/ban policies when the game exposes a real public player IP. Relay-masked/private IPs are deliberately skipped.
 - **RegionHealer:** status information plus start/stop jobs for a separately installed RegionHealer-v2 service.
 - **7D2D Profile Editor:** isolated integration of RussDev7's GPL-3.0 TTP Profile Editor with server profile discovery, staged live edits, timestamped original `.ttp`/`.ttp.bak` archives plus audit metadata, atomic installation on the next Mastermind-managed start/restart, and visible/backend attribution.
 - **Live server map:** authenticated official terrain map with live players, animals, hostiles, coordinates, game time, region grid, owned land-claim blocks and protection areas, selectable player tracking and trail colors, plus selectable 5-minute through 72-hour browser-local history. The 7DTD dashboard and telnet ports remain private.
@@ -142,6 +143,7 @@ Detailed setup options (full Docker, local dev, API reference): see **[QUICKSTAR
 | `REDIS_HOST`, `REDIS_PORT` | control-plane | Redis for BullMQ (default localhost:6379) |
 | `JWT_SECRET` | control-plane | Secret for user JWTs (never use default in prod) |
 | `JWT_AGENT_SECRET` | control-plane | Secret for agent JWTs (separate from user secret) |
+| `OPENAI_KEY_ENCRYPTION_SECRET` | control-plane | Dedicated secret used to encrypt stored OpenAI API keys; use a long random value and never rotate it without replacing stored keys. |
 | `PORT` | control-plane | API port (default 3001) |
 | `NEXT_PUBLIC_CONTROL_PLANE_URL` | web | Backend URL for the browser (e.g. http://localhost:3001) |
 | Agent | agent | See `agent/config.yaml.example` — `control_plane_url`, `pairing_token`, `agent_key_path` |

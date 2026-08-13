@@ -10,6 +10,7 @@ const NAV_GROUPS = [
     { href: '/health', label: 'Health', icon: '♥', title: 'Server health, latency, CPU, and memory' },
   ]},
   { label: 'Server', items: [
+    { href: '/tools', label: 'Tools', icon: '⚒', title: 'Connection protection and server utilities' },
     { href: '/players', label: 'Players', icon: '♟', title: 'Player identities, playtime, kick, and ban controls' },
     { href: '/mods', label: 'Mods', icon: '◇', title: 'Installed server mods and removal controls' },
     { href: '/saves', label: 'Saves', icon: '▣', title: 'Back up, restore, and manage world saves' },

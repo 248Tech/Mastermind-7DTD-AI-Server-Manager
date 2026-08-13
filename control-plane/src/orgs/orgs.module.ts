@@ -5,6 +5,8 @@ import { OrgsController } from './orgs.controller';
 import { PrismaService } from '../prisma.service';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
 import { RequireOrgRoleGuard } from '../server-instances/guards/require-org-role.guard';
+import { ModAiController } from './mod-ai.controller';
+import { ModAiService } from './mod-ai.service';
 
 @Module({
   imports: [
@@ -13,8 +15,8 @@ import { RequireOrgRoleGuard } from '../server-instances/guards/require-org-role
       signOptions: { expiresIn: '7d' },
     }),
   ],
-  controllers: [OrgsController],
-  providers: [OrgsService, PrismaService, OrgMemberGuard, RequireOrgRoleGuard],
+  controllers: [OrgsController, ModAiController],
+  providers: [OrgsService, ModAiService, PrismaService, OrgMemberGuard, RequireOrgRoleGuard],
   exports: [OrgsService],
 })
 export class OrgsModule {}

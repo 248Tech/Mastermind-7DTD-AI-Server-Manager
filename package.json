@@ -1,6 +1,6 @@
 {
   "name": "mastermind-7dtd-ai-server-manager",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "private": true,
   "description": "Control Plane + Host Agent for 7DTD server management",
   "scripts": {

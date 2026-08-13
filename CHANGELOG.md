@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - (none)
 
+## [0.0.10] - 2026-08-13
+
+### Added
+
+- Added Codex-assisted mod configuration editing through the OpenAI Responses API, encrypted API-key storage, configurable Codex models, live connection testing, structured edit proposals, line-by-line diffs, and mandatory approval before saving.
+- Added per-server high-ping kicking with configurable threshold, required consecutive samples, reason, cooldown, and minute-based enforcement.
+- Added country-based connection enforcement with ISO country-code lists, kick/ban selection, duration/reason controls, lookup caching, and safe skipping of private or relay-masked addresses.
+- Added player IP address capture from authoritative `lp` output, player level, zombie kills, player kills, deaths, and inventory inspection.
+- Added player search, online/offline/admin filters, sorting, summary cards, manual refresh feedback, and responsive mobile player cards.
+- Added player-name association to Profile Editor entries by matching EOS/Steam profile filenames against the active save's `players.xml`.
+- Added administrator password resets for lower-tier organization accounts without exposing or requiring their original password.
+
+### Changed
+
+- Region-grid labels now come from actual `.7rg` filenames found in the active save and remain visible for every displayed region.
+- OpenAI connection testing now sends a real Responses API request instead of trusting model-list presence. Default supported model changed from the listed-but-unusable `gpt-5-codex` alias to verified `gpt-5.3-codex`.
+- Bumped repository, control-plane, web, and health endpoint versions to `0.0.10`.
+
+### Security
+
+- OpenAI API keys remain control-plane-only, are encrypted with AES-256-GCM at rest, never returned to browsers, and can be tested, replaced, or removed only by organization administrators.
+- AI-generated mod edits never write automatically. Users must inspect and approve the diff, then explicitly save through the existing constrained atomic config-write job.
+
 ## [0.0.9] - 2026-08-12
 
 ### Added
