@@ -60,6 +60,8 @@ class ResetOrgAccountPasswordDto {
   newPassword!: string;
 }
 class OpenAiSettingsDto{@IsOptional()@IsString()@MinLength(20)@MaxLength(256) apiKey?:string;@IsString()@MinLength(1)@MaxLength(100) model!:string;}
+class KimiSettingsDto{@IsOptional()@IsString()@MinLength(10)@MaxLength(512) apiKey?:string;@IsString()@MinLength(1)@MaxLength(100) model!:string;}
+class ModAiProviderDto{@IsIn(['codex','kimi']) provider!:'codex'|'kimi';}
 
 @Controller('api/orgs')
 @UseGuards(JwtAuthGuard)
@@ -149,6 +151,26 @@ export class OrgsController {
   @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
   @RequireOrgRoles('admin')
   clearOpenAi(@Param('orgId')orgId:string){return this.orgsService.clearOpenAiSettings(orgId);}
+
+  @Patch(':orgId/integrations/mod-ai/provider')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  selectModAiProvider(@Param('orgId')orgId:string,@Req()req:RequestWithUser,@Body()dto:ModAiProviderDto){return this.orgsService.selectModAiProvider(orgId,req.user!.id,dto.provider);}
+
+  @Post(':orgId/integrations/kimi')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  saveKimi(@Param('orgId')orgId:string,@Req()req:RequestWithUser,@Body()dto:KimiSettingsDto){return this.orgsService.saveKimiSettings(orgId,req.user!.id,dto);}
+
+  @Post(':orgId/integrations/kimi/test')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  testKimi(@Param('orgId')orgId:string){return this.orgsService.testKimi(orgId);}
+
+  @Delete(':orgId/integrations/kimi')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  clearKimi(@Param('orgId')orgId:string){return this.orgsService.clearKimiSettings(orgId);}
 
   @Post(':orgId/detection/frigate/test')
   @UseGuards(OrgMemberGuard)

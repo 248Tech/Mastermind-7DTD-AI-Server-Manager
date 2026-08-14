@@ -11,6 +11,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - (none)
 
+## [0.0.11] - 2026-08-14
+
+### Added
+
+- Added Kimi Code as a selectable Mod Editor agent alongside Codex, with encrypted Moonshot API-key storage, model selection, live connection testing, provider attribution, and the existing mandatory proposal/diff approval boundary.
+- Added native chat moderation with an editable blocked-word directory, per-rule log/warn/kick actions, flood thresholds, mute/unmute controls, audited enforcement, and suppression of moderated messages from Discord relay.
+- Added authenticated ZIP mod uploads up to 256 MiB. Archives are validated against traversal, symlinks, ambiguous nested mods, file-count/expanded-size limits, redundant `Mods`/wrapper folders, duplicate targets, and unsafe permissions before being placed in quarantine.
+- Added live-map generation controls based on `map_info.xml`, including configurable section generation, explicitly warned full-world generation, current `visitmap` state/progress, and verified stop behavior.
+- Added queued/applied profile-injection status and timestamps to the Profile Editor.
+- Added lightweight agent operational instrumentation for goroutines, job concurrency/totals, heartbeat and poll failures, log throughput/failures, and in-memory backlog.
+
+### Changed
+
+- Reworked the Go log tailer to keep the server log open, follow truncation/rotation/replacement/deletion, batch at 64 KiB or 350 ms, retry failed chunks in order, and upload direct byte slices without the former reader/read-all copy.
+- Configured pooled HTTP transports and request-specific deadlines so normal requests remain bounded while long polls receive their configured duration plus network grace.
+- Added bounded exponential backoff with jitter to heartbeat, job polling, and log delivery failures.
+- Bounded explicitly audited read-only jobs with `jobs.max_concurrent_reads` (default 8, maximum 64) and serialized arbitrary RCON/SEND_COMMAND jobs in both agent and control-plane classification.
+- Removed the hard-coded `127.0.0.1:26900` host probe; reachability now uses the discovered/configured 7DTD endpoint on a slower cadence.
+- Added build-time agent version reporting, cached static host metadata, SIGTERM-aware shutdown, safe empty-poll pacing, long-poll validation, and stale-running-job recovery.
+- Scheduler occurrences now skip when the same schedule already has pending/running work instead of stacking duplicate long operations.
+- Bumped repository, control-plane, web, health endpoint, and provider user-agent versions to `0.0.11`.
+
+### Fixed
+
+- Fixed live-map maximum zoom-out disappearing by aligning tile-layer and map minimum zoom.
+- Fixed stale Map Generation controls that claimed generation was active after `visitmap` had ended.
+- Fixed missing profile injection feedback by deriving queued/applied state from the agent staging and backup metadata.
+- Fixed active player polling continuing against known-unreachable game hosts.
+- Fixed successful empty job polls becoming a tight API request loop on control planes that return immediately.
+
+### Security
+
+- Kimi and OpenAI credentials remain encrypted and server-side; neither provider key is returned to browsers.
+- Mod uploads are agent-authenticated, host-bound, short-lived, size-bounded, ZIP-signature checked, path constrained, symlink rejected, and removed after job completion.
+- Machine-specific sudoers policy remains excluded from the public repository.
+
 ## [0.0.10] - 2026-08-13
 
 ### Added

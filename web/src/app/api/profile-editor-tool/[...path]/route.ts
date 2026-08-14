@@ -31,7 +31,9 @@ async function proxy(request:NextRequest,{params}:{params:{path:string[]}}){
      const selected=JSON.parse(Buffer.from(encodedTarget,'base64url').toString()) as {orgId:string;serverId:string;path:string};
      const staged=await fetch(`${control()}/api/orgs/${encodeURIComponent(selected.orgId)}/jobs`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({serverInstanceId:selected.serverId,type:'PROFILE_STAGE',payload:{path:selected.path,contentBase64:Buffer.from(edited).toString('base64')}}),cache:'no-store'});
      if(!staged.ok)return Response.json({message:'The profile was edited but could not be queued for the next restart'},{status:502});
+     const queued=await staged.json().catch(()=>null) as {jobRunId?:string}|null;
      outputHeaders.set('x-mastermind-profile-staged','true');
+     if(queued?.jobRunId)outputHeaders.set('x-mastermind-profile-job-run-id',queued.jobRunId);
     }catch{return Response.json({message:'Invalid staged profile target'},{status:400});}
    }
    return new Response(edited,{status:response.status,headers:outputHeaders});

@@ -85,4 +85,18 @@ export class LogsController {
   saveChatSettings(@Param('orgId') orgId: string, @Body() body: { serverInstanceId: string; enabled?: boolean; webhookUrl?: string }) {
     return this.logs.updateChatSettings(orgId, body.serverInstanceId, body.enabled ?? false, body.webhookUrl ?? '');
   }
+
+  @Get('api/orgs/:orgId/chat/moderation')
+  @UseGuards(JwtAuthGuard, OrgMemberGuard)
+  chatModeration(@Param('orgId') orgId:string,@Query('serverInstanceId') serverInstanceId:string){return this.logs.getChatModeration(orgId,serverInstanceId);}
+
+  @Post('api/orgs/:orgId/chat/moderation')
+  @UseGuards(JwtAuthGuard, OrgMemberGuard, RequireOrgRoleGuard)
+  @RequireOrgRoles('admin','operator')
+  saveChatModeration(@Param('orgId') orgId:string,@Body() body:any){return this.logs.updateChatModeration(orgId,body.serverInstanceId,body);}
+
+  @Post('api/orgs/:orgId/chat/mute')
+  @UseGuards(JwtAuthGuard, OrgMemberGuard, RequireOrgRoleGuard)
+  @RequireOrgRoles('admin','operator')
+  mutePlayer(@Param('orgId') orgId:string,@Body() body:{serverInstanceId:string;playerId:string;playerName:string;muted:boolean}){return this.logs.setPlayerMuted(orgId,body.serverInstanceId,body.playerId,body.playerName,body.muted);}
 }

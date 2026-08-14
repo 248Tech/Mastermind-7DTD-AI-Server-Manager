@@ -151,6 +151,21 @@ html[data-theme="light"] .app-main a { color: #1d4ed8 !important; }
 html[data-theme="light"] .mobile-menu-button { background:#fff;color:#0f172a;border-color:#94a3b8; }
 @import 'leaflet/dist/leaflet.css';
 
+.leaflet-tooltip.player-map-name {
+  background: rgba(15, 23, 42, .92);
+  border: 1px solid #60a5fa;
+  border-radius: 5px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, .65);
+  color: #f8fafc;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.15;
+  padding: 3px 6px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.leaflet-tooltip-top.player-map-name::before { border-top-color: #60a5fa; }
+
 .player-summary-grid { display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:.75rem;margin-bottom:1rem; }
 .player-summary { background:#111118;border:1px solid #252532;border-radius:9px;padding:.8rem 1rem;display:flex;justify-content:space-between;align-items:center; }
 .player-summary small { color:#64748b; }.player-summary strong { font-size:1.35rem; }

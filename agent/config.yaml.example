@@ -12,8 +12,17 @@ heartbeat:
 
 jobs:
   poll_interval_sec: 5
-  long_poll_sec: 30   # 0 = short poll only
+  long_poll_sec: 30   # 0 = short poll only; values above 120 are clamped
+  # Explicitly audited query jobs may run concurrently. State changes and
+  # arbitrary RCON/SEND_COMMAND jobs always remain serialized.
+  max_concurrent_reads: 8
   websocket: false     # future
+
+logs:
+  enabled: false
+  path: ""
+  server_instance_id: ""
+  poll_interval_sec: 2
 
 host:
   name: ""   # optional; control plane may set display name

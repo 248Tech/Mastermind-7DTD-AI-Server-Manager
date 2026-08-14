@@ -11,12 +11,13 @@ import (
 
 // Do performs pairing: exchange token for agent key, then store key at keyPath.
 // Returns hostID and agentKey on success.
-func Do(ctx context.Context, c client.Client, pairingToken string, keyPath string, hostName string) (hostID string, agentKey string, err error) {
+func Do(ctx context.Context, c client.Client, pairingToken string, keyPath string, hostName string, agentVersion string) (hostID string, agentKey string, err error) {
 	meta, err := hostinfo.Gather()
 	if err != nil {
 		return "", "", err
 	}
 	meta.Name = hostName
+	meta.AgentVersion = agentVersion
 	resp, err := c.Pair(ctx, pairingToken, meta)
 	if err != nil {
 		return "", "", err

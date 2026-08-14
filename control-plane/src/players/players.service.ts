@@ -19,9 +19,11 @@ export class PlayersService implements OnModuleInit, OnModuleDestroy {
     this.polling = true;
     try {
       const servers = await this.prisma.serverInstance.findMany({
-        where: { gameType: { slug: '7dtd' } }, select: { id: true, orgId: true },
+        where: { gameType: { slug: '7dtd' } }, select: { id: true, orgId: true, host: { select: { lastMetrics: true } } },
       });
       for (const server of servers) {
+        const metrics = (server.host.lastMetrics ?? {}) as Record<string, unknown>;
+        if (metrics.gameReachable !== true) continue;
         const member = await this.prisma.userOrg.findFirst({ where: { orgId: server.orgId }, orderBy: { createdAt: 'asc' }, select: { userId: true } });
         if (!member) continue;
         const recent = await this.prisma.job.findFirst({ where: { serverInstanceId: server.id, type: 'PLAYER_LIST_SYNC', createdAt: { gte: new Date(Date.now() - 45_000) } } });

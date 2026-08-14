@@ -7,10 +7,13 @@ import (
 	"errors"
 	"flag"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mastermind/agent/internal/client"
@@ -30,6 +33,10 @@ var (
 	configPath = flag.String("config", "/etc/mastermind-agent/config.yaml", "Config file (YAML or JSON)")
 	logLevel   = flag.String("log", "info", "Log level: debug, info, warn, error")
 )
+
+// version is overridden in release builds with:
+// -ldflags "-X main.version=<release>"
+var version = "dev"
 
 func main() {
 	flag.Parse()
@@ -61,7 +68,7 @@ func main() {
 	} else if cfg.PairingToken != "" {
 		cl := client.NewHTTPClient(cfg.ControlPlaneURL, "")
 		var key string
-		hostID, key, err = pairing.Do(context.Background(), cl, cfg.PairingToken, keyPath, cfg.Host.Name)
+		hostID, key, err = pairing.Do(context.Background(), cl, cfg.PairingToken, keyPath, cfg.Host.Name, version)
 		if err != nil {
 			slog.Error("pairing failed", "err", err)
 			os.Exit(1)
@@ -78,11 +85,15 @@ func main() {
 
 	cl := client.NewHTTPClient(cfg.ControlPlaneURL, agentKey)
 
+	var gameProbe heartbeat.GameProbe
 	if shouldDiscoverSevenDTD(cfg) {
 		discovered, err := discovery.DiscoverSevenDTD(cfg.Discovery.SevenDTD)
 		if err != nil {
 			slog.Warn("7dtd discovery failed", "err", err)
 		} else {
+			if discovered.TelnetHost != "" && discovered.TelnetPort > 0 {
+				gameProbe.Address = net.JoinHostPort(discovered.TelnetHost, strconv.Itoa(discovered.TelnetPort))
+			}
 			err = cl.SyncDiscoveredServer(context.Background(), hostID, "7dtd", &client.DiscoveredServer{
 				Name:           discovered.Name,
 				InstallPath:    discovered.InstallPath,
@@ -100,12 +111,12 @@ func main() {
 		}
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// Heartbeat loop
 	interval := time.Duration(cfg.Heartbeat.IntervalSec) * time.Second
-	go heartbeat.Run(ctx, cl, hostID, cfg.Host.Name, interval, "")
+	go heartbeat.Run(ctx, cl, hostID, cfg.Host.Name, interval, version, gameProbe)
 
 	registry := games.NewRegistry()
 	registry.Register(sevendtd.NewAdapter())
@@ -113,7 +124,7 @@ func main() {
 	exec := &execute.RegistryExecutor{Registry: registry}
 
 	// Job polling loop (long-poll if configured)
-	go jobs.Loop(ctx, cl, hostID, cfg.Jobs.PollIntervalSec, cfg.Jobs.LongPollSec, exec)
+	go jobs.Loop(ctx, cl, hostID, cfg.Jobs.PollIntervalSec, cfg.Jobs.LongPollSec, exec, cfg.Jobs.MaxConcurrentReads)
 	if cfg.Logs.Enabled && cfg.Logs.Path != "" && cfg.Logs.ServerInstanceID != "" {
 		go logtail.Run(ctx, cl, hostID, cfg.Logs.ServerInstanceID, cfg.Logs.Path, time.Duration(cfg.Logs.PollIntervalSec)*time.Second)
 	}

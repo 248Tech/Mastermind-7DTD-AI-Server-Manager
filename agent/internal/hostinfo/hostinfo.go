@@ -2,7 +2,6 @@ package hostinfo
 
 import (
 	"bufio"
-	"net"
 	"os"
 	"runtime"
 	"strconv"
@@ -20,21 +19,19 @@ var cpuState struct {
 	idle  uint64
 }
 
+// staticMetadata is captured once. Architecture and the monitored filesystem
+// do not change during an agent process lifetime, while utilization does.
+var staticMetadata = client.HostMetadata{CPU: runtime.GOARCH, DiskPath: "/"}
+
 func Gather() (*client.HostMetadata, error) {
-	meta := &client.HostMetadata{ReportedAt: time.Now().UTC(), CPU: runtime.GOARCH, DiskPath: "/"}
+	meta := staticMetadata
+	meta.ReportedAt = time.Now().UTC()
 	meta.CPUPercent = cpuPercent()
 	meta.RamTotalMB, meta.MemFreeMB = memoryMB()
 	meta.MemTotalMB = uint64(meta.RamTotalMB)
 	meta.RamUsedMB = meta.RamTotalMB - float64(meta.MemFreeMB)
 	meta.DiskUsedGB, meta.DiskFreeMB = diskUsage()
-	start := time.Now()
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:26900", 2*time.Second)
-	meta.LatencyMS = float64(time.Since(start).Microseconds()) / 1000
-	meta.GameReachable = err == nil
-	if conn != nil {
-		_ = conn.Close()
-	}
-	return meta, nil
+	return &meta, nil
 }
 
 func cpuPercent() float64 {

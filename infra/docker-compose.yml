@@ -51,6 +51,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       JWT_AGENT_SECRET: ${JWT_AGENT_SECRET:-change-me-in-production}
       OPENAI_KEY_ENCRYPTION_SECRET: ${OPENAI_KEY_ENCRYPTION_SECRET:-${JWT_SECRET:-change-me-in-production}}
+      MOD_UPLOAD_DIR: /var/lib/mastermind/uploads
+    volumes:
+      - mod_uploads:/var/lib/mastermind/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,6 +91,8 @@ services:
     volumes:
       - /opt/7dtd/userdata/Saves/Rotterdam/Builder/map:/7dtd-map:ro
       - /opt/7dtd/userdata/Saves/Rotterdam/Builder:/7dtd-save:ro
+      - /opt/7dtd/userdata/GeneratedWorlds/Rotterdam/map_info.xml:/7dtd-world/map_info.xml:ro
+      - /opt/7dtd/logs/server.log:/7dtd-logs/server.log:ro
     depends_on:
       control-plane:
         condition: service_healthy
@@ -148,3 +153,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  mod_uploads:

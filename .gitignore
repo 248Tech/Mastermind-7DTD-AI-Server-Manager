@@ -51,3 +51,7 @@ control-plane/prisma/*.db-journal
 # Misc
 *.local
 .cache/
+
+# Host-specific privilege policies contain deployment paths. Keep installed
+# copies local and publish only portable examples/documentation.
+infra/agent/*.sudoers

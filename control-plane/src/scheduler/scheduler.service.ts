@@ -109,8 +109,22 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       telnet_password: schedule.serverInstance.telnetPassword ?? undefined,
       config: schedule.serverInstance.config ?? undefined,
       avoid_blood_moon_restart: schedule.serverInstance.org.avoidBloodMoonRestart,
+      schedule_id: schedule.id,
       ...configuredPayload,
     };
+
+    // Do not stack periodic work while the previous occurrence still waits or
+    // runs. A missed backup interval is safer than an unbounded mutation queue.
+    const activeRun = await this.prisma.jobRun.findFirst({ where: {
+      status: { in: ['pending', 'running'] },
+      job: { serverInstanceId, type: effectiveJobType, payload: { path: ['schedule_id'], equals: schedule.id } },
+    }});
+    if (activeRun) {
+      const nextRun = this.computeNextRun(schedule, new Date());
+      await this.prisma.schedule.update({ where: { id: scheduleId }, data: { lastRunAt: new Date(), lastRunStatus: 'skipped_busy', nextRunAt: nextRun ?? undefined } });
+      if (nextRun) await this.schedulerQueue!.add('schedule_fire', { scheduleId }, { jobId: `schedule:${scheduleId}:${nextRun.getTime()}`, delay: Math.max(0, nextRun.getTime()-Date.now()) });
+      return;
+    }
 
     let createdJobId: string | null = null;
     try {

@@ -14,6 +14,8 @@ import {
   useMapEvents,
 } from "react-leaflet";
 import L from "leaflet";
+import { api, ServerInstance } from "../../../lib/api";
+import { getStoredOrgId } from "../../../lib/auth";
 type Entity = {
   id: string | number;
   name: string;
@@ -40,6 +42,25 @@ type Claim = {
   size: number;
 };
 type Region = { name: string; x: number; z: number };
+type WorldInfo = {
+  width: number;
+  height: number;
+  gameVersion?: string;
+  seed?: string;
+  source: string;
+};
+type CommandJobRun = {
+  status: string;
+  result?: { errorMessage?: string } | null;
+};
+type VisitMapStatus = {
+  state: "idle" | "running" | "stalled" | "stopped" | "complete";
+  percent?: number;
+  done?: number;
+  total?: number;
+  estimatedSeconds?: number | null;
+  at?: string;
+};
 const HISTORY_KEY = "mm_live_map_history_v1",
   HISTORY_RETENTION_MS = 72 * 60 * 60 * 1000,
   MAX_HISTORY = 25_920;
@@ -91,6 +112,7 @@ function PlayerTracker({ player }: { player?: Entity }) {
   return null;
 }
 export default function LiveMapClient() {
+  const orgId = getStoredOrgId();
   const [ready, setReady] = useState(false),
     [error, setError] = useState(""),
     [feedError, setFeedError] = useState(""),
@@ -100,13 +122,20 @@ export default function LiveMapClient() {
     [hostiles, setHostiles] = useState<Entity[]>([]),
     [claims, setClaims] = useState<Claim[]>([]),
     [regionFiles, setRegionFiles] = useState<Region[]>([]),
+    [worldInfo, setWorldInfo] = useState<WorldInfo | null>(null),
     [gameTime, setGameTime] = useState(""),
     [history, setHistory] = useState<Snapshot[]>([]),
     [historyIndex, setHistoryIndex] = useState<number | null>(null),
     [historyWindow, setHistoryWindow] = useState(120),
     [trackedPlayer, setTrackedPlayer] = useState(""),
     [trackingColor, setTrackingColor] = useState("#ff2bd6"),
-    [showClaims, setShowClaims] = useState(true);
+    [showClaims, setShowClaims] = useState(true),
+    [showPlayerNames, setShowPlayerNames] = useState(true),
+    [server, setServer] = useState<ServerInstance | null>(null),
+    [visitBusy, setVisitBusy] = useState(false),
+    [visitNotice, setVisitNotice] = useState(""),
+    [visitStatus, setVisitStatus] = useState<VisitMapStatus>({ state: "idle" }),
+    [visitSection, setVisitSection] = useState(0);
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
@@ -150,6 +179,10 @@ export default function LiveMapClient() {
       get("api/map/config")
         .then((v) => active && setConfig(v))
         .catch((e) => active && setError(e.message));
+    const loadWorldInfo = () =>
+      get("world-info")
+        .then((value) => active && setWorldInfo(value))
+        .catch(() => undefined);
     const update = () => {
       void get("entities-live")
         .then((e) => {
@@ -194,8 +227,12 @@ export default function LiveMapClient() {
           );
         })
         .catch(() => undefined);
+      void get("visitmap-status")
+        .then((status) => active && setVisitStatus(status))
+        .catch(() => undefined);
     };
     loadConfig();
+    loadWorldInfo();
     update();
     const timer = setInterval(update, 10000);
     return () => {
@@ -203,6 +240,72 @@ export default function LiveMapClient() {
       clearInterval(timer);
     };
   }, [ready]);
+  useEffect(() => {
+    if (!ready || !orgId) return;
+    api
+      .get<ServerInstance[]>(`/api/orgs/${orgId}/server-instances`)
+      .then((servers) =>
+        setServer(servers.find((candidate) => candidate.gameType === "7dtd") ?? null),
+      )
+      .catch(() => setVisitNotice("Could not find the registered 7DTD server."));
+  }, [ready, orgId]);
+
+  async function sendVisitCommand(command: string, successMessage: string) {
+    if (!orgId || !server || visitBusy) return;
+    setVisitBusy(true);
+    setVisitNotice("");
+    try {
+      const queued = await api.post<{ jobRunId: string }>(
+        `/api/orgs/${orgId}/jobs`,
+        { serverInstanceId: server.id, type: "RCON", payload: { command } },
+      );
+      let run: CommandJobRun | null = null;
+      for (let attempt = 0; attempt < 120; attempt++) {
+        run = await api.get<CommandJobRun | null>(
+          `/api/orgs/${orgId}/jobs/runs/${queued.jobRunId}`,
+        );
+        if (run?.status === "success" || run?.status === "failed") break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (run?.status !== "success") {
+        throw new Error(
+          run?.result?.errorMessage || "The visitmap command did not start within 30 seconds.",
+        );
+      }
+      if (command.startsWith("visitmap ") && command !== "visitmap stop") {
+        setVisitStatus({ state: "running", percent: 0 });
+      }
+      setVisitNotice(successMessage);
+    } catch (commandError) {
+      setVisitNotice(
+        commandError instanceof Error ? commandError.message : "visitmap command failed.",
+      );
+    } finally {
+      setVisitBusy(false);
+    }
+  }
+
+  async function stopVisitMap() {
+    await sendVisitCommand("visitmap stop", "Stop command delivered; verifying server progress…");
+    window.setTimeout(async () => {
+      try {
+        const response = await fetch("/api/live-map/visitmap-status", { cache: "no-store" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.message || "Status unavailable");
+        const status = (body.data ?? body) as VisitMapStatus;
+        setVisitStatus(status);
+        setVisitNotice(
+          status.state === "stopped" || status.state === "idle" || status.state === "complete"
+            ? "Map generation is not running."
+            : status.state === "stalled"
+              ? "Stop was sent, but the stalled game thread has not processed it. A server restart may be required."
+              : "Stop was sent, but map generation is still reporting progress.",
+        );
+      } catch (statusError) {
+        setVisitNotice(statusError instanceof Error ? statusError.message : "Could not verify visitmap status.");
+      }
+    }, 3500);
+  }
   if (error)
     return (
       <div>
@@ -237,6 +340,24 @@ export default function LiveMapClient() {
       </div>
     );
   const size = config.mapSize || { x: 8192, y: 255, z: 8192 };
+  const visitWidth = Math.floor(worldInfo?.width || size.x);
+  const visitHeight = Math.floor(worldInfo?.height || size.z);
+  const worldX1 = -Math.floor(visitWidth / 2);
+  const worldZ1 = -Math.floor(visitHeight / 2);
+  const worldX2 = worldX1 + visitWidth - 1;
+  const worldZ2 = worldZ1 + visitHeight - 1;
+  const sectionColumn = visitSection % 4;
+  const sectionRow = Math.floor(visitSection / 4);
+  const sectionWidth = Math.ceil(visitWidth / 4);
+  const sectionHeight = Math.ceil(visitHeight / 4);
+  const visitX1 = worldX1 + sectionColumn * sectionWidth;
+  const visitX2 = Math.min(worldX2, visitX1 + sectionWidth - 1);
+  const visitZ2 = worldZ2 - sectionRow * sectionHeight;
+  const visitZ1 = Math.max(worldZ1, visitZ2 - sectionHeight + 1);
+  const visitCommand = `visitmap ${visitX1} ${visitZ1} ${visitX2} ${visitZ2}`;
+  const fullVisitCommand = `visitmap ${worldX1} ${worldZ1} ${worldX2} ${worldZ2}`;
+  const visitRunning = visitStatus.state === "running" || visitStatus.state === "stalled";
+  const visitBlocked = players.length > 0 || visitRunning;
   const regionDefinitions = regionFiles.length
     ? regionFiles
     : Array.from(
@@ -331,6 +452,12 @@ export default function LiveMapClient() {
             Terrain and entities refresh every 10 seconds. Inspired by CSMM;
             powered by live 7DTD data.
           </p>
+          {worldInfo && (
+            <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 5 }}>
+              World size: <strong style={{ color: "#e2e8f0" }}>{worldInfo.width.toLocaleString()} × {worldInfo.height.toLocaleString()} blocks</strong>
+              <span style={{ color: "#64748b" }}> · read from {worldInfo.source}</span>
+            </div>
+          )}
           <div style={{ display: "flex", gap: 10, marginTop: 6, fontSize: 12 }}>
             <span style={{ color: "#60a5fa" }}>
               Players {viewed.players.length}
@@ -347,8 +474,122 @@ export default function LiveMapClient() {
             )}
           </div>
         </div>
-        <strong style={{ color: "#fbbf24" }}>{gameTime}</strong>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <strong style={{ color: "#fbbf24" }}>{gameTime}</strong>
+          <select
+            aria-label="Map generation section"
+            value={visitSection}
+            disabled={visitBusy || visitRunning}
+            onChange={(event) => setVisitSection(Number(event.target.value))}
+            style={{ background: "#0d0d14", color: "#e2e8f0", border: "1px solid #475569", borderRadius: 6, padding: "7px 9px" }}
+          >
+            {Array.from({ length: 16 }, (_, index) => {
+              const row = Math.floor(index / 4) + 1;
+              const column = (index % 4) + 1;
+              return <option key={index} value={index}>Section {index + 1}/16 · row {row}, column {column}</option>;
+            })}
+          </select>
+          <button
+            disabled={!server || !worldInfo || visitBusy || visitBlocked}
+            title={
+              players.length > 0
+                ? `Maintenance-only operation: ${players.length} player${players.length === 1 ? " is" : "s are"} connected`
+                : visitRunning
+                  ? `visitmap is ${visitStatus.state}`
+                : worldInfo
+                  ? visitCommand
+                  : "Waiting for map_info.xml"
+            }
+            onClick={() => {
+              if (!worldInfo) return;
+              const confirmed = window.confirm(
+                `Generate section ${visitSection + 1} of 16 for the ${visitWidth.toLocaleString()} × ${visitHeight.toLocaleString()} world?\n\nCommand: ${visitCommand}\n\nThis section covers ${(visitX2 - visitX1 + 1).toLocaleString()} × ${(visitZ2 - visitZ1 + 1).toLocaleString()} blocks. Run one section at a time during maintenance.`,
+              );
+              if (confirmed)
+                void sendVisitCommand(
+                  visitCommand,
+                  `Map section ${visitSection + 1}/16 started. Tiles will appear progressively; wait for completion before starting another section.`,
+                );
+            }}
+            style={{
+              background: !server || !worldInfo || visitBusy || visitBlocked ? "#334155" : "#b45309",
+              color: "white",
+              border: 0,
+              borderRadius: 6,
+              padding: "7px 11px",
+              cursor: !server || !worldInfo || visitBusy || visitBlocked ? "not-allowed" : "pointer",
+            }}
+          >
+            {visitBusy
+              ? "Sending…"
+              : players.length > 0
+                ? `Wait for ${players.length} online player${players.length === 1 ? "" : "s"}`
+                : visitRunning
+                  ? `Map generation ${visitStatus.state}`
+                  : `Generate section ${visitSection + 1}/16`}
+          </button>
+          <button
+            disabled={!server || !worldInfo || visitBusy || visitBlocked}
+            title={
+              players.length > 0
+                ? `Maintenance-only operation: ${players.length} player${players.length === 1 ? " is" : "s are"} connected`
+                : visitRunning
+                  ? `visitmap is ${visitStatus.state}`
+                  : worldInfo
+                    ? `High-load operation: ${fullVisitCommand}`
+                    : "Waiting for map_info.xml"
+            }
+            onClick={() => {
+              if (!worldInfo) return;
+              const confirmed = window.confirm(
+                `Generate the ENTIRE ${visitWidth.toLocaleString()} × ${visitHeight.toLocaleString()} world in one operation?\n\nCommand: ${fullVisitCommand}\n\nWARNING: This is extremely demanding and previously froze the game server before completion. The server may become unresponsive and require a forced restart. Section generation is strongly recommended.\n\nOnly continue during maintenance when no players are connected.`,
+              );
+              if (confirmed)
+                void sendVisitCommand(
+                  fullVisitCommand,
+                  "Full-world map generation started. The server may respond slowly; monitor progress below and do not start another generation job.",
+                );
+            }}
+            style={{
+              background: !server || !worldInfo || visitBusy || visitBlocked ? "#334155" : "#9f1239",
+              color: "white",
+              border: "1px solid #fb7185",
+              borderRadius: 6,
+              padding: "7px 11px",
+              cursor: !server || !worldInfo || visitBusy || visitBlocked ? "not-allowed" : "pointer",
+            }}
+          >
+            Generate full map
+          </button>
+          {visitRunning && (
+            <button
+              disabled={!server || visitBusy}
+              title="Stop the current visitmap operation"
+              onClick={() => void stopVisitMap()}
+              style={{
+                background: !server || visitBusy ? "#334155" : "#7f1d1d",
+                color: "white",
+                border: 0,
+                borderRadius: 6,
+                padding: "7px 11px",
+                cursor: !server || visitBusy ? "not-allowed" : "pointer",
+              }}
+            >
+              Stop map generation
+            </button>
+          )}
+        </div>
       </div>
+      <div style={{ color: visitStatus.state === "stalled" ? "#fca5a5" : visitStatus.state === "running" ? "#fbbf24" : "#94a3b8", fontSize: 12, marginBottom: 8 }}>
+        visitmap: <strong>{visitStatus.state}</strong>
+        {visitStatus.total ? ` · ${visitStatus.percent ?? 0}% · ${(visitStatus.done ?? 0).toLocaleString()} / ${visitStatus.total.toLocaleString()} chunks` : ""}
+        {visitStatus.estimatedSeconds ? ` · about ${Math.ceil(visitStatus.estimatedSeconds / 60)} minutes remaining` : ""}
+      </div>
+      {visitNotice && (
+        <div style={{ color: /failed|could not|did not/i.test(visitNotice) ? "#fca5a5" : "#fbbf24", fontSize: 12, marginBottom: 8 }}>
+          {visitNotice}
+        </div>
+      )}
       <div
         style={{
           display: "flex",
@@ -394,6 +635,25 @@ export default function LiveMapClient() {
             />
           </label>
         )}
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            color: "#60a5fa",
+            fontSize: 12,
+            whiteSpace: "nowrap",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={showPlayerNames}
+            onChange={(event) => setShowPlayerNames(event.target.checked)}
+            style={{ accentColor: "#3b82f6" }}
+          />
+          Show player names
+        </label>
         <label
           style={{
             display: "flex",
@@ -493,7 +753,7 @@ export default function LiveMapClient() {
         <MapContainer
           center={[0, 0]}
           zoom={1}
-          minZoom={0}
+          minZoom={-1}
           maxZoom={5}
           crs={crs}
           style={{ height: "100%", width: "100%", background: "#111827" }}
@@ -502,6 +762,8 @@ export default function LiveMapClient() {
           <TileLayer
             url="/api/live-map/map/{z}/{x}/{y}.png"
             tileSize={128}
+            minZoom={-1}
+            minNativeZoom={0}
             maxNativeZoom={config.maxZoom ?? 4}
           />
           <LayersControl position="topright">
@@ -544,6 +806,17 @@ export default function LiveMapClient() {
                         </>
                       )}
                     </Popup>
+                    {showPlayerNames && (
+                      <Tooltip
+                        permanent
+                        direction="top"
+                        offset={[0, -8]}
+                        opacity={1}
+                        className="player-map-name"
+                      >
+                        {e.name}
+                      </Tooltip>
+                    )}
                   </Marker>
                 ))}
               </LayerGroup>

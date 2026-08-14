@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
-import { readFile, readdir } from "fs/promises";
+import { readFile, readdir, open } from "fs/promises";
 import pathModule from "path";
 import net from "net";
 export const dynamic = "force-dynamic";
 const allowed =
-  /^(entities-live|claims-live|regions-live|api\/(map\/config|serverstats)|map\/\d+\/-?\d+\/-?\d+\.png)$/;
+  /^(entities-live|claims-live|regions-live|world-info|visitmap-status|api\/(map\/config|serverstats)|map\/\d+\/-?\d+\/-?\d+\.png)$/;
 type LiveEntity = {
   id: number;
   name: string;
@@ -25,19 +25,19 @@ async function liveEntities() {
       clearTimeout(timer);
       socket.destroy();
       const entities: LiveEntity[] = [];
-      const pattern =
-        /^\d+\. id=(\d+), \[type=([^,\]]+), name=([^,\]]+).*?\], pos=\((-?[\d.]+),\s*(-?[\d.]+),\s*(-?[\d.]+)\).*?dead=(True|False)/gm;
-      let match;
-      while ((match = pattern.exec(output))) {
-        if (match[7] === "True") continue;
+      for (const line of output.split(/\r?\n/)) {
+        const identity = /^\d+\.\s+id=(\d+),\s+\[type=([^,\]]+),\s+name=([^,\]]+)/i.exec(line);
+        const position = /\bpos=\((-?[\d.]+),\s*(-?[\d.]+),\s*(-?[\d.]+)\)/i.exec(line);
+        const dead = /\bdead=(true|false)\b/i.exec(line);
+        if (!identity || !position || dead?.[1].toLowerCase() === "true") continue;
         entities.push({
-          id: Number(match[1]),
-          type: match[2],
-          name: match[3],
+          id: Number(identity[1]),
+          type: identity[2].trim(),
+          name: identity[3].trim(),
           position: {
-            x: Number(match[4]),
-            y: Number(match[5]),
-            z: Number(match[6]),
+            x: Number(position[1]),
+            y: Number(position[2]),
+            z: Number(position[3]),
           },
         });
       }
@@ -60,6 +60,48 @@ async function liveEntities() {
       reject(error);
     });
   });
+}
+
+async function offlineMapConfig() {
+  let maxZoom = 4;
+  try {
+    const levels = await readdir("/7dtd-map", { withFileTypes: true });
+    const zooms = levels
+      .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+      .map((entry) => Number(entry.name));
+    if (zooms.length) maxZoom = Math.max(...zooms);
+  } catch {
+    // The caller will still get a useful response; missing tiles return 404.
+  }
+
+  let mapSize = 10240;
+  try {
+    const files = await readdir("/7dtd-save/Region", { withFileTypes: true });
+    const coordinates = files.flatMap((entry) => {
+      const match = entry.isFile()
+        ? /^r\.(-?\d+)\.(-?\d+)\.7rg$/i.exec(entry.name)
+        : null;
+      return match ? [[Number(match[1]), Number(match[2])]] : [];
+    });
+    if (coordinates.length) {
+      const xs = coordinates.map(([x]) => x);
+      const zs = coordinates.map(([, z]) => z);
+      mapSize = Math.max(
+        (Math.max(...xs) - Math.min(...xs) + 1) * 512,
+        (Math.max(...zs) - Math.min(...zs) + 1) * 512,
+      );
+    }
+  } catch {
+    // 10240 is a safe display extent for this installation.
+  }
+
+  return {
+    enabled: true,
+    mapBlockSize: 128,
+    maxZoom,
+    mapSize: { x: mapSize, y: 255, z: mapSize },
+    offline: true,
+  };
 }
 export async function GET(
   request: NextRequest,
@@ -152,6 +194,116 @@ export async function GET(
       );
     }
   }
+  if (path === "world-info") {
+    try {
+      const xml = (await readFile("/7dtd-world/map_info.xml", "utf8")).replace(
+        /^\uFEFF/,
+        "",
+      );
+      const property = (name: string) =>
+        xml.match(
+          new RegExp(
+            `<property\\s+name=["']${name}["']\\s+value=["']([^"']*)["']`,
+            "i",
+          ),
+        )?.[1] || "";
+      const dimensions = property("HeightMapSize")
+        .split(",")
+        .map((value) => Number(value.trim()));
+      if (
+        dimensions.length !== 2 ||
+        dimensions.some((value) => !Number.isFinite(value) || value <= 0)
+      ) {
+        throw new Error("HeightMapSize is missing from map_info.xml");
+      }
+      return Response.json(
+        {
+          data: {
+            width: dimensions[0],
+            height: dimensions[1],
+            gameVersion: property("GameVersion"),
+            seed: property("Seed"),
+            source: "map_info.xml",
+          },
+        },
+        { headers: { "cache-control": "private, max-age=300" } },
+      );
+    } catch (error) {
+      return Response.json(
+        {
+          message:
+            error instanceof Error ? error.message : "World information unavailable",
+        },
+        { status: 503 },
+      );
+    }
+  }
+  if (path === "visitmap-status") {
+    try {
+      const handle = await open("/7dtd-logs/server.log", "r");
+      try {
+        const info = await handle.stat();
+        const length = Math.min(info.size, 512 * 1024);
+        const buffer = Buffer.alloc(length);
+        await handle.read(buffer, 0, length, Math.max(0, info.size - length));
+        const lines = buffer.toString("utf8").split(/\r?\n/);
+        let progress: {
+          percent: number;
+          done: number;
+          total: number;
+          estimatedSeconds: number | null;
+          at: string;
+          timestamp: number;
+        } | null = null;
+        let stopTimestamp = 0;
+        let startTimestamp = 0;
+        let terminal: { state: "stopped" | "complete"; timestamp: number } | null = null;
+        for (const line of lines) {
+          const timestampText = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/)?.[1];
+          const timestamp = timestampText ? Date.parse(`${timestampText}Z`) : 0;
+          const match = /VisitMap \((\d+)%\):\s*(\d+)\s*\/\s*(\d+) chunks done(?: \(estimated time left ([\d.]+) seconds\))?/i.exec(line);
+          if (match) {
+            progress = {
+              percent: Number(match[1]),
+              done: Number(match[2]),
+              total: Number(match[3]),
+              estimatedSeconds: match[4] ? Number(match[4]) : null,
+              at: timestampText ? `${timestampText}Z` : "",
+              timestamp,
+            };
+          }
+          if (/Executing command 'visitmap stop'/i.test(line)) stopTimestamp = timestamp;
+          else if (/Executing command 'visitmap (?:full|-?\d+)/i.test(line)) startTimestamp = timestamp;
+          if (/VisitMap/i.test(line) && !/chunks done/i.test(line)) {
+            if (/\b(?:stopped|cancelled|canceled|aborted)\b/i.test(line)) terminal = { state: "stopped", timestamp };
+            else if (/\b(?:completed|complete|finished)\b/i.test(line)) terminal = { state: "complete", timestamp };
+          }
+        }
+        let state: "idle" | "running" | "stalled" | "stopped" | "complete" = "idle";
+        const progressTimestamp = progress?.timestamp ?? 0;
+        if (stopTimestamp >= Math.max(startTimestamp, progressTimestamp)) state = "stopped";
+        else if (terminal && terminal.timestamp >= Math.max(startTimestamp, progressTimestamp)) state = terminal.state;
+        else if (startTimestamp > progressTimestamp) {
+          state = Date.now() - startTimestamp < 30_000 ? "running" : "stalled";
+        } else if (progress) {
+          if (progress.percent >= 100 || progress.done >= progress.total) state = "complete";
+          else if (Date.now() - progress.timestamp < 30_000) state = "running";
+          else state = "stalled";
+        }
+        return Response.json(
+          { data: { state, ...(progress || {}) } },
+          { headers: { "cache-control": "no-store" } },
+        );
+      } finally {
+        await handle.close();
+      }
+    } catch (error) {
+      return Response.json(
+        { message: error instanceof Error ? error.message : "visitmap status unavailable" },
+        { status: 503 },
+      );
+    }
+  }
   if (path === "regions-live") {
     try {
       const files = await readdir("/7dtd-save/Region", { withFileTypes: true });
@@ -181,8 +333,8 @@ export async function GET(
       return Response.json(
         {
           data: {
-            players: all.filter((e) => e.type === "EntityPlayer"),
-            animals: all.filter((e) => /Animal/i.test(e.type)),
+            players: all.filter((e) => /EntityPlayer/i.test(e.type)),
+            animals: all.filter((e) => /Animal/i.test(`${e.type} ${e.name}`)),
             hostiles: all.filter((e) => /Zombie|Enemy|Vulture/i.test(e.type)),
           },
         },
@@ -234,6 +386,12 @@ export async function GET(
   const upstream = await fetch(`${base}/${path}${request.nextUrl.search}`, {
     cache: "no-store",
   }).catch(() => null);
+  if (path === "api/map/config" && !upstream?.ok) {
+    return Response.json(
+      { data: await offlineMapConfig() },
+      { headers: { "cache-control": "no-store" } },
+    );
+  }
   if (!upstream)
     return Response.json(
       { message: "7DTD web map is unavailable" },

@@ -4,8 +4,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	maxLongPollSeconds = 120
+	maxConcurrentReads = 64
 )
 
 // Config is the agent configuration (YAML or JSON via file).
@@ -32,9 +38,10 @@ type HeartbeatCfg struct {
 }
 
 type JobsCfg struct {
-	PollIntervalSec int  `yaml:"poll_interval_sec" json:"poll_interval_sec"`
-	LongPollSec     int  `yaml:"long_poll_sec" json:"long_poll_sec"` // 0 = short poll
-	WebSocket       bool `yaml:"websocket" json:"websocket"`         // future
+	PollIntervalSec    int  `yaml:"poll_interval_sec" json:"poll_interval_sec"`
+	LongPollSec        int  `yaml:"long_poll_sec" json:"long_poll_sec"` // 0 = short poll
+	MaxConcurrentReads int  `yaml:"max_concurrent_reads" json:"max_concurrent_reads"`
+	WebSocket          bool `yaml:"websocket" json:"websocket"` // future
 }
 
 type HostCfg struct {
@@ -114,6 +121,16 @@ func (c *Config) Env() {
 	if v := os.Getenv("MASTERMIND_7DTD_NAME"); v != "" {
 		c.Discovery.SevenDTD.Name = v
 	}
+	if v := os.Getenv("MASTERMIND_JOBS_MAX_CONCURRENT_READS"); v != "" {
+		// Invalid or non-positive environment values are ignored so they cannot
+		// accidentally disable the job loop's read worker pool.
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			if n > maxConcurrentReads {
+				n = maxConcurrentReads
+			}
+			c.Jobs.MaxConcurrentReads = n
+		}
+	}
 }
 
 // Defaults applies MVP defaults (heartbeat 5s, key path).
@@ -126,6 +143,16 @@ func (c *Config) Defaults() {
 	}
 	if c.Jobs.PollIntervalSec <= 0 {
 		c.Jobs.PollIntervalSec = 5
+	}
+	if c.Jobs.LongPollSec < 0 {
+		c.Jobs.LongPollSec = 0
+	} else if c.Jobs.LongPollSec > maxLongPollSeconds {
+		c.Jobs.LongPollSec = maxLongPollSeconds
+	}
+	if c.Jobs.MaxConcurrentReads <= 0 {
+		c.Jobs.MaxConcurrentReads = 8
+	} else if c.Jobs.MaxConcurrentReads > maxConcurrentReads {
+		c.Jobs.MaxConcurrentReads = maxConcurrentReads
 	}
 	if c.Logs.PollIntervalSec <= 0 {
 		c.Logs.PollIntervalSec = 2

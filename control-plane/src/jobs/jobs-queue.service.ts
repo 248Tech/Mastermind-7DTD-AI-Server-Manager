@@ -52,12 +52,13 @@ export class JobsQueueService implements OnModuleDestroy {
    * BullMQ doesn't support per-host filtering natively, so we inspect waiting jobs.
    * For MVP (single host per org usually), this returns the first waiting job for the host.
    */
-  async getNextJobForHost(orgId: string, hostId: string): Promise<QueueJobData | null> {
+  async getNextJobForHost(orgId: string, hostId: string, mutationBusy = false): Promise<QueueJobData | null> {
     const queue = this.getQueue(orgId);
     // Get waiting jobs (up to 50 to find matching hostId)
-    const waiting = await queue.getJobs(['waiting', 'delayed'], 0, 50);
+    const waiting = await queue.getJobs(['waiting', 'delayed'], 0, 499);
     for (const job of waiting) {
       if (job.data.hostId === hostId) {
+        if (mutationBusy && !this.isReadOnly(job.data.type)) continue;
         // Move job to active by promoting it
         try {
           if (job.delay > 0) await job.changeDelay(0);
@@ -71,5 +72,12 @@ export class JobsQueueService implements OnModuleDestroy {
       }
     }
     return null;
+  }
+
+  private isReadOnly(type: string): boolean {
+    // Keep this allowlist aligned with the agent. Arbitrary RCON and
+    // SEND_COMMAND payloads can mutate game state and must stay behind the
+    // per-host mutation gate.
+    return ['MOD_LIST','MOD_QUARANTINE_LIST','MOD_CONFIG_READ','PROFILE_LIST','PROFILE_READ','PLAYER_LIST_SYNC','PLAYER_ADMIN_LIST','SAVE_LIST'].includes(type);
   }
 }

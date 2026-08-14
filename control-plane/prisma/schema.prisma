@@ -24,6 +24,9 @@ model Org {
   avoidBloodMoonRestart Boolean @default(false) @map("avoid_blood_moon_restart")
   openaiApiKeyEncrypted String?  @map("openai_api_key_encrypted") @db.Text
   openaiModel           String   @default("gpt-5.3-codex") @map("openai_model")
+  modAiProvider         String   @default("codex") @map("mod_ai_provider")
+  kimiApiKeyEncrypted   String?  @map("kimi_api_key_encrypted") @db.Text
+  kimiModel             String   @default("kimi-for-coding") @map("kimi_model")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 

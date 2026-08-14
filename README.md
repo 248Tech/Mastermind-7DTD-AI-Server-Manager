@@ -58,40 +58,41 @@
 
 ---
 
-## Release 0.0.10 (August 13, 2026)
+## Release 0.0.11 (August 14, 2026)
 
 ### Highlights
 
-- Codex-assisted mod configuration editing through the OpenAI Responses API, with encrypted API-key storage, model testing, structured proposals, mandatory line diff review, explicit approval, and no automatic writes.
-- Server Tools page with configurable high-ping enforcement and country-based kick/ban policies.
-- Improved Players experience with search, filters, sorting, summary cards, responsive mobile cards, level/combat statistics, inventory inspection, administrator controls, and last-known IP addresses.
-- Live map region labels now use actual save filenames for every loaded region tile.
-- Profile Editor associates EOS/Steam `.ttp` files with player names from `players.xml` when possible.
-- Organization administrators can reset lower-tier account passwords without seeing or knowing the original password.
+- Selectable Codex or Kimi Code mod-editing agents with encrypted provider credentials, connection testing, structured proposals, mandatory diff approval, and no automatic writes.
+- Native chat moderation with editable per-word actions, flood controls, mute/unmute, audited actions, and Discord suppression for blocked messages.
+- Safe ZIP mod uploads that discover `ModInfo.xml`, remove redundant wrapper/`Mods` folders, reject unsafe archives, normalize permissions, and stage every upload in quarantine.
+- Live-map world bounds from `map_info.xml`, section or explicitly warned full-world `visitmap` generation, truthful start/stop status, player name tags, land claims, entity tracking, and stable extended zoom/history controls.
+- Profile Editor injection status for queued/applied `.ttp` changes, including staged and applied timestamps.
+- A hardened Go host agent with persistent batched log tailing, pooled HTTP connections, bounded concurrency, jittered retry, configured game reachability, metrics, version reporting, and graceful systemd shutdown.
+- Scheduler overlap prevention and stale-running-job recovery keep long operations from silently blocking later work.
 
 ---
 
-## Current features (v0.0.10)
+## Current features (v0.0.11)
 
 ### Implemented end-to-end
 
 - **Authentication and organizations:** register/login, JWT sessions, organization membership and roles, admin-created operator/viewer accounts, protected account deletion, administrator resets for lower-tier passwords, protected pairing-token creation, agent-key rotation, and password changes using salted scrypt with legacy-hash migration.
-- **Host agents:** one-time pairing, persistent agent identity, heartbeat and inventory reporting, long-poll job execution, same-host Linux 7DTD autodiscovery, and automatic server registration.
+- **Host agents:** one-time pairing, persistent agent identity, versioned heartbeat/inventory reporting, configured 7DTD reachability, same-host Linux autodiscovery, automatic server registration, pooled HTTP connections, bounded jittered retries, bounded read concurrency, serialized mutations, and graceful systemd shutdown.
 - **Server-first dashboard:** registered servers are primary; each server opens a management view with overview, controls, console, and server-filtered job history.
 - **7DTD controls:** start, graceful stop, verified restart, safe restart with countdown/save/backup/kick verification, emergency process kill, telnet console commands, and a confirmed save wipe that safely stops or escalates a hung server before deleting only the configured save and verifying fresh-world creation.
 - **Blood Moon safety:** an optional organization setting defers restart jobs on in-game days divisible by 7 until the next game day begins.
-- **Jobs and accountability:** queue-backed start/stop/restart/safe-restart/kill/RCON/custom jobs, result/output tracking, schedule and batch support, per-server filtering, initiating-account attribution, and serialized mutations with concurrent read-only inventory jobs.
-- **Logs and console:** agent log tailing, database persistence, incremental live viewing, optional auto-scroll, selectable retention, keyword alert definitions, match history, and an audited telnet command box.
-- **Chat:** player and server-authored chat extraction, stored history, player-only per-server Discord webhook relay with mention suppression, and operator replies automatically sent as server `say` messages.
+- **Jobs and accountability:** queue-backed start/stop/restart/safe-restart/kill/RCON/custom jobs, result/output tracking, schedule and batch support, per-server filtering, initiating-account attribution, stale-run recovery, durable mutation backpressure, and bounded concurrent read-only inventory jobs.
+- **Logs and console:** persistent open-file log following with rotation/truncation recovery, ordered 64 KiB/350 ms batches, retry-safe delivery, database persistence, incremental live viewing, optional auto-scroll, selectable retention, keyword alert definitions, match history, and an audited telnet command box.
+- **Chat:** player and server-authored chat extraction, stored history, player-only per-server Discord webhook relay with mention suppression, operator replies automatically sent as server `say` messages, and native bad-word/flood moderation with editable log/warn/kick actions plus mute/unmute controls.
 - **Health:** host-scoped CPU, RAM, disk, agent latency, and real 7DTD reachability samples with current values, historical averages, and configurable polling intervals.
 - **Players:** authoritative `lp` polling every 60 seconds by default, reconciled Steam/EOS identity capture, last-known IP address, online state, current/lifetime playtime, last seen, level, zombie/player kills, deaths, inventory inspection, search/filter/sort controls, responsive mobile cards, kick/ban/kick-all actions, post-kick verification, and XML-backed administrator status with promote/demote controls.
-- **Mods:** fast active/quarantined inventories, `ModInfo.xml` name/version/author/website parsing, activation timestamps, sortable columns, single/bulk selection, quarantine, permission-safe restore, constrained permanent deletion, safe configuration editing, and optional Codex-assisted changes with mandatory diff review and approval before an atomic save.
+- **Mods:** fast active/quarantined inventories, `ModInfo.xml` name/version/author/website parsing, activation timestamps, sortable columns, single/bulk selection, quarantine, permission-safe restore, constrained permanent deletion, safe configuration editing, normalized ZIP upload directly to quarantine, and selectable Codex/Kimi Code proposals with mandatory diff review and approval before an atomic save.
 - **Connection protection tools:** per-server high-ping kicker with consecutive-sample threshold and cooldown, plus country-based kick/ban policies when the game exposes a real public player IP. Relay-masked/private IPs are deliberately skipped.
 - **RegionHealer:** status information plus start/stop jobs for a separately installed RegionHealer-v2 service.
-- **7D2D Profile Editor:** isolated integration of RussDev7's GPL-3.0 TTP Profile Editor with server profile discovery, staged live edits, timestamped original `.ttp`/`.ttp.bak` archives plus audit metadata, atomic installation on the next Mastermind-managed start/restart, and visible/backend attribution.
-- **Live server map:** authenticated official terrain map with live players, animals, hostiles, coordinates, game time, region grid, owned land-claim blocks and protection areas, selectable player tracking and trail colors, plus selectable 5-minute through 72-hour browser-local history. The 7DTD dashboard and telnet ports remain private.
+- **7D2D Profile Editor:** isolated integration of RussDev7's GPL-3.0 TTP Profile Editor with server profile discovery, staged live edits, queued/applied injection status and timestamps, timestamped original `.ttp`/`.ttp.bak` archives plus audit metadata, atomic installation on the next Mastermind-managed start/restart, and visible/backend attribution.
+- **Live server map:** authenticated official terrain map with `map_info.xml` world bounds, live players/animals/hostiles, optional player name tags, coordinates, game time, region grid, owned land-claim blocks/protection areas, selectable tracking/trail colors, stable extended zoom, 5-minute through 72-hour browser-local history, and guarded section/full-world `visitmap` generation controls. The dashboard and telnet ports remain private.
 - **Saves:** combined full-world and RegionHealer snapshot inventory, timestamp/game-day metadata, manual full backup, confirmed server-off restore/delete, full-backup retention, and scheduled backups from every 15 minutes through daily.
-- **Schedules:** safe scheduled restarts, a simple day/hour/minute builder, advanced five-field cron entry, and automatic full-world backup intervals.
+- **Schedules:** safe scheduled restarts, a simple day/hour/minute builder, advanced five-field cron entry, automatic full-world backup intervals, and overlap prevention that skips a recurrence while its previous job is still pending/running.
 - **Alerts and integrations:** Discord alerts, per-rule pipeline testing, deduplicated player connection/disconnection events with session duration, durable player-chat delivery/retries, log-keyword alerts, and server/agent events.
 - **Discord command bot:** optional downloadable slash-command bridge for start, stop, restart, and Safe Restart with completion/failure replies, dedicated-account job attribution, and Discord role/user allowlists.
 - **Host and instance registry:** role-protected rename and unregister operations with clear confirmation that unregistering does not delete game files.

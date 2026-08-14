@@ -1,4 +1,8 @@
-import { Controller, Get, Post, Body, Param, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Post, Body, Param, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { randomUUID } from 'crypto';
+import { mkdir, unlink, writeFile } from 'fs/promises';
+import { join } from 'path';
 import { PrismaService } from '../prisma.service';
 import { JobsService } from './jobs.service';
 import { CreateJobDto } from './dto/create-job.dto';
@@ -13,6 +17,47 @@ export class JobsController {
     private readonly prisma: PrismaService,
     private readonly jobsService: JobsService,
   ) {}
+
+  @Post('mod-upload')
+  @UseInterceptors(FileInterceptor('file', { limits: { files: 1, fileSize: 256 * 1024 * 1024 } }))
+  async uploadMod(
+    @Param('orgId') orgId: string,
+    @Req() req: RequestWithUser,
+    @Body('serverInstanceId') serverInstanceId: string,
+    @UploadedFile() file?: { originalname: string; size: number; buffer: Buffer },
+  ) {
+    if (!serverInstanceId) throw new BadRequestException('Server instance is required');
+    if (!file?.buffer?.length) throw new BadRequestException('Choose a non-empty ZIP archive');
+    if (!/\.zip$/i.test(file.originalname || '')) throw new BadRequestException('Only .zip mod archives are supported');
+    const signature = file.buffer.subarray(0, 4).toString('hex');
+    if (!['504b0304', '504b0506', '504b0708'].includes(signature)) {
+      throw new BadRequestException('The uploaded file is not a valid ZIP archive');
+    }
+    const uploadId = randomUUID();
+    const root = process.env.MOD_UPLOAD_DIR || '/var/lib/mastermind/uploads';
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const stagedPath = join(root, `${uploadId}.zip`);
+    await writeFile(stagedPath, file.buffer, { mode: 0o600, flag: 'wx' });
+    try {
+      return await this.jobsService.createJob(
+        orgId,
+        req.user!.id,
+        serverInstanceId,
+        'MOD_UPLOAD_QUARANTINE',
+        { uploadId, originalName: file.originalname, sizeBytes: file.size },
+      );
+    } catch (error) {
+      await unlink(stagedPath).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  @Get('runs/:runId')
+  async getRun(@Param('orgId') orgId:string,@Param('runId') runId:string) {
+    const run=await this.prisma.jobRun.findFirst({where:{id:runId,job:{orgId}},select:{id:true,status:true,startedAt:true,finishedAt:true,result:true}});
+    if(!run)return null;
+    return {...run,startedAt:run.startedAt?.toISOString()??null,finishedAt:run.finishedAt?.toISOString()??null};
+  }
 
   /** Create and enqueue a new job for a server instance. */
   @Post()

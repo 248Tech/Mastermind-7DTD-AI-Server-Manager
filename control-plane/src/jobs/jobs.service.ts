@@ -3,6 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
@@ -11,18 +13,41 @@ import { JobsQueueService } from './jobs-queue.service';
 import type { ReportResultDto } from './dto/report-result.dto';
 import { reconcileNameFallback } from '../players/player-identity';
 import { AlertsService } from '../alerts/alerts.service';
+import { unlink } from 'fs/promises';
+import { join } from 'path';
 
 @Injectable()
-export class JobsService {
+export class JobsService implements OnModuleInit, OnModuleDestroy {
   private readonly badPingSamples = new Map<string, number>();
   private readonly protectionCooldown = new Map<string, number>();
   private readonly countryCache = new Map<string, { code: string; expires: number }>();
+  private staleTimer?: NodeJS.Timeout;
   constructor(
     private readonly prisma: PrismaService,
     private readonly batchesService: BatchesService,
     private readonly jobsQueueService: JobsQueueService,
     private readonly alerts: AlertsService,
   ) {}
+
+  async onModuleInit() {
+    await this.failStaleRunningJobs();
+    this.staleTimer = setInterval(() => void this.failStaleRunningJobs(), 60_000);
+  }
+
+  onModuleDestroy() { if (this.staleTimer) clearInterval(this.staleTimer); }
+
+  private async failStaleRunningJobs() {
+    const cutoff = Date.now() - 3 * 60_000;
+    const runs = await this.prisma.jobRun.findMany({ where: { status: 'running' }, select: { id: true, result: true, startedAt: true } });
+    for (const run of runs) {
+      const result = (run.result ?? {}) as Record<string, unknown>;
+      const heartbeat = Date.parse(String(result.updatedAt ?? '')) || run.startedAt?.getTime() || 0;
+      if (heartbeat >= cutoff) continue;
+      await this.prisma.jobRun.updateMany({ where: { id: run.id, status: 'running' }, data: {
+        status: 'failed', finishedAt: new Date(), result: { ...result, errorMessage: 'Agent stopped reporting progress; job released as stale. Retry if still needed.', recoveredAt: new Date().toISOString() },
+      }});
+    }
+  }
 
   /**
    * Create a single job + job run and enqueue it for the target host.
@@ -72,6 +97,10 @@ export class JobsService {
     if (normalizedJobType === 'PROFILE_STAGE') {
       const membership = await this.prisma.userOrg.findUnique({ where: { userId_orgId: { userId, orgId } }, include: { role: true } });
       if (!membership || !['admin', 'operator'].includes(membership.role.name)) throw new ForbiddenException('Only organization administrators or operators may stage player profiles');
+    }
+    if (normalizedJobType === 'MOD_UPLOAD_QUARANTINE') {
+      const membership = await this.prisma.userOrg.findUnique({ where: { userId_orgId: { userId, orgId } }, include: { role: true } });
+      if (!membership || !['admin', 'operator'].includes(membership.role.name)) throw new ForbiddenException('Only organization administrators or operators may upload mods');
     }
     const serverInstance = await this.prisma.serverInstance.findFirst({
       where: { id: serverInstanceId, orgId },
@@ -164,6 +193,13 @@ export class JobsService {
         result,
       },
     });
+    if (run.job.type === 'MOD_UPLOAD_QUARANTINE') {
+      const payload = (run.job.payload ?? {}) as Record<string, unknown>;
+      const uploadId = typeof payload.uploadId === 'string' ? payload.uploadId : '';
+      if (/^[0-9a-f-]{36}$/i.test(uploadId)) {
+        await unlink(join(process.env.MOD_UPLOAD_DIR || '/var/lib/mastermind/uploads', `${uploadId}.zip`)).catch(() => undefined);
+      }
+    }
     if (run.job.type === 'PROFILE_STAGE') {
       const previous = (run.job.payload ?? {}) as Record<string, unknown>;
       await this.prisma.job.update({ where: { id: run.jobId }, data: { payload: { path: previous.path, staged: runStatus === 'success' } as Prisma.InputJsonValue } });

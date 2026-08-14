@@ -1,6 +1,7 @@
 package sevendtd
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -11,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -39,6 +41,9 @@ func (r *runnerShim) run(ctx context.Context, dir, name string, args ...string) 
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, r.timeout)
 		defer cancel()
+	}
+	if name == "/usr/bin/sudo" && (len(args) == 0 || args[0] != "-n") {
+		args = append([]string{"-n"}, args...)
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
@@ -238,6 +243,17 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 		return agent.JobResult{Status: "success", Result: map[string]interface{}{"mods": mods}}, nil
+	case "MOD_UPLOAD_QUARANTINE":
+		folders, err := installUploadedModsToQuarantine(
+			cfg,
+			getString(job.Payload, "mods_path", ""),
+			getString(job.Payload, "archive_path", ""),
+			getString(job.Payload, "originalName", "uploaded-mod.zip"),
+		)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"folders": folders, "count": len(folders), "quarantined": true}}, nil
 	case "MOD_QUARANTINE":
 		folder := getString(job.Payload, "folder", "")
 		if err := quarantineMod(cfg, getString(job.Payload, "mods_path", ""), folder); err != nil {
@@ -312,13 +328,22 @@ const profileStagingRoot = "/var/lib/mastermind-agent/profile-staging"
 const profileBackupRoot = "/var/lib/mastermind-agent/profile-backups"
 
 type playerProfile struct {
-	Path       string    `json:"path"`
-	Name       string    `json:"name"`
-	PlayerName string    `json:"playerName,omitempty"`
-	World      string    `json:"world"`
-	Save       string    `json:"save"`
-	SizeBytes  int64     `json:"sizeBytes"`
-	ModifiedAt time.Time `json:"modifiedAt"`
+	Path               string    `json:"path"`
+	Name               string    `json:"name"`
+	PlayerName         string    `json:"playerName,omitempty"`
+	World              string    `json:"world"`
+	Save               string    `json:"save"`
+	SizeBytes          int64     `json:"sizeBytes"`
+	ModifiedAt         time.Time `json:"modifiedAt"`
+	InjectionStatus    string    `json:"injectionStatus,omitempty"`
+	InjectionStagedAt  time.Time `json:"injectionStagedAt,omitempty"`
+	InjectionAppliedAt time.Time `json:"injectionAppliedAt,omitempty"`
+}
+
+type profileInjectionState struct {
+	Status    string
+	StagedAt  time.Time
+	AppliedAt time.Time
 }
 
 type persistentPlayerData struct {
@@ -414,8 +439,63 @@ func listPlayerProfiles(payload map[string]interface{}) ([]playerProfile, error)
 	if err != nil {
 		return nil, fmt.Errorf("scan player profiles: %w", err)
 	}
+	states := playerProfileInjectionStates(getString(payload, "server_instance_id", ""))
+	for index := range profiles {
+		if state, ok := states[profiles[index].Path]; ok {
+			profiles[index].InjectionStatus = state.Status
+			profiles[index].InjectionStagedAt = state.StagedAt
+			profiles[index].InjectionAppliedAt = state.AppliedAt
+		}
+	}
 	sort.Slice(profiles, func(i, j int) bool { return profiles[i].ModifiedAt.After(profiles[j].ModifiedAt) })
 	return profiles, nil
+}
+
+func playerProfileInjectionStates(serverID string) map[string]profileInjectionState {
+	states := map[string]profileInjectionState{}
+	if serverID == "" {
+		return states
+	}
+	backupDir := filepath.Join(profileBackupRoot, serverID)
+	if entries, err := os.ReadDir(backupDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+			content, readErr := os.ReadFile(filepath.Join(backupDir, entry.Name()))
+			if readErr != nil {
+				continue
+			}
+			var metadata profileBackupMetadata
+			if json.Unmarshal(content, &metadata) != nil || metadata.OriginalPath == "" || metadata.AppliedAt.IsZero() {
+				continue
+			}
+			path := filepath.ToSlash(metadata.OriginalPath)
+			current, exists := states[path]
+			if !exists || metadata.AppliedAt.After(current.AppliedAt) {
+				states[path] = profileInjectionState{Status: "applied", StagedAt: metadata.StagedAt, AppliedAt: metadata.AppliedAt}
+			}
+		}
+	}
+	stagingDir := filepath.Join(profileStagingRoot, serverID)
+	if entries, err := os.ReadDir(stagingDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+			content, readErr := os.ReadFile(filepath.Join(stagingDir, entry.Name()))
+			if readErr != nil {
+				continue
+			}
+			var metadata stagedProfileMetadata
+			if json.Unmarshal(content, &metadata) != nil || metadata.Relative == "" {
+				continue
+			}
+			path := filepath.ToSlash(metadata.Relative)
+			states[path] = profileInjectionState{Status: "queued", StagedAt: metadata.StagedAt}
+		}
+	}
+	return states
 }
 
 func readPlayerProfile(payload map[string]interface{}, relative string) (playerProfile, []byte, error) {
@@ -656,6 +736,190 @@ func quarantineMod(cfg *agent.InstanceConfig, override, folder string) error {
 		return fmt.Errorf("quarantine mod: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+const maxModArchiveFiles = 10000
+const maxModArchiveExpandedBytes int64 = 2 * 1024 * 1024 * 1024
+
+func installUploadedModsToQuarantine(cfg *agent.InstanceConfig, override, archivePath, originalName string) ([]string, error) {
+	archiveInfo, err := os.Lstat(archivePath)
+	if err != nil {
+		return nil, fmt.Errorf("open uploaded mod archive: %w", err)
+	}
+	if !archiveInfo.Mode().IsRegular() || archiveInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("uploaded mod archive must be a regular file")
+	}
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return nil, fmt.Errorf("read uploaded ZIP: %w", err)
+	}
+	defer reader.Close()
+	if len(reader.File) == 0 || len(reader.File) > maxModArchiveFiles {
+		return nil, fmt.Errorf("ZIP must contain between 1 and %d entries", maxModArchiveFiles)
+	}
+
+	cleanNames := make(map[*zip.File]string, len(reader.File))
+	rootSet := map[string]bool{}
+	var expandedBytes int64
+	for _, entry := range reader.File {
+		name := strings.TrimSuffix(entry.Name, "/")
+		if name == "" && entry.FileInfo().IsDir() {
+			continue
+		}
+		clean := pathpkg.Clean(name)
+		if name == "" || strings.Contains(entry.Name, "\\") || pathpkg.IsAbs(name) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || clean != name || regexp.MustCompile(`^[A-Za-z]:`).MatchString(clean) {
+			return nil, fmt.Errorf("unsafe ZIP entry: %q", entry.Name)
+		}
+		if entry.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("ZIP symlinks are not allowed: %q", entry.Name)
+		}
+		if entry.UncompressedSize64 > uint64(maxModArchiveExpandedBytes) {
+			return nil, fmt.Errorf("ZIP entry is too large: %q", entry.Name)
+		}
+		expandedBytes += int64(entry.UncompressedSize64)
+		if expandedBytes > maxModArchiveExpandedBytes {
+			return nil, fmt.Errorf("expanded ZIP exceeds 2 GiB limit")
+		}
+		cleanNames[entry] = clean
+		if !entry.FileInfo().IsDir() && strings.EqualFold(pathpkg.Base(clean), "ModInfo.xml") {
+			rootSet[pathpkg.Dir(clean)] = true
+		}
+	}
+	if len(rootSet) == 0 {
+		return nil, fmt.Errorf("ZIP does not contain a ModInfo.xml")
+	}
+	roots := make([]string, 0, len(rootSet))
+	for root := range rootSet {
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
+	for i, root := range roots {
+		for _, other := range roots[i+1:] {
+			if root == "." || strings.HasPrefix(other, root+"/") {
+				return nil, fmt.Errorf("ambiguous ZIP: nested ModInfo.xml files at %q and %q", root, other)
+			}
+		}
+	}
+
+	quarantineRoot, err := quarantinePath(cfg, override)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(quarantineRoot, 0750); err != nil {
+		return nil, fmt.Errorf("create quarantine directory: %w", err)
+	}
+	stagingRoot, err := os.MkdirTemp(quarantineRoot, ".upload-*")
+	if err != nil {
+		return nil, fmt.Errorf("create quarantine staging directory: %w", err)
+	}
+	defer os.RemoveAll(stagingRoot)
+
+	archiveFolder := strings.TrimSuffix(filepath.Base(originalName), filepath.Ext(originalName))
+	folderForRoot := map[string]string{}
+	usedFolders := map[string]bool{}
+	for _, root := range roots {
+		folder := pathpkg.Base(root)
+		if root == "." || strings.EqualFold(folder, "mods") {
+			folder = archiveFolder
+		}
+		folder = regexp.MustCompile(`[^A-Za-z0-9._-]+`).ReplaceAllString(folder, "_")
+		folder = strings.Trim(folder, "._-")
+		if len(folder) > 100 {
+			folder = folder[:100]
+		}
+		if err := validateModFolder(folder); err != nil || folder == "" {
+			return nil, fmt.Errorf("could not derive a safe mod folder for %q", root)
+		}
+		if usedFolders[strings.ToLower(folder)] {
+			return nil, fmt.Errorf("multiple mods resolve to the same folder: %s", folder)
+		}
+		usedFolders[strings.ToLower(folder)] = true
+		folderForRoot[root] = folder
+		if _, err := os.Lstat(filepath.Join(quarantineRoot, folder)); !os.IsNotExist(err) {
+			return nil, fmt.Errorf("quarantined mod already exists: %s", folder)
+		}
+		if err := os.MkdirAll(filepath.Join(stagingRoot, folder), 0750); err != nil {
+			return nil, err
+		}
+	}
+
+	writtenPaths := map[string]bool{}
+	for entry, clean := range cleanNames {
+		for _, root := range roots {
+			belongs := root == "." || strings.HasPrefix(clean, root+"/") || clean == root
+			if !belongs {
+				continue
+			}
+			relative := clean
+			if root != "." {
+				relative = strings.TrimPrefix(strings.TrimPrefix(clean, root), "/")
+			}
+			if relative == "" {
+				break
+			}
+			if strings.EqualFold(pathpkg.Base(relative), "ModInfo.xml") {
+				relative = pathpkg.Join(pathpkg.Dir(relative), "ModInfo.xml")
+			}
+			targetRoot := filepath.Join(stagingRoot, folderForRoot[root])
+			target := filepath.Join(targetRoot, filepath.FromSlash(relative))
+			if target != targetRoot && !strings.HasPrefix(target, targetRoot+string(filepath.Separator)) {
+				return nil, fmt.Errorf("unsafe extracted path: %q", entry.Name)
+			}
+			if writtenPaths[target] {
+				return nil, fmt.Errorf("duplicate ZIP output path: %q", relative)
+			}
+			writtenPaths[target] = true
+			if entry.FileInfo().IsDir() {
+				if err := os.MkdirAll(target, 0750); err != nil {
+					return nil, err
+				}
+				break
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
+				return nil, err
+			}
+			source, err := entry.Open()
+			if err != nil {
+				return nil, fmt.Errorf("open ZIP entry %q: %w", entry.Name, err)
+			}
+			destination, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0640)
+			if err != nil {
+				_ = source.Close()
+				return nil, fmt.Errorf("create extracted file %q: %w", relative, err)
+			}
+			copied, copyErr := io.Copy(destination, io.LimitReader(source, int64(entry.UncompressedSize64)+1))
+			closeErr := destination.Close()
+			sourceErr := source.Close()
+			if copyErr != nil || closeErr != nil || sourceErr != nil || copied != int64(entry.UncompressedSize64) {
+				return nil, fmt.Errorf("extract ZIP entry %q: archive data is incomplete or invalid", entry.Name)
+			}
+			break
+		}
+	}
+
+	folders := make([]string, 0, len(roots))
+	moved := make([]string, 0, len(roots))
+	for _, root := range roots {
+		folder := folderForRoot[root]
+		stagedMod := filepath.Join(stagingRoot, folder)
+		if _, err := os.Stat(filepath.Join(stagedMod, "ModInfo.xml")); err != nil {
+			return nil, fmt.Errorf("normalized mod %s is missing ModInfo.xml", folder)
+		}
+		if err := normalizeModPermissions(stagedMod); err != nil {
+			return nil, fmt.Errorf("normalize uploaded mod %s: %w", folder, err)
+		}
+		destination := filepath.Join(quarantineRoot, folder)
+		if err := os.Rename(stagedMod, destination); err != nil {
+			for _, rollback := range moved {
+				_ = os.RemoveAll(filepath.Join(quarantineRoot, rollback))
+			}
+			return nil, fmt.Errorf("place %s in quarantine: %w", folder, err)
+		}
+		moved = append(moved, folder)
+		folders = append(folders, folder)
+	}
+	sort.Strings(folders)
+	return folders, nil
 }
 
 func quarantinePath(cfg *agent.InstanceConfig, override string) (string, error) {
@@ -1293,10 +1557,14 @@ func (a *Adapter) BackupSave(ctx context.Context, cfg *agent.InstanceConfig, con
 	if retention > 100 {
 		retention = 100
 	}
-	if err := pruneFullSaveBackups(retention); err != nil {
-		return SaveRecord{}, fmt.Errorf("backup created but retention cleanup failed: %w", err)
-	}
-	return SaveRecord{ID: id, CreatedAt: created, GameDay: gameDay, Kind: metadata.Kind, SizeBytes: directorySize(destination)}, nil
+	record := SaveRecord{ID: id, CreatedAt: created, GameDay: gameDay, Kind: metadata.Kind, SizeBytes: directorySize(destination)}
+	// Retention is housekeeping, not part of creating the backup. Older
+	// RegionHealer snapshots may be owned by another service account. Failing a
+	// safe restart after saveworld and a successful backup leaves players seeing
+	// the full countdown while the server never restarts. Keep the valid backup
+	// and let an explicit policy-cleanup job report any ownership problem.
+	_ = pruneFullSaveBackups(retention)
+	return record, nil
 }
 
 func pruneFullSaveBackups(retention int) error {
@@ -1396,7 +1664,7 @@ func (a *Adapter) RestoreSave(ctx context.Context, cfg *agent.InstanceConfig, co
 		return SaveRecord{}, fmt.Errorf("set restored save permissions: %w", err)
 	}
 	if fullWorld {
-		output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "/usr/local/sbin/mastermind-fix-7dtd-save-permissions", configPath, target).CombinedOutput()
+		output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "-n", "/usr/local/sbin/mastermind-fix-7dtd-save-permissions", configPath, target).CombinedOutput()
 		if err != nil {
 			_ = os.RemoveAll(target)
 			_ = os.Rename(old, target)
@@ -1410,7 +1678,7 @@ func (a *Adapter) RestoreSave(ctx context.Context, cfg *agent.InstanceConfig, co
 }
 
 func removeRestoreRollback(ctx context.Context, configPath, old string) error {
-	output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "/usr/local/sbin/mastermind-wipe-7dtd-save", configPath, old).CombinedOutput()
+	output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "-n", "/usr/local/sbin/mastermind-wipe-7dtd-save", configPath, old).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("delete validated rollback directory: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -1538,7 +1806,7 @@ func (a *Adapter) WipeSave(ctx context.Context, cfg *agent.InstanceConfig, confi
 		}
 	}()
 	if targetErr == nil {
-		if output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "/usr/local/sbin/mastermind-wipe-7dtd-save", configPath, target).CombinedOutput(); err != nil {
+		if output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "-n", "/usr/local/sbin/mastermind-wipe-7dtd-save", configPath, target).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("delete save: %w: %s", err, strings.TrimSpace(string(output)))
 		}
 	}
@@ -1582,7 +1850,7 @@ func (a *Adapter) Kill(ctx context.Context) error {
 		// successful kill still satisfies the requested final state.
 		return nil
 	}
-	output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "/usr/bin/systemctl", "kill", "--kill-who=main", "--signal=SIGKILL", "7dtd.service").CombinedOutput()
+	output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "-n", "/usr/bin/systemctl", "kill", "--kill-who=main", "--signal=SIGKILL", "7dtd.service").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("kill 7DTD process: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -1591,7 +1859,7 @@ func (a *Adapter) Kill(ctx context.Context) error {
 	if err := systemctl7DTD(ctx, "stop"); err != nil {
 		return fmt.Errorf("prevent 7DTD restart after kill: %w", err)
 	}
-	output, err = exec.CommandContext(ctx, "/usr/bin/sudo", "/usr/bin/systemctl", "reset-failed", "7dtd.service").CombinedOutput()
+	output, err = exec.CommandContext(ctx, "/usr/bin/sudo", "-n", "/usr/bin/systemctl", "reset-failed", "7dtd.service").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("clear killed 7DTD service state: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -1617,7 +1885,7 @@ func systemctlService(ctx context.Context, action, service string) error {
 	if service != "7dtd.service" && service != "regionhealer.service" {
 		return fmt.Errorf("unsupported systemctl service")
 	}
-	output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "/usr/bin/systemctl", action, service).CombinedOutput()
+	output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "-n", "/usr/bin/systemctl", action, service).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("systemctl %s: %w: %s", action, err, strings.TrimSpace(string(output)))
 	}
@@ -1721,28 +1989,36 @@ func (a *Adapter) Restart(ctx context.Context, cfg *agent.InstanceConfig) error 
 // SafeRestart warns connected players, takes a full save backup, removes all
 // players, and only then performs the normal verified service restart.
 func (a *Adapter) SafeRestart(ctx context.Context, cfg *agent.InstanceConfig, payload map[string]interface{}) (agent.JobResult, error) {
+	deferredForBloodMoon := false
 	if cfg.AvoidBloodMoonRestart {
-		if err := a.waitUntilRestartDay(ctx, cfg); err != nil {
+		var err error
+		deferredForBloodMoon, err = a.waitUntilRestartDayWithNotice(ctx, cfg, true)
+		if err != nil {
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 	}
 
-	warnings := []string{
-		"Server will be rebooting in 1 minute",
-		"Server will be rebooting in 50 seconds",
-		"Server will be rebooting in 40 seconds",
-		"Server will be rebooting in 30 seconds",
-		"Server will be rebooting in 20 seconds",
-		"Server will be rebooting in 10 seconds",
-	}
-	for _, warning := range warnings {
-		if _, err := a.SendCommand(ctx, cfg, fmt.Sprintf("say %q", warning)); err != nil {
-			return agent.JobResult{Status: "failed", Error: fmt.Sprintf("send restart warning: %v", err)}, nil
+	// A restart deferred during Blood Moon already sent its sole player-facing
+	// notice. Once the next day starts, proceed immediately without replaying a
+	// countdown that falsely implies another 60-second delay.
+	if !deferredForBloodMoon {
+		warnings := []string{
+			"Server will be rebooting in 1 minute",
+			"Server will be rebooting in 50 seconds",
+			"Server will be rebooting in 40 seconds",
+			"Server will be rebooting in 30 seconds",
+			"Server will be rebooting in 20 seconds",
+			"Server will be rebooting in 10 seconds",
 		}
-		select {
-		case <-ctx.Done():
-			return agent.JobResult{Status: "failed", Error: ctx.Err().Error()}, nil
-		case <-time.After(10 * time.Second):
+		for _, warning := range warnings {
+			if _, err := a.SendCommand(ctx, cfg, fmt.Sprintf("say %q", warning)); err != nil {
+				return agent.JobResult{Status: "failed", Error: fmt.Sprintf("send restart warning: %v", err)}, nil
+			}
+			select {
+			case <-ctx.Done():
+				return agent.JobResult{Status: "failed", Error: ctx.Err().Error()}, nil
+			case <-time.After(10 * time.Second):
+			}
 		}
 	}
 
@@ -1792,33 +2068,45 @@ func (a *Adapter) SafeRestart(ctx context.Context, cfg *agent.InstanceConfig, pa
 var gameDayPattern = regexp.MustCompile(`(?i)\bday\s+(\d+)\b`)
 
 func (a *Adapter) waitUntilRestartDay(ctx context.Context, cfg *agent.InstanceConfig) error {
+	_, err := a.waitUntilRestartDayWithNotice(ctx, cfg, false)
+	return err
+}
+
+func (a *Adapter) waitUntilRestartDayWithNotice(ctx context.Context, cfg *agent.InstanceConfig, notifyPlayers bool) (bool, error) {
 	queued := false
 	for {
 		output, err := a.SendCommand(ctx, cfg, "gettime")
 		if err != nil {
-			return fmt.Errorf("check game day before restart: %w", err)
+			return queued, fmt.Errorf("check game day before restart: %w", err)
 		}
 		match := gameDayPattern.FindStringSubmatch(output)
 		if len(match) != 2 {
-			return fmt.Errorf("check game day before restart: could not parse gettime response")
+			return queued, fmt.Errorf("check game day before restart: could not parse gettime response")
 		}
 		day, err := strconv.Atoi(match[1])
 		if err != nil {
-			return fmt.Errorf("check game day before restart: %w", err)
+			return queued, fmt.Errorf("check game day before restart: %w", err)
 		}
 		if day <= 0 || day%7 != 0 {
 			if queued {
 				agent.ReportProgress(ctx, "running", fmt.Sprintf("Day %d started; beginning safe restart", day))
 			}
-			return nil
+			return queued, nil
 		}
 		if !queued {
 			queued = true
+			if notifyPlayers {
+				if _, err := a.SendCommand(ctx, cfg, `say "The server will be restarting after bloodmoon"`); err != nil {
+					return queued, fmt.Errorf("send Blood Moon restart notice: %w", err)
+				}
+			}
 			agent.ReportProgress(ctx, "queued", fmt.Sprintf("Blood Moon protection: waiting for Day %d (currently Day %d)", day+1, day))
+		} else {
+			agent.ReportProgress(ctx, "queued", fmt.Sprintf("Blood Moon protection: still waiting for Day %d (currently Day %d)", day+1, day))
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return queued, ctx.Err()
 		case <-time.After(30 * time.Second):
 		}
 	}

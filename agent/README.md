@@ -43,8 +43,11 @@ agent/
 ## Build (static binary)
 
 ```bash
-go build -o mastermind-agent -ldflags="-s -w" .
+go build -o mastermind-agent -ldflags="-s -w -X main.version=v0.0.0" .
 ```
+
+Replace `v0.0.0` with the release tag. Development builds default to `dev`;
+the value is included in pairing metadata and every heartbeat.
 
 ## Run
 
@@ -53,6 +56,30 @@ go build -o mastermind-agent -ldflags="-s -w" .
 ```
 
 First run: set `pairing_token` in config; after success remove it. Key and `host_id` are stored under `agent_key_path` directory.
+
+### Job concurrency
+
+`jobs.max_concurrent_reads` bounds concurrent, explicitly audited read-only jobs
+(default `8`). State-changing jobs are serialized. Arbitrary `RCON` and
+`SEND_COMMAND` jobs are also serialized because console commands may change
+server state. The setting can be overridden with
+`MASTERMIND_JOBS_MAX_CONCURRENT_READS`.
+Values above `64` are clamped. `jobs.long_poll_sec` is clamped to `0–120`
+seconds, and each long-poll HTTP deadline includes an additional 10-second
+network grace period.
+
+### Log streaming and network behavior
+
+The log tailer keeps its file open, follows rotation/truncation, and batches up
+to 64 KiB or 350 ms. Failed batches remain in memory and retry in order with
+bounded exponential backoff. The HTTP client reuses pooled connections and uses
+request-specific deadlines so ordinary calls remain bounded without cutting off
+configured long polls.
+
+At debug log level, successful heartbeats include a compact operational
+snapshot: goroutines, active/queued read jobs, queued mutations, completed and
+failed jobs, heartbeat/poll failures, uploaded log bytes/failures, and current
+in-memory log backlog. No metrics listener is opened.
 
 ## Same-host 7DTD autodiscovery
 

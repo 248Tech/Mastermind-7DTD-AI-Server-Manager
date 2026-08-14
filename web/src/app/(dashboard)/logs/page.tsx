@@ -89,9 +89,9 @@ export default function LogsPage() {
       let completed:Job|undefined;
       for(let i=0;i<30;i++){
         await new Promise(resolve=>setTimeout(resolve,1000));
-        const jobs=await api.get<Job[]>(`/api/orgs/${orgId}/jobs?limit=100&serverInstanceId=${encodeURIComponent(serverId)}`);
-        completed=jobs.find(job=>job.latestRun?.id===queued.jobRunId);
-        if(completed?.latestRun?.status==='success'||completed?.latestRun?.status==='failed')break;
+        const run=await api.get<Job['latestRun']>(`/api/orgs/${orgId}/jobs/runs/${queued.jobRunId}`);
+        completed=run?{...({} as Job),latestRun:run}:undefined;
+        if(run?.status==='success'||run?.status==='failed')break;
       }
       if(!completed||!['success','failed'].includes(completed.latestRun?.status||''))throw new Error('Console command timed out');
       const result=completed.latestRun?.result as {output?:string;errorMessage?:string}|undefined;

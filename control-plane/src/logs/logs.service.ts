@@ -2,6 +2,11 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma.service';
 import { reconcileNameFallback } from '../players/player-identity';
 import { AlertsService } from '../alerts/alerts.service';
+import { JobsQueueService } from '../jobs/jobs-queue.service';
+
+type ModerationAction = 'log'|'warn'|'kick';
+type BadWordRule = { word:string; action:ModerationAction };
+type ChatModeration = { enabled:boolean; badWordRules:BadWordRule[]; badWords:string[]; badWordAction:ModerationAction; floodEnabled:boolean; floodMessages:number; floodWindowSeconds:number; floodAction:ModerationAction; mutedPlayers:Array<{playerId:string;playerName:string;createdAt:string}> };
 
 @Injectable()
 export class LogsService {
@@ -9,7 +14,9 @@ export class LogsService {
   private readonly scanTails = new Map<string, string>();
   private readonly lineBuffers = new Map<string, string>();
   private readonly chatLineBuffers = new Map<string, string>();
-  constructor(private readonly prisma: PrismaService, private readonly alerts: AlertsService) {}
+  private readonly chatSamples = new Map<string, number[]>();
+  private readonly moderationCooldown = new Map<string, number>();
+  constructor(private readonly prisma: PrismaService, private readonly alerts: AlertsService, private readonly jobsQueue: JobsQueueService) {}
 
   async append(hostId: string, serverInstanceId: string, content: string) {
     if (!content) return { ok: true };
@@ -59,12 +66,77 @@ export class LogsService {
       // Server announcements belong in the parsed chat transcript, but the
       // player-chat Discord relay intentionally handles player messages only.
       if (isServer) continue;
+      const moderated = await this.moderateChat(orgId, serverInstanceId, playerId, playerName, message).catch(() => false);
+      if (moderated) continue;
       const relay = await this.alerts.relayPlayerChat({ eventId: event.id, orgId, serverInstanceId, serverInstanceName, playerName, playerId, channel, message });
       if (relay.configured && !relay.sent) {
         await this.prisma.event.create({ data: { orgId, sourceType: 'server_instance', sourceId: serverInstanceId, eventType: 'player_chat_relay_pending',
           payload: { eventId: event.id, orgId, serverInstanceId, serverInstanceName, playerName, playerId, channel, message, lastError: relay.error } } });
       }
     }
+  }
+
+  private moderationDefaults(): ChatModeration { return { enabled:false,badWordRules:[],badWords:[],badWordAction:'warn',floodEnabled:true,floodMessages:5,floodWindowSeconds:10,floodAction:'kick',mutedPlayers:[] }; }
+
+  private moderationAction(value:unknown, fallback:ModerationAction='log'):ModerationAction {
+    return ['log','warn','kick'].includes(String(value)) ? value as ModerationAction : fallback;
+  }
+
+  private cleanBadWordRules(value:unknown, fallbackAction:ModerationAction):BadWordRule[] {
+    if (!Array.isArray(value)) return [];
+    const seen=new Set<string>();const result:BadWordRule[]=[];
+    for(const item of value){
+      const record:Record<string,unknown>=typeof item==='object'&&item!==null?item as Record<string,unknown>:{word:item};
+      const word=String(record.word??'').trim().toLowerCase();
+      if(!word||word.length>80||seen.has(word))continue;
+      seen.add(word);result.push({word,action:this.moderationAction(record.action,fallbackAction)});
+      if(result.length===200)break;
+    }
+    return result;
+  }
+
+  async getChatModeration(orgId:string, serverInstanceId:string):Promise<ChatModeration> {
+    const rules=await this.prisma.alertRule.findMany({where:{orgId,condition:{path:['type'],equals:'chat_moderation'}}});
+    const rule=rules.find(item=>(item.condition as Record<string,unknown>).serverInstanceId===serverInstanceId);
+    const condition=(rule?.condition??{}) as Record<string,unknown>;
+    if(!rule)return this.moderationDefaults();
+    const legacyAction=this.moderationAction(condition.badWordAction,'warn');
+    const sourceRules=Array.isArray(condition.badWordRules)?condition.badWordRules:Array.isArray(condition.badWords)?condition.badWords:[];
+    const badWordRules=this.cleanBadWordRules(sourceRules,legacyAction);
+    return {...this.moderationDefaults(),...condition,enabled:rule.enabled,badWordRules,badWords:badWordRules.map(item=>item.word),badWordAction:legacyAction,mutedPlayers:Array.isArray(condition.mutedPlayers)?condition.mutedPlayers as ChatModeration['mutedPlayers']:[]} as ChatModeration;
+  }
+
+  async updateChatModeration(orgId:string, serverInstanceId:string, input:Partial<ChatModeration>) {
+    const server=await this.prisma.serverInstance.findFirst({where:{id:serverInstanceId,orgId},select:{name:true}});if(!server)throw new NotFoundException('Server instance not found');
+    const current=await this.getChatModeration(orgId,serverInstanceId);
+    const legacyAction=this.moderationAction(input.badWordAction??current.badWordAction,'warn');
+    const requestedRules=input.badWordRules!==undefined?input.badWordRules:input.badWords!==undefined?input.badWords:current.badWordRules;
+    const badWordRules=this.cleanBadWordRules(requestedRules,legacyAction);
+    const settings:ChatModeration={...current,...input,badWordRules,badWords:badWordRules.map(item=>item.word),badWordAction:legacyAction,floodAction:this.moderationAction(input.floodAction??current.floodAction,current.floodAction),floodMessages:Math.min(30,Math.max(2,Number(input.floodMessages??current.floodMessages))),floodWindowSeconds:Math.min(300,Math.max(2,Number(input.floodWindowSeconds??current.floodWindowSeconds)))};
+    const rules=await this.prisma.alertRule.findMany({where:{orgId}});const existing=rules.find(r=>{const c=r.condition as Record<string,unknown>;return c.type==='chat_moderation'&&c.serverInstanceId===serverInstanceId;});
+    const data={name:`Chat moderation: ${server.name}`,enabled:settings.enabled,condition:{type:'chat_moderation',serverInstanceId,...settings},channel:{type:'dashboard'}};
+    if(existing)await this.prisma.alertRule.update({where:{id:existing.id},data});else await this.prisma.alertRule.create({data:{orgId,...data}});return settings;
+  }
+
+  async setPlayerMuted(orgId:string,serverInstanceId:string,playerId:string,playerName:string,muted:boolean){
+    const current=await this.getChatModeration(orgId,serverInstanceId);const cleanId=playerId.trim().slice(0,128);if(!cleanId)throw new BadRequestException('Player ID required');
+    current.mutedPlayers=current.mutedPlayers.filter(p=>p.playerId!==cleanId);if(muted)current.mutedPlayers.push({playerId:cleanId,playerName:playerName.trim().slice(0,128)||cleanId,createdAt:new Date().toISOString()});
+    return this.updateChatModeration(orgId,serverInstanceId,current);
+  }
+
+  private async moderateChat(orgId:string,serverInstanceId:string,playerId:string,playerName:string,message:string):Promise<boolean>{
+    const cfg=await this.getChatModeration(orgId,serverInstanceId);if(!cfg.enabled)return false;const now=Date.now();const key=`${serverInstanceId}:${playerId}`;const cutoff=now-cfg.floodWindowSeconds*1000;const samples=(this.chatSamples.get(key)??[]).filter(t=>t>=cutoff);samples.push(now);this.chatSamples.set(key,samples);
+    const muted=cfg.mutedPlayers.some(p=>p.playerId===playerId);const bad=cfg.badWordRules.find(rule=>message.toLowerCase().includes(rule.word));const flood=cfg.floodEnabled&&samples.length>cfg.floodMessages;if(!muted&&!bad&&!flood)return false;
+    const reason=muted?'Player is muted':bad?`Blocked word: ${bad.word}`:'Chat flooding';const action=muted?'kick':bad?bad.action:cfg.floodAction;
+    await this.prisma.event.create({data:{orgId,sourceType:'server_instance',sourceId:serverInstanceId,eventType:'chat_moderation_action',payload:{playerId,playerName,message,reason,action}}});
+    if(action!=='log'&&(this.moderationCooldown.get(key)??0)<now){this.moderationCooldown.set(key,now+5000);const command=action==='warn'?`say "${playerName.replace(/["\\]/g,'')} warning: ${reason}"`:`kick ${playerId.replace(/[^A-Za-z0-9_:-]/g,'')} "Chat moderation: ${reason.replace(/["\\]/g,'')}"`;await this.enqueueModerationCommand(orgId,serverInstanceId,command);}
+    return true;
+  }
+
+  private async enqueueModerationCommand(orgId:string,serverInstanceId:string,command:string){
+    const server=await this.prisma.serverInstance.findFirst({where:{id:serverInstanceId,orgId},include:{gameType:{select:{slug:true}},org:{select:{avoidBloodMoonRestart:true}}}});if(!server)return;
+    const payload={server_instance_id:server.id,game_type:server.gameType.slug,install_path:server.installPath??undefined,start_command:server.startCommand??undefined,telnet_host:server.telnetHost??undefined,telnet_port:server.telnetPort??undefined,telnet_password:server.telnetPassword??undefined,config:server.config??undefined,avoid_blood_moon_restart:server.org.avoidBloodMoonRestart,command};
+    const job=await this.prisma.job.create({data:{orgId,serverInstanceId,type:'RCON',payload}});const run=await this.prisma.jobRun.create({data:{jobId:job.id,hostId:server.hostId,status:'pending'}});await this.jobsQueue.addJob(orgId,{jobId:job.id,jobRunId:run.id,hostId:server.hostId,serverInstanceId,type:'RCON',payload});
   }
 
   private async retryChatRelays(orgId: string, serverInstanceId: string) {

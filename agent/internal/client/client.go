@@ -16,7 +16,9 @@ type Client interface {
 	// SyncDiscoveredServer sends locally discovered game server data to the control plane.
 	SyncDiscoveredServer(ctx context.Context, hostID string, gameType string, server *DiscoveredServer) error
 	// PollJobs long-polls or short-polls for jobs for this host. Returns when at least one job is ready or timeout.
-	PollJobs(ctx context.Context, hostID string, longPollSec int) ([]Job, error)
+	PollJobs(ctx context.Context, hostID string, longPollSec int, mutationBusy bool) ([]Job, error)
+	// DownloadJobFile streams a binary artifact assigned to a job without loading it into the JSON queue.
+	DownloadJobFile(ctx context.Context, hostID string, jobID string, destination io.Writer) error
 	// SubmitJobResult sends the result of a job run.
 	SubmitJobResult(ctx context.Context, hostID string, jobID string, result *JobResultPayload) error
 	// SubmitJobProgress reports a nonterminal display phase without completing the run.

@@ -40,13 +40,29 @@ export const api = {
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+  upload: async <T>(path: string, body: FormData): Promise<T> => {
+    const token = getToken();
+    const res = await fetch(`${CP()}${path}`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body,
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      const message = Array.isArray((payload as { message?: unknown }).message)
+        ? ((payload as { message: string[] }).message).join(', ')
+        : (payload as { message?: string }).message;
+      throw new Error(message || `HTTP ${res.status}`);
+    }
+    return res.json() as Promise<T>;
+  },
 };
 
 // Auth types
 export interface AuthResponse { access_token: string; userId: string; orgId: string; }
 export interface User { id: string; email: string; name?: string; }
 export interface OrgAccount { id:string; email:string; name:string|null; role:'admin'|'operator'|'viewer'; createdAt:string; }
-export interface Org { id: string; name: string; slug: string; discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string; avoidBloodMoonRestart?: boolean; openaiConfigured?:boolean; openaiModel?:string; }
+export interface Org { id: string; name: string; slug: string; discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string; avoidBloodMoonRestart?: boolean; openaiConfigured?:boolean; openaiModel?:string; modAiProvider?:'codex'|'kimi'; kimiConfigured?:boolean; kimiModel?:string; }
 export interface Host { id: string; orgId: string; name: string; status: string | null; lastHeartbeatAt: string | null; lastMetrics: Record<string,unknown> | null; agentVersion: string | null; createdAt: string; serverInstances: { id: string; name: string }[]; }
 export interface ServerInstance { id: string; orgId: string; hostId: string; name: string; gameType: string; capabilities: string[]; installPath: string | null; startCommand: string | null; telnetHost: string | null; telnetPort: number | null; createdAt: string; }
 export interface Job { id: string; orgId: string; serverInstanceId: string | null; serverName?: string; type: string; payload: unknown; createdAt: string; startedBy?: { id:string; name:string; email:string } | null; latestRun: { id: string; status: string; startedAt: string | null; finishedAt: string | null; result: unknown } | null; }
