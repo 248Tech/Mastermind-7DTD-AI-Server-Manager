@@ -183,11 +183,17 @@ function MapLegend({ prismaConfigured }: { prismaConfigured: boolean }) {
     </div>
   );
 }
+function formatAge(at: number | null) {
+  if (!at) return "Waiting for first update";
+  const seconds = Math.max(0, Math.floor((Date.now() - at) / 1000));
+  return seconds < 5 ? "Updated just now" : `Updated ${seconds}s ago`;
+}
 export default function LiveMapClient() {
   const orgId = getStoredOrgId();
   const [ready, setReady] = useState(false),
     [error, setError] = useState(""),
     [feedError, setFeedError] = useState(""),
+    [lastLiveUpdate, setLastLiveUpdate] = useState<number | null>(null),
     [config, setConfig] = useState<Config | null>(null),
     [players, setPlayers] = useState<Entity[]>([]),
     [animals, setAnimals] = useState<Entity[]>([]),
@@ -284,6 +290,7 @@ export default function LiveMapClient() {
           setPlayers(next.players);
           setAnimals(next.animals);
           setHostiles(next.hostiles);
+          setLastLiveUpdate(next.at);
           setHistory((old) => {
             const updated = [...old, next]
               .filter((x) => x.at > Date.now() - HISTORY_RETENTION_MS)
@@ -635,6 +642,7 @@ export default function LiveMapClient() {
         .map-filter-details[open] summary { border-radius: 6px 6px 0 0; }
         .map-filter-details .filter-detail-content { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 8px 2px 0; }
         .map-toolbar select, .map-toolbar button { min-height: 32px; }
+        .map-toolbar button:focus-visible, .map-toolbar select:focus-visible, .map-toolbar input:focus-visible, .map-heading button:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
         .map-maintenance { min-width: min(100%, 320px); }
         .map-maintenance summary { cursor: pointer; color: #fbbf24; font-size: 12px; font-weight: 600; padding: 6px 8px; border: 1px solid #3f3f46; border-radius: 6px; background: rgba(120,53,15,.2); list-style-position: inside; }
         .map-maintenance[open] summary { border-radius: 6px 6px 0 0; }
@@ -644,6 +652,7 @@ export default function LiveMapClient() {
         .leaflet-control-layers-expanded { padding: 9px 10px !important; line-height: 1.8 !important; }
         .leaflet-control-layers label { margin: 2px 0; }
         .map-frame { height: calc(100vh - 230px); min-height: 520px; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 14px 35px rgba(0,0,0,.22); }
+        .map-empty-state { position: absolute; z-index: 900; top: 12px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 7px 11px; border: 1px solid #475569; border-radius: 7px; background: rgba(15,23,42,.9); color: #cbd5e1; font-size: 12px; text-align: center; pointer-events: none; }
         .map-viewport-controls { position: absolute; z-index: 1000; top: 10px; left: 10px; display: flex; gap: 5px; }
         .map-viewport-controls button { border: 1px solid #475569; border-radius: 6px; background: rgba(15,23,42,.92); color: #e2e8f0; padding: 6px 8px; font-size: 11px; cursor: pointer; }
         .map-viewport-controls button:hover { background: #1e293b; }
@@ -702,6 +711,7 @@ export default function LiveMapClient() {
             {feedError && (
               <span style={{ color: "#fbbf24" }}>Feed error: {feedError}</span>
             )}
+            {!feedError && <span className="map-stat" role="status" style={{ color: lastLiveUpdate ? "#4ade80" : "#fbbf24" }}>{formatAge(lastLiveUpdate)}</span>}
           </div>
         </div>
         <details className="map-maintenance">
@@ -1044,6 +1054,7 @@ export default function LiveMapClient() {
             setHistoryCursorAt(n === windowedHistory.length ? null : windowedHistory[n]?.at ?? null);
           }}
           disabled={!windowedHistory.length}
+          aria-valuetext={historyCursorAt === null ? "Live" : new Date(viewed.at).toLocaleString()}
           style={{ flex: 1, minWidth: 150, accentColor: "#f59e0b" }}
         />
         <button
@@ -1092,6 +1103,11 @@ export default function LiveMapClient() {
           overflow: "hidden",
         }}
       >
+        {!feedError && viewed.players.length === 0 && viewed.animals.length === 0 && viewed.hostiles.length === 0 && (
+          <div className="map-empty-state" role="status">
+            No live entities reported. Other overlays remain available from the layer menu.
+          </div>
+        )}
         <MapContainer
           center={[0, 0]}
           zoom={1}
