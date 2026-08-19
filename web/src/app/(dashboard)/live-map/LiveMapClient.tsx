@@ -631,6 +631,14 @@ export default function LiveMapClient() {
         .map-toolbar .toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-right: 8px; margin-right: 2px; border-right: 1px solid #293241; }
         .map-toolbar .toolbar-group:last-child { border-right: 0; }
         .map-toolbar select, .map-toolbar button { min-height: 32px; }
+        .map-maintenance { min-width: min(100%, 320px); }
+        .map-maintenance summary { cursor: pointer; color: #fbbf24; font-size: 12px; font-weight: 600; padding: 6px 8px; border: 1px solid #3f3f46; border-radius: 6px; background: rgba(120,53,15,.2); list-style-position: inside; }
+        .map-maintenance[open] summary { border-radius: 6px 6px 0 0; }
+        .map-maintenance > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 8px; }
+        .leaflet-control-layers { border: 1px solid #475569 !important; border-radius: 8px !important; background: rgba(15,23,42,.94) !important; color: #e2e8f0 !important; box-shadow: 0 3px 12px rgba(0,0,0,.3) !important; }
+        .leaflet-control-layers-toggle { width: 40px !important; height: 40px !important; background-color: #0f172a !important; border-radius: 7px; }
+        .leaflet-control-layers-expanded { padding: 9px 10px !important; line-height: 1.8 !important; }
+        .leaflet-control-layers label { margin: 2px 0; }
         .map-frame { height: calc(100vh - 230px); min-height: 520px; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 14px 35px rgba(0,0,0,.22); }
         .map-viewport-controls { position: absolute; z-index: 1000; top: 10px; left: 10px; display: flex; gap: 5px; }
         .map-viewport-controls button { border: 1px solid #475569; border-radius: 6px; background: rgba(15,23,42,.92); color: #e2e8f0; padding: 6px 8px; font-size: 11px; cursor: pointer; }
@@ -692,8 +700,9 @@ export default function LiveMapClient() {
             )}
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <strong style={{ color: "#fbbf24" }}>{gameTime}</strong>
+        <details className="map-maintenance">
+          <summary>{gameTime || "Map maintenance"} · {visitRunning ? `generation ${visitStatus.state}` : "generation idle"}</summary>
+          <div>
           <select
             aria-label="Map generation section"
             value={visitSection}
@@ -796,7 +805,8 @@ export default function LiveMapClient() {
               Stop map generation
             </button>
           )}
-        </div>
+          </div>
+        </details>
       </div>
       <div style={{ color: visitStatus.state === "stalled" ? "#fca5a5" : visitStatus.state === "running" ? "#fbbf24" : "#94a3b8", fontSize: 12, marginBottom: 8 }}>
         visitmap: <strong>{visitStatus.state}</strong>
