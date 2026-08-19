@@ -102,6 +102,9 @@ function sampleTrail(points: [number, number][]) {
     points[Math.round((index * last) / (MAX_TRAIL_POINTS - 1))],
   );
 }
+function playerTrackKey(player: Entity) {
+  return String(player.id ?? player.name).trim() || player.name;
+}
 function poiBounds(poi: PrismaPoi): [[number, number], [number, number]] {
   const halfX = Math.floor(Math.abs(poi.minx - poi.maxx) / 2);
   const halfZ = Math.floor(Math.abs(poi.minz - poi.maxz) / 2);
@@ -553,27 +556,32 @@ export default function LiveMapClient() {
       history
         .flatMap((s) => s.players)
         .concat(players)
-        .map((p) => [String(p.id), p]),
+        .map((p) => [playerTrackKey(p), p]),
     ).values(),
   ];
-  const trailHistory = windowedHistory.slice(
-    0,
-    historyIndex === null ? undefined : historyIndex + 1,
-  );
+  // Local history can be restored out of order. Include the newest live poll
+  // so trails do not lag one refresh behind the player marker.
+  const liveSnapshot: Snapshot = { at: Date.now(), players, animals, hostiles };
+  const trailHistory = [
+    ...windowedHistory.slice(0, historyIndex === null ? undefined : historyIndex + 1),
+    ...(historyIndex === null && players.length ? [liveSnapshot] : []),
+  ].sort((a, b) => a.at - b.at);
   const visibleIds = showAllPlayerTrails
-    ? [...new Set(trailHistory.flatMap((s) => s.players.map((p) => String(p.id))))]
+    ? [...new Set(trailHistory.flatMap((s) => s.players.map(playerTrackKey)))]
     : trackedPlayer
       ? [trackedPlayer]
-      : [...new Set(viewed.players.map((p) => String(p.id)))];
+      : [...new Set(viewed.players.map(playerTrackKey))];
   const trails = visibleIds
     .map((id) => {
       const points = trailHistory
         .flatMap((s) =>
           s.players
-            .filter((p) => String(p.id) === id)
+            .filter((p) => playerTrackKey(p) === id)
+            .filter((p) => Number.isFinite(p.position?.x) && Number.isFinite(p.position?.z))
             .map((p) => [p.position.x, p.position.z] as [number, number]),
         );
-      return { id, points: sampleTrail(points) };
+      const distinct = points.filter((point, index) => index === 0 || point[0] !== points[index - 1][0] || point[1] !== points[index - 1][1]);
+      return { id, points: sampleTrail(distinct) };
     })
     .filter((trail) => trail.points.length > 1);
   return (
@@ -767,7 +775,7 @@ export default function LiveMapClient() {
         >
           <option value="">All players</option>
           {playerChoices.map((p) => (
-            <option key={p.id} value={String(p.id)}>
+            <option key={playerTrackKey(p)} value={playerTrackKey(p)}>
               Track: {p.name}
             </option>
           ))}
@@ -1013,19 +1021,19 @@ export default function LiveMapClient() {
                     key={e.id}
                     position={[e.position.x, e.position.z]}
                     opacity={
-                      !trackedPlayer || String(e.id) === trackedPlayer
+                      !trackedPlayer || playerTrackKey(e) === trackedPlayer
                         ? 1
                         : 0.35
                     }
                     icon={dot(
-                      String(e.id) === trackedPlayer ? trackingColor : "#3b82f6",
+                      playerTrackKey(e) === trackedPlayer ? trackingColor : "#3b82f6",
                     )}
                   >
                     <Popup>
                       {e.name}
                       <br />
                       {Math.round(e.position.x)}, {Math.round(e.position.z)}
-                      {String(e.id) === trackedPlayer && (
+                      {playerTrackKey(e) === trackedPlayer && (
                         <>
                           <br />
                           <strong>Tracking</strong>
