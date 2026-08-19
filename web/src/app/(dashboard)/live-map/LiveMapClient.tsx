@@ -170,7 +170,7 @@ export default function LiveMapClient() {
     [worldInfo, setWorldInfo] = useState<WorldInfo | null>(null),
     [gameTime, setGameTime] = useState(""),
     [history, setHistory] = useState<Snapshot[]>([]),
-    [historyIndex, setHistoryIndex] = useState<number | null>(null),
+    [historyCursorAt, setHistoryCursorAt] = useState<number | null>(null),
     [historyWindow, setHistoryWindow] = useState(120),
     [trackedPlayer, setTrackedPlayer] = useState(""),
     [trackingColor, setTrackingColor] = useState("#ff2bd6"),
@@ -546,10 +546,14 @@ export default function LiveMapClient() {
   const windowedHistory = history.filter(
     (snapshot) => snapshot.at >= Date.now() - historyWindow * 60_000,
   );
+  const historyStart = windowedHistory[0]?.at;
+  const historyEnd = windowedHistory[windowedHistory.length - 1]?.at;
   const viewed =
-    historyIndex === null
+    historyCursorAt === null
       ? { at: Date.now(), players, animals, hostiles }
-      : windowedHistory[historyIndex] || { at: Date.now(), players, animals, hostiles };
+      : windowedHistory.find((snapshot) => snapshot.at === historyCursorAt) ||
+        windowedHistory.filter((snapshot) => snapshot.at <= historyCursorAt).slice(-1)[0] ||
+        { at: Date.now(), players, animals, hostiles };
   const visibleAdvClaims = advClaimFilter === "all" ? advClaims : advClaims.filter((claim) => claim.type === advClaimFilter);
   const playerChoices = [
     ...new Map(
@@ -563,8 +567,8 @@ export default function LiveMapClient() {
   // so trails do not lag one refresh behind the player marker.
   const liveSnapshot: Snapshot = { at: Date.now(), players, animals, hostiles };
   const trailHistory = [
-    ...windowedHistory.slice(0, historyIndex === null ? undefined : historyIndex + 1),
-    ...(historyIndex === null && players.length ? [liveSnapshot] : []),
+    ...(historyCursorAt === null ? windowedHistory : windowedHistory.filter((snapshot) => snapshot.at <= historyCursorAt)),
+    ...(historyCursorAt === null && players.length ? [liveSnapshot] : []),
   ].sort((a, b) => a.at - b.at);
   const visibleIds = showAllPlayerTrails
     ? [...new Set(trailHistory.flatMap((s) => s.players.map(playerTrackKey)))]
@@ -900,7 +904,7 @@ export default function LiveMapClient() {
           value={historyWindow}
           onChange={(event) => {
             setHistoryWindow(Number(event.target.value));
-            setHistoryIndex(null);
+            setHistoryCursorAt(null);
           }}
           style={{
             background: "#0d0d14",
@@ -924,11 +928,11 @@ export default function LiveMapClient() {
         <span
           style={{
             fontSize: 12,
-            color: historyIndex === null ? "#4ade80" : "#fbbf24",
+            color: historyCursorAt === null ? "#4ade80" : "#fbbf24",
             minWidth: 110,
           }}
         >
-          {historyIndex === null
+          {historyCursorAt === null
             ? "● LIVE"
             : new Date(viewed.at).toLocaleTimeString()}
         </span>
@@ -937,17 +941,17 @@ export default function LiveMapClient() {
           type="range"
           min={0}
           max={windowedHistory.length}
-          value={historyIndex === null ? windowedHistory.length : historyIndex}
+          value={historyCursorAt === null ? windowedHistory.length : Math.max(0, windowedHistory.findIndex((snapshot) => snapshot.at === historyCursorAt))}
           onChange={(e) => {
             const n = Number(e.target.value);
-            setHistoryIndex(n === windowedHistory.length ? null : n);
+            setHistoryCursorAt(n === windowedHistory.length ? null : windowedHistory[n]?.at ?? null);
           }}
           disabled={!windowedHistory.length}
           style={{ flex: 1, minWidth: 150, accentColor: "#f59e0b" }}
         />
         <button
-          onClick={() => setHistoryIndex(null)}
-          disabled={historyIndex === null}
+          onClick={() => setHistoryCursorAt(null)}
+          disabled={historyCursorAt === null}
           style={{
             background: "#2563eb",
             color: "white",
@@ -960,7 +964,7 @@ export default function LiveMapClient() {
           Live
         </button>
         <span style={{ fontSize: 11, color: "#64748b" }}>
-          {windowedHistory.length} points
+          {windowedHistory.length} points{historyStart && historyEnd ? ` · ${new Date(historyStart).toLocaleTimeString()}–${new Date(historyEnd).toLocaleTimeString()}` : " · no collected data"}
         </span>
       </div>
       <div
