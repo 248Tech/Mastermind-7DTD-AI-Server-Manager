@@ -166,6 +166,23 @@ function MapViewportControls({ bounds }: { bounds: L.LatLngBounds }) {
     </div>
   );
 }
+function MapLegend({ prismaConfigured }: { prismaConfigured: boolean }) {
+  const items = [
+    ["#3b82f6", "Players"],
+    ["#22c55e", "Animals"],
+    ["#ef4444", "Hostiles"],
+    ["#a855f7", "Land claims"],
+    ...(prismaConfigured ? [["#eab308", "POIs"], ["#38bdf8", "Vehicles"]] : []),
+  ];
+  return (
+    <div className="map-legend" aria-label="Map legend">
+      <strong>Legend</strong>
+      {items.map(([color, label]) => (
+        <span key={label}><i style={{ background: color }} />{label}</span>
+      ))}
+    </div>
+  );
+}
 export default function LiveMapClient() {
   const orgId = getStoredOrgId();
   const [ready, setReady] = useState(false),
@@ -618,6 +635,10 @@ export default function LiveMapClient() {
         .map-viewport-controls { position: absolute; z-index: 1000; top: 10px; left: 10px; display: flex; gap: 5px; }
         .map-viewport-controls button { border: 1px solid #475569; border-radius: 6px; background: rgba(15,23,42,.92); color: #e2e8f0; padding: 6px 8px; font-size: 11px; cursor: pointer; }
         .map-viewport-controls button:hover { background: #1e293b; }
+        .map-legend { position: absolute; z-index: 1000; right: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 7px 10px; max-width: min(420px, calc(100% - 20px)); padding: 7px 9px; border: 1px solid #475569; border-radius: 7px; background: rgba(15,23,42,.92); color: #cbd5e1; font-size: 11px; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+        .map-legend strong { color: #f8fafc; margin-right: 2px; }
+        .map-legend span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+        .map-legend i { width: 8px; height: 8px; display: inline-block; border-radius: 50%; border: 1px solid rgba(255,255,255,.7); }
         @media (max-width: 700px) {
           .map-heading { padding: 12px; }
           .map-toolbar .toolbar-group { width: 100%; border-right: 0; border-bottom: 1px solid #293241; padding: 0 0 8px; }
@@ -926,6 +947,16 @@ export default function LiveMapClient() {
               onChange={(event) => setPoiSearch(event.target.value)}
               style={{ background: "#0d0d14", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 6, padding: "6px 9px", minWidth: 170 }}
             />
+            {poiSearch && (
+              <button
+                type="button"
+                aria-label="Clear POI search"
+                onClick={() => setPoiSearch("")}
+                style={{ background: "#334155", color: "#e2e8f0", border: 0, borderRadius: 6, padding: "6px 9px", cursor: "pointer" }}
+              >
+                Clear
+              </button>
+            )}
             <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#e2e8f0", fontSize: 12, whiteSpace: "nowrap", cursor: "pointer" }}>
               <input
                 type="checkbox"
@@ -1017,6 +1048,23 @@ export default function LiveMapClient() {
         <span style={{ fontSize: 11, color: "#64748b" }}>
           {windowedHistory.length} points{historyStart && historyEnd ? ` · ${new Date(historyStart).toLocaleTimeString()}–${new Date(historyEnd).toLocaleTimeString()}` : " · no collected data"}
         </span>
+        <button
+          type="button"
+          onClick={() => {
+            setTrackedPlayer("");
+            setShowAllPlayerTrails(false);
+            setShowPlayerNames(true);
+            setShowLogoutLocations(false);
+            setShowClaims(true);
+            setShowAllPois(false);
+            setPoiSearch("");
+            setAdvClaimFilter("all");
+            setHistoryCursorAt(null);
+          }}
+          style={{ background: "#334155", color: "#e2e8f0", border: 0, borderRadius: 6, padding: "6px 10px", cursor: "pointer", whiteSpace: "nowrap" }}
+        >
+          Reset filters
+        </button>
           </div>
       </div>
       <div
@@ -1299,6 +1347,7 @@ export default function LiveMapClient() {
             </LayersControl.Overlay>
           </LayersControl>
           <MapViewportControls bounds={mapBounds} />
+          <MapLegend prismaConfigured={prismaConfigured} />
           <Coordinates />
         </MapContainer>
       </div>
