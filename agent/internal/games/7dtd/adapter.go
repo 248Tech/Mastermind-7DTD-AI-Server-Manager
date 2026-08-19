@@ -1011,9 +1011,9 @@ func normalizeModPermissions(root string) error {
 			return nil
 		}
 		if info.IsDir() {
-			return os.Chmod(path, 0750)
+			return os.Chmod(path, 0770)
 		}
-		return os.Chmod(path, 0640)
+		return os.Chmod(path, 0660)
 	})
 }
 
@@ -1334,9 +1334,18 @@ func writeModConfig(cfg *agent.InstanceConfig, override, folder, relativePath, c
 	if err != nil {
 		return fmt.Errorf("stat mod config: %w", err)
 	}
+	// Prefer a same-directory temp file for an atomic rename. Older mods may
+	// have readable-only directories, though, while their config file itself
+	// remains writable through the shared serveradmin group. In that case use
+	// a private temp file and safely replace the file contents as a fallback.
+	atomic := true
 	temporary, err := os.CreateTemp(filepath.Dir(target), ".mastermind-config-*")
 	if err != nil {
-		return fmt.Errorf("create temporary mod config: %w", err)
+		atomic = false
+		temporary, err = os.CreateTemp("", "mastermind-config-*")
+		if err != nil {
+			return fmt.Errorf("create temporary mod config: %w", err)
+		}
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
@@ -1352,8 +1361,30 @@ func writeModConfig(cfg *agent.InstanceConfig, override, folder, relativePath, c
 	if err = os.Chmod(temporaryPath, info.Mode().Perm()); err != nil {
 		return fmt.Errorf("preserve mod config permissions: %w", err)
 	}
-	if err = os.Rename(temporaryPath, target); err != nil {
-		return fmt.Errorf("replace mod config: %w", err)
+	if atomic {
+		if err = os.Rename(temporaryPath, target); err == nil {
+			return nil
+		}
+	}
+	// The target directory is not writable, so rename cannot work. Only write
+	// the existing regular file; resolveModConfig already rejects symlinks and
+	// non-regular targets. The original temp remains private until removed.
+	file, openErr := os.OpenFile(target, os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+	if openErr != nil {
+		return fmt.Errorf("replace mod config: directory is not writable and config file cannot be updated: %w", openErr)
+	}
+	data, readErr := os.ReadFile(temporaryPath)
+	if readErr == nil {
+		_, readErr = file.Write(data)
+	}
+	if syncErr := file.Sync(); readErr == nil {
+		readErr = syncErr
+	}
+	if closeErr := file.Close(); readErr == nil {
+		readErr = closeErr
+	}
+	if readErr != nil {
+		return fmt.Errorf("write mod config: %w", readErr)
 	}
 	return nil
 }
