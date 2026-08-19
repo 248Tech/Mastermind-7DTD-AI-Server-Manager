@@ -945,28 +945,30 @@ export default function LiveMapClient() {
           />
           Show land claims ({claims.length})
         </label>
+        <input
+          aria-label="Search POIs by name"
+          placeholder={prismaConfigured ? "Search POIs by name…" : "POI search unavailable"}
+          value={poiSearch}
+          onChange={(event) => setPoiSearch(event.target.value)}
+          disabled={!prismaConfigured}
+          title={!prismaConfigured ? "Configure PrismaCore to search POIs" : "Filter POIs by name"}
+          style={{ background: "#0d0d14", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 6, padding: "6px 9px", minWidth: 170, opacity: prismaConfigured ? 1 : 0.65 }}
+        />
+        {poiSearch && (
+          <button
+            type="button"
+            aria-label="Clear POI search"
+            onClick={() => setPoiSearch("")}
+            style={{ background: "#334155", color: "#e2e8f0", border: 0, borderRadius: 6, padding: "6px 9px", cursor: "pointer" }}
+          >
+            Clear
+          </button>
+        )}
         {prismaConfigured && (
           <>
             <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#38bdf8", fontSize: 12, whiteSpace: "nowrap" }}>
               PrismaCore
             </label>
-            <input
-              aria-label="Search POIs by name"
-              placeholder="Search POIs by name…"
-              value={poiSearch}
-              onChange={(event) => setPoiSearch(event.target.value)}
-              style={{ background: "#0d0d14", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 6, padding: "6px 9px", minWidth: 170 }}
-            />
-            {poiSearch && (
-              <button
-                type="button"
-                aria-label="Clear POI search"
-                onClick={() => setPoiSearch("")}
-                style={{ background: "#334155", color: "#e2e8f0", border: 0, borderRadius: 6, padding: "6px 9px", cursor: "pointer" }}
-              >
-                Clear
-              </button>
-            )}
             <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#e2e8f0", fontSize: 12, whiteSpace: "nowrap", cursor: "pointer" }}>
               <input
                 type="checkbox"
