@@ -14,7 +14,7 @@ function when(iso: string | null) {
   return new Date(iso).toLocaleString();
 }
 
-type DonationLine = { id: string; shopItemId: string | null; itemName: string; amountCents: number; quantity: number };
+type DonationLine = { id: string; shopItemId: string | null; itemName: string; amountCents: number; quantity: number; grantStatus?: string; chatColorStatus?: string; grantError?: string | null };
 type DonationRecord = {
   id: string;
   playerName: string;
@@ -68,7 +68,13 @@ export default function PurchasesPage() {
           </div>
           <ul style={{ margin: 0, paddingLeft: 18, color: '#cbd5e1', fontSize: 14 }}>
             {row.lines.map((line) => (
-              <li key={line.id}>{line.itemName} · {money(line.amountCents)}</li>
+              <li key={line.id}>
+                {line.itemName} · {money(line.amountCents)}
+                {(line.grantStatus && line.grantStatus !== 'none') || (line.chatColorStatus && line.chatColorStatus !== 'none')
+                  ? ` · item ${line.grantStatus || 'none'} · color ${line.chatColorStatus || 'none'}`
+                  : ''}
+                {line.grantError ? ` (${line.grantError})` : ''}
+              </li>
             ))}
           </ul>
         </div>

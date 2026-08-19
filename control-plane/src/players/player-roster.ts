@@ -116,28 +116,44 @@ function positionFromLpLine(line: string) {
   return { x, y, z };
 }
 
-export function parseAllocsPlayersOnline(json: unknown): PlayerRosterRow[] | null {
-  let items: unknown[] | null = null;
-  if (Array.isArray(json)) items = json;
-  else {
-    const record = asRecord(json);
-    if (!record) return null;
-    for (const key of ['Players', 'players', 'data', 'result']) {
-      if (Array.isArray(record[key])) {
-        items = record[key] as unknown[];
-        break;
-      }
-    }
-    if (!items) return null;
+function playerListFromJson(json: unknown): unknown[] | null {
+  if (Array.isArray(json)) return json;
+  const record = asRecord(json);
+  if (!record) return null;
+  const keys = ['Players', 'players', 'data', 'result'];
+  for (const key of keys) {
+    if (Array.isArray(record[key])) return record[key] as unknown[];
   }
+  for (const key of ['data', 'result']) {
+    const nested = asRecord(record[key]);
+    if (!nested) continue;
+    for (const inner of keys) {
+      if (Array.isArray(nested[inner])) return nested[inner] as unknown[];
+    }
+  }
+  return null;
+}
+
+export function parseAllocsPlayersOnline(json: unknown): PlayerRosterRow[] | null {
+  const items = playerListFromJson(json);
+  if (!items) return null;
   const rows: PlayerRosterRow[] = [];
+  let skippedOffline = false;
+  let sawUnusableOnline = false;
   for (const raw of items) {
     const item = asRecord(raw);
     if (!item) continue;
-    if (item.online === false) continue;
     const name = text(item.name, item.playername, item.playerName, item.Name);
     const entityId = int(item.entityid, item.entityId, item.id);
-    if (!name || !Number.isInteger(entityId) || entityId < 1) continue;
+    const looksLikePlayer = Boolean(name) || Number.isInteger(entityId);
+    if (item.online === false) {
+      if (looksLikePlayer) skippedOffline = true;
+      continue;
+    }
+    if (!name || !Number.isInteger(entityId) || entityId < 1) {
+      if (looksLikePlayer) sawUnusableOnline = true;
+      continue;
+    }
     const steam = steamIdOf(text(item.steamid, item.steamId, item.PlatformId, item.platformId, item.pltfmid));
     const eos = eosIdOf(text(item.crossplatformid, item.crossPlatformId, item.eossid, item.eosId, item.userid, item.crossid));
     const ping = int(item.ping, item.Ping);
@@ -160,6 +176,8 @@ export function parseAllocsPlayersOnline(json: unknown): PlayerRosterRow[] | nul
       position: positionFromRecord(item),
     });
   }
-  if (items.length > 0 && rows.length === 0) return null;
-  return rows.slice(0, 256);
+  if (rows.length > 0) return rows.slice(0, 256);
+  if (items.length === 0) return [];
+  if (skippedOffline && !sawUnusableOnline) return [];
+  return null;
 }

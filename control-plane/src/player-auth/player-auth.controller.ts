@@ -47,6 +47,12 @@ export class PlayerAuthController {
     return this.auth.profile(authorization.slice(7));
   }
 
+  @Get('places')
+  places(@Headers('authorization') authorization?: string) {
+    if (!authorization?.startsWith('Bearer ')) throw new UnauthorizedException('Player session required');
+    return this.auth.places(authorization.slice(7));
+  }
+
   @Get('map/entities')
   async mapEntities(@Headers('authorization') authorization?: string) {
     let includePlayers = false;

@@ -377,6 +377,10 @@ model ShopItem {
   currency    String   @default("usd")
   imageExt    String?  @map("image_ext")
   imageMime   String?  @map("image_mime")
+  grantItemName String? @map("grant_item_name")
+  grantQuantity Int     @default(1) @map("grant_quantity")
+  grantQuality  Int?    @map("grant_quality")
+  chatColor     String? @map("chat_color")
   active      Boolean  @default(true)
   sortOrder   Int      @default(0) @map("sort_order")
   createdAt   DateTime @default(now()) @map("created_at")
@@ -396,12 +400,24 @@ model DonationLine {
   itemName    String   @map("item_name")
   amountCents Int      @map("amount_cents")
   quantity    Int      @default(1)
+  grantItemName String?  @map("grant_item_name")
+  grantQuantity Int?     @map("grant_quantity")
+  grantQuality  Int?     @map("grant_quality")
+  chatColor     String?  @map("chat_color")
+  grantStatus   String   @default("none") @map("grant_status")
+  chatColorStatus String @default("none") @map("chat_color_status")
+  grantAttempts Int      @default(0) @map("grant_attempts")
+  grantQueuedAt DateTime? @map("grant_queued_at")
+  grantedAt     DateTime? @map("granted_at")
+  grantError    String?  @map("grant_error")
 
   donation Donation  @relation(fields: [donationId], references: [id], onDelete: Cascade)
   shopItem ShopItem? @relation(fields: [shopItemId], references: [id], onDelete: SetNull)
 
   @@index([donationId])
   @@index([shopItemId])
+  @@index([grantStatus])
+  @@index([chatColorStatus])
 }
 
 model Schedule {

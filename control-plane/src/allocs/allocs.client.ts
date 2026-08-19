@@ -10,6 +10,7 @@ const ALLOWED_ENDPOINTS = new Set([
   'getplayerslocation',
   'getplayersonline',
   'getplayerinventory',
+  'getplayerinventories',
   'executeconsolecommand',
 ]);
 

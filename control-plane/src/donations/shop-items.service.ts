@@ -15,6 +15,7 @@ import {
   shopImagePath,
   type ShopImageSize,
 } from './donations.shop';
+import { parseChatColor, parseGrantItemName, parseGrantQuality, parseGrantQuantity } from './shop-grants';
 import { buildShopThumbFromMaster, normalizeShopImage } from './shop-image-process';
 
 export type ShopItemView = {
@@ -26,6 +27,10 @@ export type ShopItemView = {
   hasImage: boolean;
   sortOrder: number;
   createdAt: string;
+  grantItemName: string | null;
+  grantQuantity: number;
+  grantQuality: number | null;
+  chatColor: string | null;
 };
 
 @Injectable()
@@ -59,7 +64,7 @@ export class ShopItemsService {
   async create(
     orgId: string,
     userId: string,
-    input: { name?: unknown; description?: unknown; price?: unknown; active?: unknown },
+    input: { name?: unknown; description?: unknown; price?: unknown; active?: unknown; grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; chatColor?: unknown },
     file?: { buffer?: Buffer },
   ) {
     const count = await this.prisma.shopItem.count({ where: { orgId } });
@@ -68,6 +73,7 @@ export class ShopItemsService {
     const priceCents = parseShopPriceDollars(input.price);
     if (!name) throw new ConflictException('Enter a name up to 80 characters');
     if (priceCents == null) throw new ConflictException('Enter a price between $1.00 and $500.00');
+    const grants = parseShopGrantFields(input);
     const image = await requireProcessedImage(file);
     const item = await this.prisma.shopItem.create({
       data: {
@@ -79,6 +85,7 @@ export class ShopItemsService {
         imageExt: image.ext,
         imageMime: image.mime,
         sortOrder: count,
+        ...grants,
       },
     });
     await this.writeImage(orgId, item.id, image);
@@ -90,7 +97,7 @@ export class ShopItemsService {
     orgId: string,
     userId: string,
     itemId: string,
-    input: { name?: unknown; description?: unknown; price?: unknown; active?: unknown },
+    input: { name?: unknown; description?: unknown; price?: unknown; active?: unknown; grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; chatColor?: unknown },
     file?: { buffer?: Buffer },
   ) {
     const existing = await this.prisma.shopItem.findFirst({ where: { id: itemId, orgId } });
@@ -99,6 +106,7 @@ export class ShopItemsService {
     const priceCents = input.price == null || input.price === '' ? existing.priceCents : parseShopPriceDollars(input.price);
     if (!name) throw new ConflictException('Enter a name up to 80 characters');
     if (priceCents == null) throw new ConflictException('Enter a price between $1.00 and $500.00');
+    const grants = parseShopGrantFields(input, existing);
     const image = file?.buffer?.length ? await requireProcessedImage(file) : null;
     const item = await this.prisma.shopItem.update({
       where: { id: existing.id },
@@ -107,6 +115,7 @@ export class ShopItemsService {
         description: input.description == null ? existing.description : parseShopDescription(input.description),
         priceCents,
         active: parseActiveFlag(input.active, existing.active),
+        ...grants,
         ...(image ? { imageExt: image.ext, imageMime: image.mime } : {}),
       },
     });
@@ -227,6 +236,35 @@ async function requireProcessedImage(file?: { buffer?: Buffer }) {
   return normalizeShopImage(file.buffer);
 }
 
+function parseShopGrantFields(
+  input: { grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; chatColor?: unknown },
+  existing?: { grantItemName: string | null; grantQuantity: number; grantQuality: number | null; chatColor: string | null },
+) {
+  const grantItemName = input.grantItemName == null
+    ? existing?.grantItemName ?? null
+    : String(input.grantItemName).trim()
+      ? parseGrantItemName(input.grantItemName)
+      : null;
+  if (input.grantItemName != null && String(input.grantItemName).trim() && !grantItemName) {
+    throw new ConflictException('Grant item must be a 7DTD item name such as resourceWood');
+  }
+  const grantQuantity = input.grantQuantity == null || input.grantQuantity === ''
+    ? existing?.grantQuantity ?? 1
+    : parseGrantQuantity(input.grantQuantity, 1);
+  if (grantQuantity == null) throw new ConflictException('Grant quantity must be between 1 and 9999');
+  const grantQuality = input.grantQuality == null
+    ? existing?.grantQuality ?? null
+    : parseGrantQuality(input.grantQuality);
+  if (grantQuality === false) throw new ConflictException('Grant quality must be 1–6 or blank');
+  const chatColor = input.chatColor == null
+    ? existing?.chatColor ?? null
+    : String(input.chatColor).trim()
+      ? parseChatColor(input.chatColor)
+      : null;
+  if (chatColor === false) throw new ConflictException('Chat color must be 6 hex characters such as FF00FF');
+  return { grantItemName, grantQuantity, grantQuality, chatColor };
+}
+
 function toView(item: {
   id: string;
   name: string;
@@ -236,6 +274,10 @@ function toView(item: {
   imageExt: string | null;
   sortOrder: number;
   createdAt: Date;
+  grantItemName?: string | null;
+  grantQuantity?: number;
+  grantQuality?: number | null;
+  chatColor?: string | null;
 }): ShopItemView {
   return {
     id: item.id,
@@ -246,5 +288,9 @@ function toView(item: {
     hasImage: Boolean(item.imageExt),
     sortOrder: item.sortOrder,
     createdAt: item.createdAt.toISOString(),
+    grantItemName: item.grantItemName ?? null,
+    grantQuantity: item.grantQuantity ?? 1,
+    grantQuality: item.grantQuality ?? null,
+    chatColor: item.chatColor ?? null,
   };
 }

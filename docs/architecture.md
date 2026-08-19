@@ -47,9 +47,9 @@
 
 The Next.js live-map BFF does not open telnet for entity lists. Control plane talks to:
 
-- **Allocs WebAPI (`:8080`)** over the private network: hostiles, animals, player inventory, allowlisted `visitmap`. Webtoken stays in control-plane env.
-- **PrismaCore ClaimCreator (`:11111`)**: online players, land claims, vehicles/drones/homes/traders/POIs/reset/adv claims. `apiuser` stays in control-plane env.
-- **Telnet `lp`** (agent job `PLAYER_LIST_SYNC`): roster ping, IP, kills for the Players page and connection-protection tools.
+- **Allocs WebAPI (`:8080`)** over the private network: hostiles, animals, player inventory, Players-page roster (`getplayersonline`), allowlisted `visitmap`. Webtoken stays in control-plane env.
+- **PrismaCore ClaimCreator (`:11111`)**: map player markers, land claims, vehicles/drones/homes/traders/POIs/reset/adv claims. `apiuser` stays in control-plane env.
+- **Telnet `lp`** (agent job `PLAYER_LIST_SYNC`): roster fallback when Allocs `getplayersonline` is unconfigured, unreachable, or unusable.
 
 Public shop status may include `serverReachable` and `playersOnline` (count only). Map JSON and shop JSON must not contain webtokens or apiuser passwords.
 

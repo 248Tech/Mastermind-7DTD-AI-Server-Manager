@@ -149,7 +149,7 @@ The complete release handoff is documented in [docs/release-0.0.12-context.md](d
 
 ### Additional current capabilities
 
-- **Allocs WebInterface 52 integration:** control-plane requests use the versioned `X-SDTD-API-TOKENNAME` and `X-SDTD-API-SECRET` headers. Inventory uses `getplayerinventory`, roster data uses `getplayersonline`, entities use the location endpoints, and console access is restricted to numeric map bounds and `stop` for `visitmap`.
+- **Allocs WebInterface 52 integration:** control-plane requests use the versioned `X-SDTD-API-TOKENNAME` and `X-SDTD-API-SECRET` headers. Inventory uses `getplayerinventories` for background snapshots and `getplayerinventory` for staff one-player reads, roster data uses `getplayersonline`, entities use the location endpoints, and console access is restricted to numeric map bounds and `stop` for `visitmap`.
 - **PrismaCore integration:** ClaimCreator data supplies staff-only vehicles, drones, beds/homes, traders, POIs, reset regions, advanced claims, and map player positions. The player portal never receives PrismaCore credentials or raw staff overlays.
 - **Public privacy boundary:** public shop status exposes only server name, checkout availability, reachability, and an online-player count. Player names, positions, IP addresses, telnet output, webtokens, Stripe identifiers, and dashboard APIs remain private.
 - **Portal identity modes:** Steam OpenID unlocks player maps, profiles, inventory, and stats for a Steam ID already seen on the configured server. In-game-name accounts are limited to shop checkout and cannot reveal player locations or private profile data.

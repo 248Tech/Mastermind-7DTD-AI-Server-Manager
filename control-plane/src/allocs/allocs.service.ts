@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaCoreService } from '../prismacore/prismacore.service';
-import type { InventorySnapshot } from '../players/player-inventory';
-import { parseAllocsInventoryJson } from '../players/player-inventory';
+import type { AllocsInventoryRow, InventorySnapshot } from '../players/player-inventory';
+import { parseAllocsInventoriesJson, parseAllocsInventoryJson } from '../players/player-inventory';
 import { allocsConfigured, allocsGet, allocsTokenConfigured } from './allocs.client';
 import { allowedAllocsConsoleCommand, consoleResultText } from './allocs.console';
 import { allocsUserId, normalizeAllocsEntities, normalizeAllocsPlayers, publicMapEntities, type MapEntity } from './allocs.normalize';
@@ -58,6 +58,13 @@ export class AllocsService {
     const result = await allocsGet('getplayerinventory', { userid });
     if (!result.ok) return null;
     return parseAllocsInventoryJson(result.json);
+  }
+
+  async inventorySnapshots(): Promise<AllocsInventoryRow[] | null> {
+    if (!this.tokenConfigured()) return null;
+    const result = await allocsGet('getplayerinventories', {}, process.env, 12_000);
+    if (!result.ok) return null;
+    return parseAllocsInventoriesJson(result.json);
   }
 
   async playersOnlineJson(): Promise<unknown | null> {

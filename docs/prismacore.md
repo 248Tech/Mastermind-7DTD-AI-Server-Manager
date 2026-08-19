@@ -19,12 +19,16 @@ PRISMACORE_API_USER=mastermind
 PRISMACORE_API_PASSWORD=...
 ```
 
-Staff: `GET /api/orgs/:orgId/prismacore/:layer` (dashboard JWT). Layers: `status`, `playersonline`, `landclaims`, `playerhomes`, `vehicles`, `drones`, `traders`, `questpois`, `allpois`, `resetregions`, `advclaims`. `createadvclaims` is rejected.
+- Staff: `GET /api/orgs/:orgId/prismacore/:layer` (dashboard JWT). Layers: `status`, `playersonline`, `landclaims`, `playerhomes`, `vehicles`, `drones`, `traders`, `questpois`, `allpois`, `resetregions`, `advclaims`. `createadvclaims` is rejected.
+
+Shop grants: after a signed Stripe checkout, control-plane queues sanitized telnet `giveplus <Steam_…> <item> <amount> [quality]` and `playerchatcolor <Steam_…> <RRGGBB> 1`. Item names are `[A-Za-z][A-Za-z0-9_:]{0,79}` only. `giveplus all` is never built. Allocs `executeconsolecommand` stays visitmap-only. PrismaCore HTTP stays read-only (`createadvclaims` blocked). Offline players retry `giveplus` on the next roster poll (chat color can apply offline).
 
 Public shop: `GET /api/player-auth/shop/status` adds `serverReachable` (boolean) and `playersOnline` (count only).
 
-Map players prefer `getplayersonline`. If PrismaCore is down, Allocs `getplayerslocation` is the fallback. Telnet `lp` still feeds the Players roster (ping/IP/kills) until `getplayersonline` is probed after a 7dtd restart.
+Steam player portal: `GET /api/player-auth/places` returns only the signed-in player's land claims, bed, vehicles, and drones (matched by Steam/EOS id, never by display name). Name sessions get empty lists. The payload omits other players, Steam/EOS ids, and IPs.
+
+Map players prefer PrismaCore `getplayersonline`. If PrismaCore is down, Allocs `getplayerslocation` is the fallback. The Players-page roster (ping/IP/kills) uses Allocs `getplayersonline`, with telnet `lp` as fallback. PrismaCore player JSON remains map-only (`name`, `position`, `steamid`).
 
 ## Not in this phase
 
-In-game shop grants, Discord announce, write APIs, replacing telnet `lp`.
+Discord announce extras, `createadvclaims`, Allocs `give`.

@@ -51,12 +51,15 @@ function parseItem(line: string): InventoryItem | null {
   }
   const alt = ITEM_ALT.exec(trimmed);
   if (!alt) {
-    const equipment = ITEM_EQUIPMENT.exec(trimmed);
     const emptySlot = EMPTY_SLOT_EQUIPMENT.exec(trimmed);
-    if (!equipment && !emptySlot) return null;
-    if (equipment && !EQUIPMENT_SLOT.test(equipment[1])) return null;
-    const name = cleanItemName(equipment ? equipment[2] : emptySlot![1]);
-    return name ? { slot: equipment ? equipment[1].slice(0, 24) : '', count: 1, name } : null;
+    if (emptySlot) {
+      const name = cleanItemName(emptySlot[1]);
+      return name ? { slot: '', count: 1, name } : null;
+    }
+    const equipment = ITEM_EQUIPMENT.exec(trimmed);
+    if (!equipment || !EQUIPMENT_SLOT.test(equipment[1])) return null;
+    const name = cleanItemName(equipment[2]);
+    return name ? { slot: equipment[1].slice(0, 24), count: 1, name } : null;
   }
   const count = Number(alt[1]);
   const name = cleanItemName(alt[2]);
@@ -143,6 +146,63 @@ function jsonItemCount(row: unknown): number | undefined {
 
 function isEmptyItemName(name: string) {
   return !name || /^(air|empty|none|null)$/i.test(name);
+}
+
+function text(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return '';
+}
+
+function steamIdOf(value: string): string | null {
+  const match = /(?:^|Steam_)([0-9]{15,20})$/i.exec(value.trim());
+  return match ? match[1] : null;
+}
+
+function eosIdOf(value: string): string | null {
+  const match = /(?:^|EOS_)([a-f0-9]{20,64})$/i.exec(value.trim());
+  return match ? match[1] : null;
+}
+
+function unwrapInventoryRows(json: unknown): unknown[] {
+  if (Array.isArray(json)) return json;
+  const record = asRecord(json);
+  if (!record) return [];
+  for (const key of ['Players', 'players', 'data', 'result', 'inventories', 'Inventories']) {
+    const nested = record[key];
+    if (Array.isArray(nested)) return nested;
+    const inner = asRecord(nested);
+    if (!inner) continue;
+    for (const innerKey of ['Players', 'players', 'data', 'result']) {
+      if (Array.isArray(inner[innerKey])) return inner[innerKey];
+    }
+  }
+  if (record.bag || record.belt || record.equipment || record.inventory || record.userid || record.steamid) {
+    return [record];
+  }
+  return [];
+}
+
+export type AllocsInventoryRow = {
+  steamId: string | null;
+  eosId: string | null;
+  snapshot: InventorySnapshot;
+};
+
+export function parseAllocsInventoriesJson(json: unknown): AllocsInventoryRow[] {
+  const rows: AllocsInventoryRow[] = [];
+  for (const raw of unwrapInventoryRows(json)) {
+    if (rows.length >= 32) break;
+    const item = asRecord(raw);
+    if (!item) continue;
+    const steamId = steamIdOf(text(item.steamid, item.steamId, item.userid, item.userId));
+    const eosId = eosIdOf(text(item.crossplatformid, item.crossPlatformId, item.eossid, item.eosId, item.userid, item.userId));
+    if (!steamId && !eosId) continue;
+    rows.push({ steamId, eosId, snapshot: parseAllocsInventoryJson(item) });
+  }
+  return rows;
 }
 
 export function parseAllocsInventoryJson(json: unknown): InventorySnapshot {

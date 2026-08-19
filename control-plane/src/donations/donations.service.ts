@@ -13,6 +13,8 @@ import {
 import { constructStripeEventWithSecrets, createCheckoutSession } from './donations.stripe';
 import { stripeCredentialsForOrg, stripeWebhookSecrets } from './donations.credentials';
 import { parseShopItemId, parseShopItemIds } from './donations.shop';
+import { parseChatColor, parseGrantItemName, parseGrantQuality, parseGrantQuantity } from './shop-grants';
+import { JobsService } from '../jobs/jobs.service';
 
 @Injectable()
 export class DonationsService {
@@ -21,6 +23,7 @@ export class DonationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly discord: DiscordService,
+    private readonly jobs: JobsService,
   ) {}
 
   async webhookConfigured() {
@@ -38,7 +41,7 @@ export class DonationsService {
         shopItem: { select: { name: true } },
         lines: {
           orderBy: { itemName: 'asc' },
-          select: { id: true, shopItemId: true, itemName: true, amountCents: true, quantity: true },
+          select: { id: true, shopItemId: true, itemName: true, amountCents: true, quantity: true, grantStatus: true, chatColorStatus: true, grantError: true },
         },
       },
     });
@@ -54,8 +57,8 @@ export class DonationsService {
       lines: row.lines.length
         ? row.lines
         : row.shopItem
-          ? [{ id: row.id, shopItemId: row.shopItemId, itemName: row.shopItem.name, amountCents: row.amountCents, quantity: 1 }]
-          : [{ id: row.id, shopItemId: null, itemName: 'Custom support', amountCents: row.amountCents, quantity: 1 }],
+          ? [{ id: row.id, shopItemId: row.shopItemId, itemName: row.shopItem.name, amountCents: row.amountCents, quantity: 1, grantStatus: 'none', chatColorStatus: 'none', grantError: null }]
+          : [{ id: row.id, shopItemId: null, itemName: 'Custom support', amountCents: row.amountCents, quantity: 1, grantStatus: 'none', chatColorStatus: 'none', grantError: null }],
     }));
   }
 
@@ -233,6 +236,7 @@ export class DonationsService {
       throw error;
     }
     await this.notifyDiscord(player.orgId, player.name, paid.amountCents, lineRows.map((line) => line.itemName));
+    await this.jobs.enqueueShopGrants(paid.orgId, paid.serverInstanceId, player.id, paid.steamId).catch(() => undefined);
   }
 
   private async buildDonationLines(paid: {
@@ -244,16 +248,26 @@ export class DonationsService {
     if (!paid.shopItemIds.length) return [];
     const items = await this.prisma.shopItem.findMany({
       where: { orgId: paid.orgId, id: { in: paid.shopItemIds } },
-      select: { id: true, name: true, priceCents: true },
+      select: { id: true, name: true, priceCents: true, grantItemName: true, grantQuantity: true, grantQuality: true, chatColor: true },
     });
     return paid.shopItemIds.map((id, index) => {
       const item = items.find((row) => row.id === id);
       const amountCents = paid.lineAmounts[index] ?? item?.priceCents ?? 0;
+      const grantItemName = parseGrantItemName(item?.grantItemName);
+      const grantQuantity = parseGrantQuantity(item?.grantQuantity, 1) ?? 1;
+      const grantQuality = parseGrantQuality(item?.grantQuality);
+      const chatColor = parseChatColor(item?.chatColor);
       return {
         shopItemId: item?.id ?? null,
         itemName: item?.name ?? 'Shop item',
         amountCents,
         quantity: 1,
+        grantItemName,
+        grantQuantity: grantItemName ? grantQuantity : null,
+        grantQuality: grantQuality === false ? null : grantQuality,
+        chatColor: chatColor || null,
+        grantStatus: grantItemName ? 'pending' : 'none',
+        chatColorStatus: chatColor ? 'pending' : 'none',
       };
     }).filter((line) => line.amountCents > 0);
   }

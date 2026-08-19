@@ -1,5 +1,5 @@
 'use client';
-import { useCallback,useEffect,useMemo,useRef,useState } from 'react';
+import { useCallback,useEffect,useMemo,useRef,useState, type JSX } from 'react';
 import { api,Job,ModRecord,Org,ServerInstance } from '../../../lib/api';
 import { getStoredOrgId } from '../../../lib/auth';
 type View='active'|'quarantined';

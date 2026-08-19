@@ -1,4 +1,4 @@
-import { parseInventoryOutput, parseLpPosition, parseAllocsInventoryJson } from './player-inventory.ts';
+import { parseInventoryOutput, parseLpPosition, parseAllocsInventoryJson, parseAllocsInventoriesJson } from './player-inventory.ts';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -114,5 +114,41 @@ assert(allocs52.bag[0].count === 3 && allocs52.bag[0].name === 'resourceWood', '
 assert(allocs52.belt[0].name === 'meleeToolAxeT1IronAxe', 'parses Allocs 52 belt rows');
 assert(allocs52.equipment.some((item) => item.slot === 'head' && item.name === 'armorClothHat'), 'parses Allocs 52 equipment object');
 assert(!JSON.stringify(allocs52).includes('7656119'), 'inventory snapshot drops platform ids');
+
+const batch = parseAllocsInventoriesJson([
+  {
+    bag: [{ count: 3, name: 'resourceWood' }],
+    belt: [],
+    equipment: {},
+    playername: 'Example',
+    userid: 'Steam_76561198000000000',
+    crossplatformid: 'EOS_0001abcdef0001abcdef0001abcdef0001',
+  },
+  {
+    bag: [{ count: 1, name: 'resourceScrapIron' }],
+    userid: 'EOS_0002abcdef0002abcdef0002abcdef0002',
+  },
+  { bag: [{ name: 'resourceClayLump', count: 4 }], playername: 'Nameless' },
+]);
+assert(batch.length === 2, 'batch inventories skip rows without steam/eos');
+assert(batch[0].steamId === '76561198000000000' && batch[0].eosId === '0001abcdef0001abcdef0001abcdef0001', 'batch row keeps steam and eos for matching');
+assert(batch[0].snapshot.bag[0].name === 'resourceWood' && batch[0].snapshot.bag[0].count === 3, 'batch row reuses inventory parser');
+assert(batch[1].steamId === null && batch[1].eosId === '0002abcdef0002abcdef0002abcdef0002', 'userid EOS_ is matching identity');
+assert(!JSON.stringify(batch.map((row) => row.snapshot)).includes('7656119'), 'batch snapshots drop platform ids');
+assert(!JSON.stringify(batch.map((row) => row.snapshot)).includes('Example'), 'batch snapshots drop player names');
+
+const wrappedBatch = parseAllocsInventoriesJson({
+  data: {
+    Players: [{ bag: [{ name: 'foodCanChili', count: 1 }], steamid: 'Steam_76561198000000000' }],
+  },
+});
+assert(wrappedBatch.length === 1 && wrappedBatch[0].snapshot.bag[0].name === 'foodCanChili', 'unwraps nested Players inventories');
+
+const single = parseAllocsInventoriesJson({
+  bag: [{ name: 'resourceYuccaFibers', count: 2 }],
+  userid: '76561198000000000',
+});
+assert(single.length === 1 && single[0].steamId === '76561198000000000', 'single inventory object is one batch row');
+assert(parseAllocsInventoriesJson({ error: 'nope' }).length === 0, 'ignores non-inventory objects');
 
 console.log('player inventory parser tests passed');

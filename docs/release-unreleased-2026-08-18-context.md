@@ -56,9 +56,8 @@ Major areas (not an exhaustive file list):
 ## Known issues and next steps
 
 - Confirm Allocs webtoken (`webtokens list` on telnet) and set `SEVENDTD_WEB_API_SECRET` on production control-plane before inventory/`visitmap` work there.
-- Schedule a 7dtd restart so PrismaCore loads and `:11111` listens. Then dump **redacted** `getplayersonline` keys (no IPs in logs) before considering dropping telnet `lp`.
-- Keep `lp` for roster ping/IP/kills and connection-protection tools.
-- Out of this slice: shop kit grants, donor chat colors, `createadvclaims`, replacing `PLAYER_LIST_SYNC`.
+- PrismaCore `:11111` is up. Map players stay on PrismaCore `getplayersonline` (map-only keys). Roster ping/IP/kills use Allocs `getplayersonline` with telnet `lp` fallback.
+- Out of this slice: shop kit grants, donor chat colors, `createadvclaims`.
 - Do not bump `package.json` versions or create a git tag unless the operator asks.
 
 ## Do not commit

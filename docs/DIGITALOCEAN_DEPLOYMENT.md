@@ -27,9 +27,9 @@ Set on the Droplet compose env, never in Next public env:
 - `PRISMACORE_WEB_URL`, `PRISMACORE_API_USER`, `PRISMACORE_API_PASSWORD`
 - `SEVENDTD_WEB_URL`, `SEVENDTD_WEB_API_TOKEN_NAME`, `SEVENDTD_WEB_API_SECRET`
 
-Inventory, location APIs, and `visitmap` require an Allocs webtoken sent as
-`X-SDTD-API-TOKENNAME` / `X-SDTD-API-SECRET`. Keep `:8080` and `:11111`
-firewalled to loopback, WireGuard, and Docker networks.
+Inventory, location APIs, player roster (`getplayersonline`), and `visitmap`
+require an Allocs webtoken sent as `X-SDTD-API-TOKENNAME` / `X-SDTD-API-SECRET`.
+Keep `:8080` and `:11111` firewalled to loopback, WireGuard, and Docker networks.
 
 See `docs/prismacore.md` and `docs/allocs.md`.
 

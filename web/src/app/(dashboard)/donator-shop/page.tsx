@@ -22,6 +22,10 @@ export default function DonatorShopPage() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('10.00');
+  const [grantItemName, setGrantItemName] = useState('');
+  const [grantQuantity, setGrantQuantity] = useState('1');
+  const [grantQuality, setGrantQuality] = useState('');
+  const [chatColor, setChatColor] = useState('');
   const [image, setImage] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -68,8 +72,11 @@ export default function DonatorShopPage() {
     if (!orgId || !image) return;
     setBusy(true); setError(''); setMessage('');
     try {
-      await api.upload(`/api/orgs/${orgId}/shop-items`, formData({ name, description, price, active: 'true' }, image));
-      setName(''); setDescription(''); setPrice('10.00'); setImage(null);
+      await api.upload(`/api/orgs/${orgId}/shop-items`, formData({
+        name, description, price, active: 'true',
+        grantItemName, grantQuantity, grantQuality, chatColor,
+      }, image));
+      setName(''); setDescription(''); setPrice('10.00'); setGrantItemName(''); setGrantQuantity('1'); setGrantQuality(''); setChatColor(''); setImage(null);
       setMessage('Shop item created.');
       await load();
     } catch (e) {
@@ -88,6 +95,10 @@ export default function DonatorShopPage() {
         description: item.description,
         price: (item.priceCents / 100).toFixed(2),
         active: String(item.active),
+        grantItemName: item.grantItemName || '',
+        grantQuantity: String(item.grantQuantity || 1),
+        grantQuality: item.grantQuality == null ? '' : String(item.grantQuality),
+        chatColor: item.chatColor || '',
       }, editImage), 'PATCH');
       setEditing(null); setEditImage(null);
       setMessage('Shop item updated.');
@@ -117,7 +128,7 @@ export default function DonatorShopPage() {
     <div>
       <div style={{ marginBottom: '1.5rem' }}>
         <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: '#f1f5f9' }}>Donator Shop</h1>
-        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Create items players can buy from the player portal. Pictures are shown in full (not cropped). Descriptions support **bold** and * bullet lines.</p>
+        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>Create items players can buy from the player portal. After Stripe payment, optional 7DTD `giveplus` items and donor chat color are delivered in-game. Pictures are shown in full (not cropped). Descriptions support **bold** and * bullet lines.</p>
       </div>
       {error && <p style={{ color: '#f87171', fontSize: '.875rem' }}>{error}</p>}
       {message && <p style={{ color: '#4ade80', fontSize: '.875rem' }}>{message}</p>}
@@ -128,6 +139,12 @@ export default function DonatorShopPage() {
           <div><label style={labelStyle}>Name</label><input value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} style={inputStyle} /></div>
           <div><label style={labelStyle}>Description (**bold** and * bullets)</label><textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={500} rows={6} style={{ ...inputStyle, resize: 'vertical' }} /></div>
           <div><label style={labelStyle}>Price (USD)</label><input type="number" min="1" max="500" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} required style={inputStyle} /></div>
+          <div><label style={labelStyle}>In-game item (optional 7DTD name, e.g. resourceWood)</label><input value={grantItemName} onChange={(e) => setGrantItemName(e.target.value)} maxLength={80} placeholder="resourceWood" style={inputStyle} /></div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><label style={labelStyle}>Grant quantity</label><input type="number" min="1" max="9999" step="1" value={grantQuantity} onChange={(e) => setGrantQuantity(e.target.value)} style={inputStyle} /></div>
+            <div><label style={labelStyle}>Quality 1–6 (blank = random)</label><input type="number" min="1" max="6" step="1" value={grantQuality} onChange={(e) => setGrantQuality(e.target.value)} style={inputStyle} /></div>
+          </div>
+          <div><label style={labelStyle}>Donor chat color (optional hex, e.g. FF00FF)</label><input value={chatColor} onChange={(e) => setChatColor(e.target.value)} maxLength={7} placeholder="FF00FF" style={inputStyle} /></div>
           <div><label style={labelStyle}>Picture (JPEG, PNG, or WebP, 2 MB max). Resized automatically for the shop (full quality, WebP).</label><input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => setImage(e.target.files?.[0] || null)} required /></div>
           <button disabled={busy || !name.trim() || !image} style={btnPrimary}>{busy ? 'Saving…' : 'Add item'}</button>
         </form>
@@ -159,6 +176,12 @@ export default function DonatorShopPage() {
                     <input value={item.name} onChange={(e) => setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, name: e.target.value } : row))} style={inputStyle} />
                     <textarea value={item.description} onChange={(e) => setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, description: e.target.value } : row))} rows={6} style={{ ...inputStyle, resize: 'vertical' }} />
                     <input type="number" min="1" max="500" step="0.01" value={(item.priceCents / 100).toFixed(2)} onChange={(e) => setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, priceCents: Math.round(Number(e.target.value) * 100) } : row))} style={inputStyle} />
+                    <input value={item.grantItemName || ''} onChange={(e) => setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, grantItemName: e.target.value } : row))} placeholder="resourceWood" style={inputStyle} />
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <input type="number" min="1" max="9999" step="1" value={item.grantQuantity || 1} onChange={(e) => setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, grantQuantity: Number(e.target.value) } : row))} style={inputStyle} />
+                      <input type="number" min="1" max="6" step="1" value={item.grantQuality ?? ''} onChange={(e) => setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, grantQuality: e.target.value === '' ? null : Number(e.target.value) } : row))} style={inputStyle} />
+                    </div>
+                    <input value={item.chatColor || ''} onChange={(e) => setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, chatColor: e.target.value } : row))} placeholder="FF00FF" style={inputStyle} />
                     <label style={{ color: '#94a3b8', fontSize: 13 }}><input type="checkbox" checked={item.active} onChange={(e) => setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, active: e.target.checked } : row))} /> Active in player shop</label>
                     <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => setEditImage(e.target.files?.[0] || null)} />
                     <div style={{ display: 'flex', gap: 8 }}>
@@ -171,6 +194,12 @@ export default function DonatorShopPage() {
                     <h2 style={{ margin: '0 0 8px', fontSize: '1.05rem', color: '#f1f5f9' }}>{item.name}</h2>
                     {item.description ? <ShopDescription text={item.description} muted /> : <p style={{ margin: '0 0 8px', color: '#64748b', fontSize: 13 }}>No description</p>}
                     <p style={{ margin: 0, color: '#c4b5fd' }}>{money(item.priceCents)} · {item.active ? 'Active' : 'Hidden'}</p>
+                    {(item.grantItemName || item.chatColor) && (
+                      <p style={{ margin: '6px 0 0', color: '#94a3b8', fontSize: 13 }}>
+                        {item.grantItemName ? `Give ${item.grantQuantity || 1}× ${item.grantItemName}${item.grantQuality ? ` Q${item.grantQuality}` : ''}` : 'No item grant'}
+                        {item.chatColor ? ` · chat #${item.chatColor}` : ''}
+                      </p>
+                    )}
                     <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                       <button disabled={busy} onClick={() => { setEditing(item.id); setEditImage(null); }} style={{ ...btnPrimary, background: '#334155' }}>Edit</button>
                       <button disabled={busy} onClick={() => void remove(item)} style={{ ...btnPrimary, background: '#991b1b' }}>Remove</button>

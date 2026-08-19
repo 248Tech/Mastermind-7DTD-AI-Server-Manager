@@ -108,6 +108,6 @@ export interface PlayerRecord { id:string; serverInstanceId:string; identityKey:
 export interface ServerAdminRecord { platform?:string; userId:string; name?:string; permissionLevel:number; }
 export interface ModRecord { folder:string; name:string; author?:string; website?:string; version?:string; activatedAt:string; pendingRestart?:boolean; configFiles?:string[]; }
 export interface SaveRecord { id:string; createdAt:string; gameDay:number; kind:'full-world'|'region-healer'; sizeBytes:number; }
-export interface ShopItem { id:string; name:string; description:string; priceCents:number; active:boolean; hasImage:boolean; sortOrder:number; createdAt:string; }
-export interface DonationLine { id:string; shopItemId:string|null; itemName:string; amountCents:number; quantity:number; }
+export interface ShopItem { id:string; name:string; description:string; priceCents:number; active:boolean; hasImage:boolean; sortOrder:number; createdAt:string; grantItemName?:string|null; grantQuantity?:number; grantQuality?:number|null; chatColor?:string|null; }
+export interface DonationLine { id:string; shopItemId:string|null; itemName:string; amountCents:number; quantity:number; grantStatus?:string; chatColorStatus?:string; grantError?:string|null; }
 export interface DonationRecord { id:string; playerName:string; steamId:string; amountCents:number; refundedCents:number; status:string; completedAt:string|null; createdAt:string; lines:DonationLine[]; }

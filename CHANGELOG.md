@@ -23,23 +23,29 @@ Post-0.0.11 work (2026-08-17 and 2026-08-18) is included in `0.0.12`.
 - Steam-signed-in player portal profile (`/player/profile`) with own stats, last `lp` position, last logout time, last inventory snapshot, and supporter summary.
 - Steam-tied Stripe Checkout donations with a signed webhook, org-stored encrypted keys, and Settings → Stripe Donations. Custom gifts are $5–$500; supporter status is granted only from signed Stripe events.
 - Donator shop: public catalog at `/player/shop`, item pages, localStorage cart, multi-item checkout, admin `/donator-shop` and `/purchases`. JPEG/PNG/WebP uploads are magic-byte validated and resized to WebP (master 1920px / thumb 400px).
-- In-game-name password accounts for shop checkout (`auth: name`). Name sessions cannot read profile inventory/location or unlock live-map player markers.
+- In-game-name password accounts for shop checkout (`auth: name`). Name sessions cannot read profile inventory/location, land claims, or unlock live-map player markers.
 - PrismaCore ClaimCreator WebAPI client (control-plane only) for staff map overlays (claims, vehicles, drones, homes, traders, POIs, reset regions, advanced claims) and shop live status (`serverReachable`, `playersOnline` count only).
-- Allocs WebAPI client (control-plane only) for hostiles, animals, player inventory JSON, and allowlisted `visitmap` console commands.
+- Allocs WebAPI client (control-plane only) for hostiles, animals, player inventory JSON (`getplayerinventories` batch snapshots plus one-player `getplayerinventory`), allowlisted `visitmap`, and `getplayersonline` roster polling.
+- Steam-signed-in player portal can list and map the player's own land claims, bed, vehicles, and drones from PrismaCore (`GET /api/player-auth/places`). Name sessions receive empty lists.
+- Paid donator-shop lines can grant a 7DTD item via PrismaCore `giveplus` and set donor chat color via `playerchatcolor` after the signed Stripe webhook.
 
 ### Changed
 
 - Staff and player live maps read entities from Allocs + PrismaCore instead of telnet `le`. Allocs Webinterface 52 authenticates with `X-SDTD-API-TOKENNAME` / `X-SDTD-API-SECRET` headers. Allocs failures return empty arrays and a feed error; there is no telnet fallback.
 - Staff inventory and background snapshots use Allocs `getplayerinventory` JSON instead of `st-pil` RCON jobs.
+- Background inventory snapshots use Allocs `getplayerinventories` (one call for all online players) after roster apply. Per-player `getplayerinventory` remains the staff GET and the HTTP-failure fallback (two players per poll).
+- Shop item admin forms accept optional in-game grant item/quantity/quality and a 6-character chat color. Purchases show grant delivery status.
 - Live-map `visitmap` start/stop is sent through Allocs `executeconsolecommand` (numeric bounds or `stop` only). Progress still comes from the server log file.
-- Telnet `lp` remains the player roster source (ping, IP, kills) until PrismaCore `getplayersonline` can be probed after ClaimCreator `:11111` is up.
+- Player roster polling prefers Allocs `getplayersonline` (ping, IP, kills, deaths, level). Telnet `lp` / `PLAYER_LIST_SYNC` remains the fallback when Allocs is unconfigured, HTTP fails, or the JSON is unusable. An empty Allocs array is a valid empty roster, not a fallback.
 
 ### Security
 
 - PrismaCore `apiuser` password and Allocs webtoken stay in control-plane env. They never appear in Next public env, shop JSON, or map JSON.
 - Shop status public keys are only `serverName`, `checkoutEnabled`, `serverReachable`, `playersOnline`.
 - Allocs `executeconsolecommand` rejects `kick`, `give`, `st-pil`, `visitmap full`, and command chaining.
+- Shop kit grants are server-built `giveplus` / `playerchatcolor` only. Item names are charset-limited; `giveplus all` is never sent.
 - Player `/me` omits IP addresses, Stripe identifiers, and other players’ data.
+- Player `/places` is Steam-only, owner-filtered, and omits other players’ identities and IPs.
 
 ## [0.0.11] - 2026-08-14
 

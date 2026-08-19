@@ -20,6 +20,8 @@ const url = allocsRequestUrl(
   'gethostilelocation',
 );
 assert(url.pathname === '/api/gethostilelocation', 'keeps allocs path');
+assert(allocsRequestUrl({ url: 'http://10.78.0.2:8080', tokenName: 'u', secret: 'p' }, 'getplayersonline').pathname === '/api/getplayersonline', 'allows getplayersonline');
+assert(allocsRequestUrl({ url: 'http://10.78.0.2:8080', tokenName: 'u', secret: 'p' }, 'getplayerinventories').pathname === '/api/getplayerinventories', 'allows getplayerinventories');
 assert(!url.searchParams.has('adminuser'), 'does not put token name on the query string');
 assert(!url.searchParams.has('admintoken'), 'does not put token secret on the query string');
 const headers = allocsAuthHeaders({ url: 'http://10.78.0.2:8080', tokenName: 'mastermind', secret: 's3cret' });

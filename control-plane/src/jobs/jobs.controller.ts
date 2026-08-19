@@ -90,7 +90,7 @@ export class JobsController {
   ) {
     const take = limit ? Math.min(100, parseInt(limit, 10) || 20) : 20;
     const jobs = await this.prisma.job.findMany({
-      where: { orgId, NOT: { OR: [{ type: 'PLAYER_LIST_SYNC' }, { type: 'RCON', payload: { path: ['purpose'], equals: 'inventory_snapshot' } }] }, ...(serverInstanceId ? { serverInstanceId } : {}) },
+      where: { orgId, NOT: { OR: [{ type: 'PLAYER_LIST_SYNC' }, { type: 'RCON', payload: { path: ['purpose'], equals: 'inventory_snapshot' } }, { type: 'RCON', payload: { path: ['purpose'], equals: 'shop_grant' } }] }, ...(serverInstanceId ? { serverInstanceId } : {}) },
       orderBy: { createdAt: 'desc' },
       take,
       include: {

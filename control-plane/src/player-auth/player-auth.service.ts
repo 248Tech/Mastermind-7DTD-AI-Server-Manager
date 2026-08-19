@@ -5,6 +5,7 @@ import { stripeCheckoutEnabledForOrg } from '../donations/donations.credentials'
 import { PrismaService } from '../prisma.service';
 import { PrismaCoreService } from '../prismacore/prismacore.service';
 import { parsePortalPassword, parsePortalPlayerName, parseShopReturnPath } from './player-auth.names';
+import { emptyPlayerPlaces, filterPlayerPlaces } from './player-places';
 
 const STEAM_OPENID = 'https://steamcommunity.com/openid/login';
 const CLAIMED_ID = /^https?:\/\/steamcommunity\.com\/openid\/id\/(7656119\d{10})$/;
@@ -158,7 +159,7 @@ export class PlayerAuthService {
         ...(sessionAuth === 'steam' ? { steamId: payload.steamId } : {}),
       },
       select: {
-        id: true, orgId: true, steamId: true, entityId: true, name: true, online: true, serverInstanceId: true,
+        id: true, orgId: true, steamId: true, eosId: true, entityId: true, name: true, online: true, serverInstanceId: true,
         zombieKills: true, playerKills: true, deaths: true, level: true, lifetimeSeconds: true,
         currentSessionStartedAt: true, firstSeenAt: true, lastSeenAt: true, lastLogoutAt: true,
         lastPosX: true, lastPosY: true, lastPosZ: true, lastInventory: true, lastInventoryAt: true,
@@ -257,5 +258,27 @@ export class PlayerAuthService {
         recent: recent.map((row) => ({ amountCents: row.amountCents, at: row.createdAt.toISOString() })),
       },
     };
+  }
+
+  async places(token: string) {
+    const player = await this.requirePlayer(token);
+    if (player.sessionAuth === 'name') return emptyPlayerPlaces('name');
+    const [claimsLayer, homesLayer, vehiclesLayer, dronesLayer] = await Promise.all([
+      this.prismaCore.layer('landclaims'),
+      this.prismaCore.layer('playerhomes'),
+      this.prismaCore.layer('vehicles'),
+      this.prismaCore.layer('drones'),
+    ]);
+    const claims = claimsLayer as { reachable?: boolean; claims?: unknown[] };
+    const homes = homesLayer as { reachable?: boolean; homes?: unknown[] };
+    const vehicles = vehiclesLayer as { reachable?: boolean; markers?: unknown[] };
+    const drones = dronesLayer as { reachable?: boolean; markers?: unknown[] };
+    return filterPlayerPlaces({
+      reachable: Boolean(claims.reachable || homes.reachable || vehicles.reachable || drones.reachable),
+      claims: Array.isArray(claims.claims) ? claims.claims as Array<{ steamId?: unknown; eosId?: unknown; extra?: unknown; position?: { x: number; y: number; z: number }; size?: number }> : [],
+      homes: Array.isArray(homes.homes) ? homes.homes as Array<{ steamId?: unknown; eosId?: unknown; extra?: unknown; position?: { x: number; y: number; z: number }; active?: boolean }> : [],
+      vehicles: Array.isArray(vehicles.markers) ? vehicles.markers as Array<{ steamId?: unknown; eosId?: unknown; extra?: unknown; name?: string; position?: { x: number; y: number; z: number } }> : [],
+      drones: Array.isArray(drones.markers) ? drones.markers as Array<{ steamId?: unknown; eosId?: unknown; extra?: unknown; name?: string; position?: { x: number; y: number; z: number } }> : [],
+    }, { steamId: player.steamId, eosId: player.eosId });
   }
 }

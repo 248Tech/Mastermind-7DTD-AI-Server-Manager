@@ -40,6 +40,15 @@ type Profile = {
   donation: Donation;
 };
 
+type Places = {
+  auth: 'steam' | 'name';
+  reachable: boolean;
+  claims: Array<{ id: string; position: { x: number; y: number; z: number }; size: number }>;
+  homes: Array<{ id: string; position: { x: number; y: number; z: number }; active: boolean }>;
+  vehicles: Array<{ id: string; name: string; position: { x: number; y: number; z: number } }>;
+  drones: Array<{ id: string; name: string; position: { x: number; y: number; z: number } }>;
+};
+
 const PRESETS = [500, 1000, 2500, 5000];
 
 function duration(seconds: number) {
@@ -85,6 +94,7 @@ function PlayerProfileContent() {
   const [custom, setCustom] = useState('');
   const [donating, setDonating] = useState(false);
   const [donateError, setDonateError] = useState('');
+  const [places, setPlaces] = useState<Places | null>(null);
 
   useEffect(() => {
     fetch('/api/player-auth/me', { cache: 'no-store' })
@@ -94,7 +104,12 @@ function PlayerProfileContent() {
           return;
         }
         if (!r.ok) throw new Error('Could not load your profile');
-        setProfile(await r.json());
+        const next = await r.json() as Profile;
+        setProfile(next);
+        if (next.auth === 'steam') {
+          const placesResponse = await fetch('/api/player-auth/places', { cache: 'no-store' });
+          if (placesResponse.ok) setPlaces(await placesResponse.json());
+        }
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not load your profile'))
       .finally(() => setChecking(false));
@@ -105,7 +120,7 @@ function PlayerProfileContent() {
   if (profile.auth === 'name' || !profile.stats) {
     return (
       <PortalFrame profile={profile}>
-        <div style={alert}>Sign in through Steam to view stats, inventory, and logout location. Shop accounts are for purchases only.</div>
+        <div style={alert}>Sign in through Steam to view stats, inventory, logout location, and your land. Shop accounts are for purchases only.</div>
         <a href="/api/player-auth/steam/start?next=/player/profile" style={{ color: '#fb923c' }}>Sign in through Steam</a>
       </PortalFrame>
     );
@@ -189,6 +204,33 @@ function PlayerProfileContent() {
             </div>
           ) : (
             <p style={{ color: '#94a3b8', margin: 0 }}>No logout coordinates yet. They appear after the next live player poll while you are in-game.</p>
+          )}
+        </section>
+
+        <section style={card}>
+          <h2 style={heading}>Your places</h2>
+          {!places || (!places.claims.length && !places.homes.length && !places.vehicles.length && !places.drones.length) ? (
+            <p style={{ color: '#94a3b8', margin: 0 }}>
+              {places && !places.reachable
+                ? 'Land data is unavailable right now.'
+                : 'No land claims, bed, vehicles, or drones linked to this Steam account yet.'}
+              {' '}<a href="/player/map" style={{ color: '#60a5fa' }}>Open the map</a>
+            </p>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {places.claims.map((claim) => (
+                <p key={claim.id} style={placeLine}>Land claim · {Math.round(claim.position.x)}, {Math.round(claim.position.z)} · {claim.size}×{claim.size}</p>
+              ))}
+              {places.homes.map((home) => (
+                <p key={home.id} style={placeLine}>Bed{home.active ? '' : ' (inactive)'} · {Math.round(home.position.x)}, {Math.round(home.position.z)}</p>
+              ))}
+              {places.vehicles.map((vehicle) => (
+                <p key={vehicle.id} style={placeLine}>{vehicle.name} · {Math.round(vehicle.position.x)}, {Math.round(vehicle.position.z)}</p>
+              ))}
+              {places.drones.map((drone) => (
+                <p key={drone.id} style={placeLine}>{drone.name} · {Math.round(drone.position.x)}, {Math.round(drone.position.z)}</p>
+              ))}
+            </div>
           )}
         </section>
 
@@ -293,3 +335,4 @@ const donateButton: React.CSSProperties = { color: '#fed7aa', background: '#9a34
 const presetOn: React.CSSProperties = { color: '#fff7ed', background: '#9a3412', border: '1px solid #c2410c', borderRadius: 8, padding: '.45rem .8rem', cursor: 'pointer', fontWeight: 700 };
 const presetOff: React.CSSProperties = { color: '#fdba74', background: '#1c1008', border: '1px solid #7c2d12', borderRadius: 8, padding: '.45rem .8rem', cursor: 'pointer' };
 const customInput: React.CSSProperties = { width: 72, background: '#0b0b12', color: '#e2e8f0', border: '1px solid #3f3f49', borderRadius: 6, padding: '6px 8px' };
+const placeLine: React.CSSProperties = { margin: 0, color: '#e2e8f0', fontSize: 14 };

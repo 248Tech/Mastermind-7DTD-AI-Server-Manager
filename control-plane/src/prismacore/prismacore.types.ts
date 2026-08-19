@@ -58,12 +58,15 @@ export type PrismaCoreMarker = {
   name: string;
   position: Position;
   extra?: string;
+  steamId?: string;
+  eosId?: string;
 };
 
 export type PrismaCoreHome = {
   id: string;
   owner: string;
   steamId: string;
+  eosId?: string;
   position: Position;
   active: boolean;
 };
