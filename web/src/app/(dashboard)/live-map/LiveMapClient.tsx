@@ -1347,7 +1347,7 @@ export default function LiveMapClient() {
                     ))}
                   </LayerGroup>
                 </LayersControl.Overlay>
-                <LayersControl.Overlay name={`Quest POIs (${visibleQuestPois.length}${normalizedPoiSearch ? `/${questPois.length}` : ""})`}>
+                <LayersControl.Overlay name={`Quest POIs (${visibleQuestPois.length}${normalizedEntitySearch ? `/${questPois.length}` : ""})`}>
                   <LayerGroup>
                     {visibleQuestPois.map((poi) => (
                       <Rectangle key={poi.id} bounds={poiBounds(poi)} pathOptions={{ color: "#ef4444", weight: 1, fillOpacity: 0.12 }}>
@@ -1356,7 +1356,7 @@ export default function LiveMapClient() {
                     ))}
                   </LayerGroup>
                 </LayersControl.Overlay>
-                <LayersControl.Overlay name={`All POIs (${visibleAllPois.length}${normalizedPoiSearch ? `/${allPois.length}` : ""})`}>
+                <LayersControl.Overlay name={`All POIs (${visibleAllPois.length}${normalizedEntitySearch ? `/${allPois.length}` : ""})`}>
                   <LayerGroup>
                     {showAllPois && visibleAllPois.map((poi) => (
                       <Rectangle key={poi.id} bounds={poiBounds(poi)} pathOptions={{ color: "#eab308", weight: 1, fillOpacity: 0.08 }}>
