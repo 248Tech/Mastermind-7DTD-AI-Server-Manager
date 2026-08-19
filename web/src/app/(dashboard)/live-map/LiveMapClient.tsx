@@ -211,6 +211,7 @@ export default function LiveMapClient() {
     [showClaims, setShowClaims] = useState(true),
     [showPlayerNames, setShowPlayerNames] = useState(true),
     [showLogoutLocations, setShowLogoutLocations] = useState(false),
+    [entitySearch, setEntitySearch] = useState(""),
     [prismaConfigured, setPrismaConfigured] = useState(false),
     [vehicles, setVehicles] = useState<PrismaMarker[]>([]),
     [drones, setDrones] = useState<PrismaMarker[]>([]),
@@ -218,7 +219,6 @@ export default function LiveMapClient() {
     [homes, setHomes] = useState<PrismaHome[]>([]),
     [questPois, setQuestPois] = useState<PrismaPoi[]>([]),
     [allPois, setAllPois] = useState<PrismaPoi[]>([]),
-    [poiSearch, setPoiSearch] = useState(""),
     [resetRegions, setResetRegions] = useState<PrismaRect[]>([]),
     [advClaims, setAdvClaims] = useState<PrismaRect[]>([]),
     [showAllPois, setShowAllPois] = useState(false),
@@ -553,30 +553,6 @@ export default function LiveMapClient() {
           return { name: `r.${x}.${z}.7rg`, x, z };
         },
       );
-  const regions = regionDefinitions.map((region) => {
-    const x0 = region.x * 512,
-      z0 = region.z * 512;
-    return (
-      <Rectangle
-        key={region.name}
-        bounds={[
-          [x0, z0],
-          [x0 + 512, z0 + 512],
-        ]}
-        pathOptions={{ color: "#94a3b8", weight: 1, fill: false }}
-      >
-        <Tooltip
-          permanent
-          direction="center"
-          opacity={0.9}
-          interactive={false}
-          className="region-grid-label"
-        >
-          {region.name}
-        </Tooltip>
-      </Rectangle>
-    );
-  });
   const mapBounds = L.latLngBounds([worldX1, worldZ1], [worldX2, worldZ2]);
   const windowedHistory = history.filter(
     (snapshot) => snapshot.at >= Date.now() - historyWindow * 60_000,
@@ -589,11 +565,31 @@ export default function LiveMapClient() {
       : windowedHistory.find((snapshot) => snapshot.at === historyCursorAt) ||
         windowedHistory.filter((snapshot) => snapshot.at <= historyCursorAt).slice(-1)[0] ||
         { at: Date.now(), players, animals, hostiles };
-  const visibleAdvClaims = advClaimFilter === "all" ? advClaims : advClaims.filter((claim) => claim.type === advClaimFilter);
-  const normalizedPoiSearch = poiSearch.trim().toLocaleLowerCase();
-  const matchesPoiSearch = (poi: PrismaPoi) => !normalizedPoiSearch || poi.name.toLocaleLowerCase().includes(normalizedPoiSearch);
-  const visibleQuestPois = questPois.filter(matchesPoiSearch);
-  const visibleAllPois = allPois.filter(matchesPoiSearch);
+  const normalizedEntitySearch = entitySearch.trim().toLocaleLowerCase();
+  const matchesEntity = (...values: unknown[]) => !normalizedEntitySearch || values.some((value) => String(value ?? "").toLocaleLowerCase().includes(normalizedEntitySearch));
+  const visibleAdvClaims = (advClaimFilter === "all" ? advClaims : advClaims.filter((claim) => claim.type === advClaimFilter)).filter((claim) => matchesEntity(claim.name, claim.type, claim.id));
+  const visiblePlayers = viewed.players.filter((entity) => matchesEntity(entity.name, entity.id));
+  const visibleAnimals = viewed.animals.filter((entity) => matchesEntity(entity.name, entity.id));
+  const visibleHostiles = viewed.hostiles.filter((entity) => matchesEntity(entity.name, entity.id));
+  const visibleClaims = claims.filter((claim) => matchesEntity(claim.owner, claim.steamId, claim.eosId, claim.id));
+  const visibleVehicles = vehicles.filter((marker) => matchesEntity(marker.name, marker.extra, marker.id));
+  const visibleDrones = drones.filter((marker) => matchesEntity(marker.name, marker.extra, marker.id));
+  const visibleTraders = traders.filter((marker) => matchesEntity(marker.name, marker.extra, marker.id));
+  const visibleHomes = homes.filter((home) => matchesEntity(home.owner, home.steamId, home.id));
+  const visibleRegions = regionDefinitions.filter((region) => matchesEntity(region.name, region.x, region.z));
+  const visibleQuestPois = questPois.filter((poi) => matchesEntity(poi.name, poi.id));
+  const visibleAllPois = allPois.filter((poi) => matchesEntity(poi.name, poi.id));
+  const regions = visibleRegions.map((region) => {
+    const x0 = region.x * 512,
+      z0 = region.z * 512;
+    return (
+      <Rectangle key={region.name} bounds={[[x0, z0], [x0 + 512, z0 + 512]]} pathOptions={{ color: "#94a3b8", weight: 1, fill: false }}>
+        <Tooltip permanent direction="center" opacity={0.9} interactive={false} className="region-grid-label">
+          {region.name}
+        </Tooltip>
+      </Rectangle>
+    );
+  });
   const playerChoices = [
     ...new Map(
       history
@@ -615,11 +611,11 @@ export default function LiveMapClient() {
       ? [trackedPlayer]
       : [...new Set(viewed.players.map(playerTrackKey))];
   const trails = visibleIds
-    .map((id) => {
+      .map((id) => {
       const points = trailHistory
         .flatMap((s) =>
           s.players
-            .filter((p) => playerTrackKey(p) === id)
+            .filter((p) => playerTrackKey(p) === id && matchesEntity(p.name, p.id))
             .filter((p) => Number.isFinite(p.position?.x) && Number.isFinite(p.position?.z))
             .map((p) => [p.position.x, p.position.z] as [number, number]),
         );
@@ -633,6 +629,11 @@ export default function LiveMapClient() {
         .live-map-page { color: #e2e8f0; }
         .map-heading { background: linear-gradient(135deg, rgba(30,41,59,.72), rgba(15,23,42,.42)); border: 1px solid #273449; border-radius: 12px; padding: 16px 18px; }
         .map-stats { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+        .map-global-search { display: flex; align-items: center; gap: 7px; max-width: 620px; margin-top: 12px; padding: 5px 7px; border: 1px solid #475569; border-radius: 8px; background: rgba(2,6,23,.72); }
+        .map-global-search > span { color: #38bdf8; font-size: 20px; line-height: 1; }
+        .map-global-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: #f8fafc; padding: 5px 2px; font-size: 13px; }
+        .map-global-search input::placeholder { color: #64748b; }
+        .map-global-search button { border: 0; border-radius: 5px; background: #334155; color: #e2e8f0; padding: 5px 8px; cursor: pointer; }
         .map-stat { border: 1px solid #334155; border-radius: 999px; padding: 4px 9px; background: rgba(15,23,42,.7); font-size: 12px; }
         .map-toolbar { margin: 10px 0; padding: 10px; background: #111118; border: 1px solid #252532; border-radius: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
         .map-toolbar .toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-right: 8px; margin-right: 2px; border-right: 1px solid #293241; }
@@ -643,6 +644,7 @@ export default function LiveMapClient() {
         .map-filter-details .filter-detail-content { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 8px 2px 0; }
         .map-toolbar select, .map-toolbar button { min-height: 32px; }
         .map-toolbar button:focus-visible, .map-toolbar select:focus-visible, .map-toolbar input:focus-visible, .map-heading button:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
+        .map-global-search input:focus-visible, .map-global-search button:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
         .map-maintenance { min-width: min(100%, 320px); }
         .map-maintenance summary { cursor: pointer; color: #fbbf24; font-size: 12px; font-weight: 600; padding: 6px 8px; border: 1px solid #3f3f46; border-radius: 6px; background: rgba(120,53,15,.2); list-style-position: inside; }
         .map-maintenance[open] summary { border-radius: 6px 6px 0 0; }
@@ -684,6 +686,16 @@ export default function LiveMapClient() {
             Terrain and entities refresh every 10 seconds. Inspired by CSMM;
             powered by live 7DTD data.
           </p>
+          <div className="map-global-search">
+            <span aria-hidden="true">⌕</span>
+            <input
+              aria-label="Search all map entities"
+              placeholder="Search players, zombies, claims, POIs, vehicles…"
+              value={entitySearch}
+              onChange={(event) => setEntitySearch(event.target.value)}
+            />
+            {entitySearch && <button type="button" aria-label="Clear map search" onClick={() => setEntitySearch("")}>Clear</button>}
+          </div>
           {worldInfo && (
             <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 5 }}>
               World size: <strong style={{ color: "#e2e8f0" }}>{worldInfo.width.toLocaleString()} × {worldInfo.height.toLocaleString()} blocks</strong>
@@ -880,23 +892,6 @@ export default function LiveMapClient() {
           </label>
           )}
           </div>
-          <div className="toolbar-group">
-            <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#38bdf8", fontSize: 12, whiteSpace: "nowrap" }}>
-              POI search
-            </label>
-            <input
-              aria-label="Search POIs by name"
-              placeholder={prismaConfigured ? "Search by name…" : "PrismaCore unavailable"}
-              value={poiSearch}
-              onChange={(event) => setPoiSearch(event.target.value)}
-              disabled={!prismaConfigured}
-              title={!prismaConfigured ? "Configure PrismaCore to search POIs" : "Filter POIs by name"}
-              style={{ background: "#0d0d14", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 6, padding: "6px 9px", minWidth: 155, opacity: prismaConfigured ? 1 : 0.65 }}
-            />
-            {poiSearch && (
-              <button type="button" aria-label="Clear POI search" onClick={() => setPoiSearch("")} style={{ background: "#334155", color: "#e2e8f0", border: 0, borderRadius: 6, padding: "6px 9px", cursor: "pointer" }}>Clear</button>
-            )}
-          </div>
           <details className="toolbar-group map-filter-details">
             <summary>Filters</summary>
             <div className="filter-detail-content">
@@ -1083,7 +1078,7 @@ export default function LiveMapClient() {
             setShowLogoutLocations(false);
             setShowClaims(true);
             setShowAllPois(false);
-            setPoiSearch("");
+            setEntitySearch("");
             setAdvClaimFilter("all");
             setHistoryCursorAt(null);
           }}
@@ -1152,7 +1147,7 @@ export default function LiveMapClient() {
                   </LayerGroup>
                   );
                 })}
-                {viewed.players.map((e) => (
+                {visiblePlayers.map((e) => (
                   <Marker
                     key={e.id}
                     position={[e.position.x, e.position.z]}
@@ -1228,7 +1223,7 @@ export default function LiveMapClient() {
             </LayersControl.Overlay>
             <LayersControl.Overlay name="Animals" checked>
               <LayerGroup>
-                {viewed.animals.map((e) => (
+                {visibleAnimals.map((e) => (
                   <Marker
                     key={e.id}
                     position={[e.position.x, e.position.z]}
@@ -1241,7 +1236,7 @@ export default function LiveMapClient() {
             </LayersControl.Overlay>
             <LayersControl.Overlay name="Hostiles" checked>
               <LayerGroup>
-                {viewed.hostiles.map((e) => (
+                {visibleHostiles.map((e) => (
                   <Marker
                     key={e.id}
                     position={[e.position.x, e.position.z]}
@@ -1254,7 +1249,7 @@ export default function LiveMapClient() {
             </LayersControl.Overlay>
             <LayersControl.Overlay name={`Land claims (${claims.length})`} checked>
               <LayerGroup>
-                {showClaims && claims.map((claim) => {
+                {showClaims && visibleClaims.map((claim) => {
                   const half = claim.size / 2;
                   return (
                     <LayerGroup key={claim.id}>
@@ -1287,7 +1282,7 @@ export default function LiveMapClient() {
               <>
                 <LayersControl.Overlay name={`Vehicles (${vehicles.length})`}>
                   <LayerGroup>
-                    {vehicles.map((marker) => (
+                    {visibleVehicles.map((marker) => (
                       <Marker key={marker.id} position={[marker.position.x, marker.position.z]} icon={dot("#38bdf8")}>
                         <Popup>Vehicle: {marker.name}<br />{Math.round(marker.position.x)}, {Math.round(marker.position.y)}, {Math.round(marker.position.z)}</Popup>
                       </Marker>
@@ -1296,7 +1291,7 @@ export default function LiveMapClient() {
                 </LayersControl.Overlay>
                 <LayersControl.Overlay name={`Drones (${drones.length})`}>
                   <LayerGroup>
-                    {drones.map((marker) => (
+                    {visibleDrones.map((marker) => (
                       <Marker key={marker.id} position={[marker.position.x, marker.position.z]} icon={dot("#f472b6")}>
                         <Popup>Drone: {marker.name}<br />{Math.round(marker.position.x)}, {Math.round(marker.position.y)}, {Math.round(marker.position.z)}</Popup>
                       </Marker>
@@ -1305,7 +1300,7 @@ export default function LiveMapClient() {
                 </LayersControl.Overlay>
                 <LayersControl.Overlay name={`Beds (${homes.length})`}>
                   <LayerGroup>
-                    {homes.map((home) => {
+                    {visibleHomes.map((home) => {
                       const size = 15;
                       return (
                         <LayerGroup key={home.id}>
@@ -1328,7 +1323,7 @@ export default function LiveMapClient() {
                 </LayersControl.Overlay>
                 <LayersControl.Overlay name={`Traders (${traders.length})`}>
                   <LayerGroup>
-                    {traders.map((marker) => (
+                    {visibleTraders.map((marker) => (
                       <Marker key={marker.id} position={[marker.position.x, marker.position.z]} icon={dot("#facc15")}>
                         <Popup>Trader: {marker.name}<br />{Math.round(marker.position.x)}, {Math.round(marker.position.z)}</Popup>
                       </Marker>
@@ -1374,7 +1369,7 @@ export default function LiveMapClient() {
               </>
             )}
             <LayersControl.Overlay name="Region grid">
-              <LayerGroup>{regions}</LayerGroup>
+                      <LayerGroup>{regions}</LayerGroup>
             </LayersControl.Overlay>
           </LayersControl>
           <MapViewportControls bounds={mapBounds} />
