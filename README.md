@@ -259,6 +259,12 @@ On first run, the agent will pair, read the local 7DTD paths, and auto-create or
 
 ---
 
+## Repository workflow
+
+The `main` branch is protected. Submit changes through a pull request; direct pushes, force-pushes, and branch deletion are disabled. Pull requests require at least one approval, dismiss stale approvals after new commits, require approval from someone other than the last pusher, and require resolved review conversations. Review the staged diff for secrets and deployment-only files before opening a PR.
+
+---
+
 ## Roadmap
 
 - **Phase 1 (MVP):** Control plane + web + agent, pairing, server CRUD, job dispatch, basic 7DTD adapter.
