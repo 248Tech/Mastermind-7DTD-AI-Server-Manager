@@ -11,6 +11,7 @@ import {
   Tooltip,
   Polyline,
   Polygon,
+  useMap,
   useMapEvents,
 } from "react-leaflet";
 import L from "leaflet";
@@ -153,6 +154,15 @@ function Coordinates() {
       }}
     >
       {text}
+    </div>
+  );
+}
+function MapViewportControls({ bounds }: { bounds: L.LatLngBounds }) {
+  const map = useMap();
+  return (
+    <div className="map-viewport-controls">
+      <button type="button" onClick={() => map.fitBounds(bounds, { padding: [18, 18] })}>Fit world</button>
+      <button type="button" onClick={() => map.setZoom(Math.max(map.getMinZoom(), 0))}>Reset zoom</button>
     </div>
   );
 }
@@ -589,8 +599,29 @@ export default function LiveMapClient() {
     })
     .filter((trail) => trail.points.length > 1);
   return (
-    <div>
+    <div className="live-map-page">
+      <style jsx global>{`
+        .live-map-page { color: #e2e8f0; }
+        .map-heading { background: linear-gradient(135deg, rgba(30,41,59,.72), rgba(15,23,42,.42)); border: 1px solid #273449; border-radius: 12px; padding: 16px 18px; }
+        .map-stats { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+        .map-stat { border: 1px solid #334155; border-radius: 999px; padding: 4px 9px; background: rgba(15,23,42,.7); font-size: 12px; }
+        .map-toolbar { margin: 10px 0; padding: 10px; background: #111118; border: 1px solid #252532; border-radius: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+        .map-toolbar .toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-right: 8px; margin-right: 2px; border-right: 1px solid #293241; }
+        .map-toolbar .toolbar-group:last-child { border-right: 0; }
+        .map-toolbar select, .map-toolbar button { min-height: 32px; }
+        .map-frame { height: calc(100vh - 230px); min-height: 520px; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 14px 35px rgba(0,0,0,.22); }
+        .map-viewport-controls { position: absolute; z-index: 1000; top: 10px; left: 10px; display: flex; gap: 5px; }
+        .map-viewport-controls button { border: 1px solid #475569; border-radius: 6px; background: rgba(15,23,42,.92); color: #e2e8f0; padding: 6px 8px; font-size: 11px; cursor: pointer; }
+        .map-viewport-controls button:hover { background: #1e293b; }
+        @media (max-width: 700px) {
+          .map-heading { padding: 12px; }
+          .map-toolbar .toolbar-group { width: 100%; border-right: 0; border-bottom: 1px solid #293241; padding: 0 0 8px; }
+          .map-toolbar .toolbar-group:last-child { border-bottom: 0; padding-bottom: 0; }
+          .map-frame { height: calc(100vh - 290px); min-height: 430px; }
+        }
+      `}</style>
       <div
+        className="map-heading"
         style={{
           display: "flex",
           justifyContent: "space-between",
@@ -612,22 +643,22 @@ export default function LiveMapClient() {
               <span style={{ color: "#64748b" }}> · read from {worldInfo.source}</span>
             </div>
           )}
-          <div style={{ display: "flex", gap: 10, marginTop: 6, fontSize: 12 }}>
-            <span style={{ color: "#60a5fa" }}>
+          <div className="map-stats">
+            <span className="map-stat" style={{ color: "#60a5fa" }}>
               Players {viewed.players.length}
             </span>
-            <span style={{ color: "#4ade80" }}>
+            <span className="map-stat" style={{ color: "#4ade80" }}>
               Animals {viewed.animals.length}
             </span>
-            <span style={{ color: "#f87171" }}>
+            <span className="map-stat" style={{ color: "#f87171" }}>
               Hostiles {viewed.hostiles.length}
             </span>
-            <span style={{ color: "#c084fc" }}>Claims {claims.length}</span>
+            <span className="map-stat" style={{ color: "#c084fc" }}>Claims {claims.length}</span>
             {prismaConfigured && (
               <>
-                <span style={{ color: "#38bdf8" }}>Vehicles {vehicles.length}</span>
-                <span style={{ color: "#f472b6" }}>Drones {drones.length}</span>
-                <span style={{ color: "#facc15" }}>Traders {traders.length}</span>
+                <span className="map-stat" style={{ color: "#38bdf8" }}>Vehicles {vehicles.length}</span>
+                <span className="map-stat" style={{ color: "#f472b6" }}>Drones {drones.length}</span>
+                <span className="map-stat" style={{ color: "#facc15" }}>Traders {traders.length}</span>
               </>
             )}
             {feedError && (
@@ -752,6 +783,7 @@ export default function LiveMapClient() {
         </div>
       )}
       <div
+        className="map-toolbar"
         style={{
           display: "flex",
           alignItems: "center",
@@ -764,7 +796,8 @@ export default function LiveMapClient() {
           flexWrap: "wrap",
         }}
       >
-        <select
+          <div className="toolbar-group">
+          <select
           aria-label="Track player"
           value={trackedPlayer}
           onChange={(e) => setTrackedPlayer(e.target.value)}
@@ -784,7 +817,7 @@ export default function LiveMapClient() {
             </option>
           ))}
         </select>
-        {trackedPlayer && (
+          {trackedPlayer && (
           <label style={{ display: "flex", alignItems: "center", gap: 6, color: trackingColor, fontSize: 12, whiteSpace: "nowrap" }}>
             Trail color
             <input
@@ -795,7 +828,9 @@ export default function LiveMapClient() {
               style={{ width: 30, height: 26, padding: 0, border: "1px solid #475569", borderRadius: 5, background: "transparent", cursor: "pointer" }}
             />
           </label>
-        )}
+          )}
+          </div>
+          <div className="toolbar-group">
         <label
           style={{
             display: "flex",
@@ -815,6 +850,8 @@ export default function LiveMapClient() {
           />
           Show all player trails
         </label>
+          </div>
+          <div className="toolbar-group">
         <label
           style={{
             display: "flex",
@@ -899,6 +936,8 @@ export default function LiveMapClient() {
             </select>
           </>
         )}
+          </div>
+          <div className="toolbar-group" style={{ flex: 1, minWidth: 260 }}>
         <select
           aria-label="Player history timeframe"
           value={historyWindow}
@@ -966,8 +1005,10 @@ export default function LiveMapClient() {
         <span style={{ fontSize: 11, color: "#64748b" }}>
           {windowedHistory.length} points{historyStart && historyEnd ? ` · ${new Date(historyStart).toLocaleTimeString()}–${new Date(historyEnd).toLocaleTimeString()}` : " · no collected data"}
         </span>
+          </div>
       </div>
       <div
+        className="map-frame"
         style={{
           height: "calc(100vh - 230px)",
           minHeight: 520,
@@ -1245,6 +1286,7 @@ export default function LiveMapClient() {
               <LayerGroup>{regions}</LayerGroup>
             </LayersControl.Overlay>
           </LayersControl>
+          <MapViewportControls bounds={mapBounds} />
           <Coordinates />
         </MapContainer>
       </div>
