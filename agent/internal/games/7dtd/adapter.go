@@ -319,6 +319,12 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 		return agent.JobResult{Status: "success", Result: map[string]interface{}{"folder": folder, "path": path, "saved": true}}, nil
+	case "ITEM_CATALOG":
+		catalog, err := listItemCatalog(cfg)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: catalog}, nil
 	case "PROFILE_LIST":
 		profiles, err := listPlayerProfiles(job.Payload)
 		if err != nil {
@@ -756,6 +762,7 @@ func quarantineMod(cfg *agent.InstanceConfig, override, folder string) error {
 	if output, err := exec.Command("/usr/bin/mv", "--", target, destination).CombinedOutput(); err != nil {
 		return fmt.Errorf("quarantine mod: %w: %s", err, strings.TrimSpace(string(output)))
 	}
+	_ = os.Remove(activationMarkerPath(cfg, override, folder))
 	return nil
 }
 
@@ -982,6 +989,13 @@ func restoreMod(cfg *agent.InstanceConfig, override, folder string) error {
 	if err := os.Chtimes(destination, now, now); err != nil {
 		return fmt.Errorf("record restored mod activation time: %w", err)
 	}
+	marker := activationMarkerPath(cfg, override, folder)
+	if err := os.MkdirAll(filepath.Dir(marker), 0750); err != nil {
+		return fmt.Errorf("create mod activation state: %w", err)
+	}
+	if err := os.WriteFile(marker, []byte(now.UTC().Format(time.RFC3339Nano)+"\n"), 0640); err != nil {
+		return fmt.Errorf("record mod activation state: %w", err)
+	}
 	return nil
 }
 
@@ -1098,7 +1112,7 @@ func listMods(cfg *agent.InstanceConfig, override string) ([]modInfo, error) {
 		return nil, err
 	}
 	for index := range mods {
-		mods[index].PendingRestart = modPendingRestart(cfg, mods[index].ActivatedAt)
+		mods[index].PendingRestart = modPendingRestart(cfg, override, mods[index].Folder)
 	}
 	return mods, nil
 }
@@ -1106,8 +1120,31 @@ func listMods(cfg *agent.InstanceConfig, override string) ([]modInfo, error) {
 // modPendingRestart marks a folder restored after the current game service
 // start. The files are active on disk but 7DTD will not load them until its
 // next restart, so the UI must distinguish this limbo state from loaded mods.
-func modPendingRestart(cfg *agent.InstanceConfig, activatedAt time.Time) bool {
-	if activatedAt.IsZero() || cfg == nil {
+func activationMarkerPath(cfg *agent.InstanceConfig, override, folder string) string {
+	root, err := quarantinePath(cfg, override)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(root, ".activation", folder+".txt")
+}
+
+func modPendingRestart(cfg *agent.InstanceConfig, override, folder string) bool {
+	if cfg == nil || folder == "" {
+		return false
+	}
+	marker := activationMarkerPath(cfg, override, folder)
+	if marker == "" {
+		return false
+	}
+	contents, err := os.ReadFile(marker)
+	if err != nil {
+		// Mods restored before activation markers were introduced are already
+		// established installations; do not resurrect a stale queue warning
+		// from their mutable folder timestamp.
+		return false
+	}
+	activatedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(contents)))
+	if err != nil {
 		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -1115,12 +1152,27 @@ func modPendingRestart(cfg *agent.InstanceConfig, activatedAt time.Time) bool {
 	if err := exec.CommandContext(ctx, "/usr/bin/systemctl", "is-active", "--quiet", "7dtd.service").Run(); err != nil {
 		return false
 	}
-	out, err := exec.CommandContext(ctx, "/usr/bin/systemctl", "show", "-p", "ExecMainStartTimestamp", "--value", "7dtd.service").Output()
-	if err != nil {
+	var started time.Time
+	for _, property := range []string{"ActiveEnterTimestamp", "ExecMainStartTimestamp"} {
+		out, showErr := exec.CommandContext(ctx, "/usr/bin/systemctl", "show", "-p", property, "--value", "7dtd.service").Output()
+		if showErr != nil {
+			continue
+		}
+		candidate, parseErr := parseSystemdTimestamp(strings.TrimSpace(string(out)))
+		if parseErr == nil && candidate.After(started) {
+			started = candidate
+		}
+	}
+	if started.IsZero() {
 		return false
 	}
-	started, err := parseSystemdTimestamp(strings.TrimSpace(string(out)))
-	return err == nil && activatedAt.After(started.Add(-2*time.Second))
+	if !activatedAt.After(started.Add(-2 * time.Second)) {
+		// The server has started since this restore. Remove the marker so
+		// subsequent restarts cannot be affected by mod-written timestamps.
+		_ = os.Remove(marker)
+		return false
+	}
+	return true
 }
 
 func parseSystemdTimestamp(value string) (time.Time, error) {
@@ -1364,6 +1416,7 @@ func deleteModWithPipe(ctx context.Context, cfg *agent.InstanceConfig, override,
 	if _, err := os.Lstat(target); !os.IsNotExist(err) {
 		return fmt.Errorf("mod folder still exists after delete")
 	}
+	_ = os.Remove(activationMarkerPath(cfg, override, folder))
 	return nil
 }
 
