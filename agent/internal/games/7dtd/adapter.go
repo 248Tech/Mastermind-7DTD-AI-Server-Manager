@@ -1341,11 +1341,24 @@ func writeModConfig(cfg *agent.InstanceConfig, override, folder, relativePath, c
 	atomic := true
 	temporary, err := os.CreateTemp(filepath.Dir(target), ".mastermind-config-*")
 	if err != nil {
-		atomic = false
-		temporary, err = os.CreateTemp("", "mastermind-config-*")
-		if err != nil {
-			return fmt.Errorf("create temporary mod config: %w", err)
+		// If the directory is readable but not writable, avoid requiring any
+		// separate temp filesystem: the validated target is already a regular
+		// file, so update it directly when its existing permissions allow it.
+		file, openErr := os.OpenFile(target, os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+		if openErr != nil {
+			return fmt.Errorf("mod config directory and file are not writable: %w", openErr)
 		}
+		_, writeErr := file.WriteString(content)
+		if writeErr == nil {
+			writeErr = file.Sync()
+		}
+		if closeErr := file.Close(); writeErr == nil {
+			writeErr = closeErr
+		}
+		if writeErr != nil {
+			return fmt.Errorf("write mod config: %w", writeErr)
+		}
+		return nil
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
