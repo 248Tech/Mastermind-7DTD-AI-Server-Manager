@@ -4,6 +4,37 @@
 
 ---
 
+## In plain English
+
+Mastermind is a control panel for a 7 Days to Die server. It lets an owner see what is happening, make common changes safely, and give trusted staff the right amount of access—without handing everyone SSH access or asking them to edit XML by hand.
+
+### What you can do
+
+| If you want to… | Start here |
+|---|---|
+| See whether the server is healthy | **Dashboard → Health** |
+| Watch players, zombies, animals, or claims | **Live Map** |
+| Read logs or talk to the server | **Logs → Console** |
+| Manage players | **Players** |
+| Add, edit, quarantine, or restore mods | **Mods** |
+| Back up or restore the world | **Saves** |
+| Schedule restarts and backups | **Schedules** |
+| Configure Discord, email, AI, maps, or security | **Settings** |
+| Let players see their own map and profile | **Player Portal** at `/player` |
+
+### Choose the setup that fits
+
+- **Just trying it locally?** Use the Docker Compose quickstart below.
+- **Running a real game host?** Install the Go agent on the host and pair it from the dashboard. See [`human/user-guide.md`](human/user-guide.md).
+- **Hosting Mastermind on a VPS?** Follow [`docs/DIGITALOCEAN_DEPLOYMENT.md`](docs/DIGITALOCEAN_DEPLOYMENT.md), then keep game APIs private over WireGuard or the host network.
+- **Only interested in the player experience?** Open `/player`; Steam verification is required before player locations, profiles, and inventory are shown.
+
+### Quick navigation
+
+[Quickstart](#quickstart-copy-paste) · [Features](#current-features-v0012) · [Security](#security-notes) · [Deployment](docs/DIGITALOCEAN_DEPLOYMENT.md) · [Human guide](human/user-guide.md) · [Release context](docs/release-0.0.12-context.md)
+
+---
+
 ## Architecture overview
 
 ```
@@ -24,6 +55,15 @@
 - **Control plane:** REST API, Postgres (orgs, hosts, server instances, jobs), Redis/BullMQ (job queues), pairing tokens, auth, org membership guards.
 - **Web:** Next.js UI — login/register, dashboard, hosts, jobs, schedules/alerts/settings pages.
 - **Agent:** Go binary on each game host — pairs with a one-time token, heartbeats, polls for jobs, runs them via game adapters (7DTD, Minecraft, etc.).
+
+### How an action travels
+
+1. A staff member clicks an action in the web dashboard.
+2. The control plane checks the account role and puts the action in the correct server’s job queue.
+3. The paired host agent receives the job and runs it locally through the game adapter.
+4. The result, logs, and account attribution return to the dashboard.
+
+This separation is why the public website does not need direct access to telnet, save files, or the game process.
 
 ---
 
@@ -118,6 +158,22 @@ The complete release handoff is documented in [docs/release-0.0.12-context.md](d
 
 Frigate integration is currently deprecated and hidden from the Settings and new-alert interfaces. Its backend and stored configuration remain intact for compatibility and possible future reactivation.
 
+### Helpful guides
+
+- [Human-friendly user guide](human/user-guide.md) — installation, first login, pairing, and everyday operations.
+- [DigitalOcean deployment](docs/DIGITALOCEAN_DEPLOYMENT.md) — production VPS layout and service checks.
+- [Allocs integration](docs/allocs.md) — live entities, inventory, roster data, and private API requirements.
+- [PrismaCore integration](docs/prismacore.md) — claims and staff map overlays.
+- [Release context](docs/release-0.0.12-context.md) — maintainer handoff, validation, and deployment checklist.
+
+### A few terms you will see
+
+- **Control plane:** the web application and API that coordinate everything.
+- **Host agent:** the small program installed beside the game server; it performs approved actions locally.
+- **Server instance:** one configured game server inside Mastermind.
+- **Job:** a queued action such as restart, backup, mod quarantine, or console command.
+- **Steam-verified player:** a player whose Steam account matches a player already seen on the configured server.
+
 ---
 
 ## Prerequisites
@@ -130,6 +186,12 @@ Frigate integration is currently deprecated and hidden from the Settings and new
 ---
 
 ## Quickstart (copy-paste)
+
+### Before you begin
+
+You need a computer (or VPS) that can run Docker, the address of your game host, and a password you can safely store in a password manager. The first account created becomes the organization administrator. Do not put real passwords, API keys, Steam credentials, save files, or SSH keys in this repository.
+
+The commands below start the **Mastermind control plane**. They do not install 7 Days to Die or change an existing game save. Pair a game host afterward from **Settings → Hosts** using the one-time pairing token.
 
 ```bash
 git clone https://github.com/248Tech/Mastermind-7DTD-AI-Server-Manager.git
