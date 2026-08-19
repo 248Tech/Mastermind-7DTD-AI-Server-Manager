@@ -80,11 +80,11 @@ function identityLabel(identity: { name: string; steamId: string; eosId: string 
 }
 
 function positionOf(row: Record<string, unknown>, fallbackIndex = 0) {
-  const nested = asRecord(row.position) || asRecord(row.pos);
+  const nested = asRecord(row.position) || asRecord(row.Position) || asRecord(row.pos) || asRecord(row.Pos);
   return {
-    x: num(row.x, row.posX, nested?.x, fallbackIndex),
-    y: num(row.y, row.posY, nested?.y),
-    z: num(row.z, row.posZ, nested?.z),
+    x: num(row.x, row.X, row.posX, row.PosX, nested?.x, nested?.X, fallbackIndex),
+    y: num(row.y, row.Y, row.posY, row.PosY, nested?.y, nested?.Y),
+    z: num(row.z, row.Z, row.posZ, row.PosZ, nested?.z, nested?.Z),
   };
 }
 
@@ -182,11 +182,12 @@ export function normalizeHomes(json: unknown): PrismaCoreHome[] {
 }
 
 export function normalizePois(json: unknown, keys: string[]): PrismaCorePoi[] {
-  return asArray(json, keys).map((row, index) => {
+  const rows = asArray(json, [...keys, 'POIs', 'Pois', 'POI', 'data', 'results', 'items']);
+  return rows.map((row, index) => {
     const item = asRecord(row) || {};
-    const name = text(item.name, item.Name) || `POI ${index + 1}`;
-    const x = num(item.x, item.posX);
-    const z = num(item.z, item.posZ);
+    const name = text(item.name, item.Name, item.poiName, item.POIName) || `POI ${index + 1}`;
+    const x = num(item.x, item.X, item.posX, item.PosX, asRecord(item.position)?.x, asRecord(item.position)?.X, asRecord(item.Position)?.x, asRecord(item.Position)?.X);
+    const z = num(item.z, item.Z, item.posZ, item.PosZ, asRecord(item.position)?.z, asRecord(item.position)?.Z, asRecord(item.Position)?.z, asRecord(item.Position)?.Z);
     const minx = num(item.minx, item.minX, x);
     const maxx = num(item.maxx, item.maxX, x);
     const minz = num(item.minz, item.minZ, z);

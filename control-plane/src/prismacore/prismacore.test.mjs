@@ -59,6 +59,8 @@ assert(homes[0].steamId === '76561198000000000', 'keeps home steam id');
 
 const pois = normalizePois({ QuestPOIs: [{ name: 'hospital', x: 20, z: 30, minx: 10, maxx: 30, minz: 20, maxz: 40, containsbed: true }] }, ['QuestPOIs']);
 assert(pois[0].containsBed === true && pois[0].minx === 10, 'normalizes quest pois');
+const allPois = normalizePois({ AllPois: [{ POIName: 'garage', Position: { X: 44, Z: 55 } }] }, ['AllPOIs', 'allpois', 'pois']);
+assert(allPois[0].name === 'garage' && allPois[0].x === 44 && allPois[0].z === 55, 'normalizes all poi aliases');
 
 const regions = normalizeRects([{ E: 512, W: 0, N: 512, S: 0, Name: 'r.0.0' }], 'reset');
 assert(regions[0].e === 512 && regions[0].w === 0, 'normalizes reset regions');

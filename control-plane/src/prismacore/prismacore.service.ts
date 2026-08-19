@@ -69,7 +69,13 @@ export class PrismaCoreService {
       case 'allpois':
         return this.cached('allpois', 60_000, async () => {
           const result = await this.fetchJson('/api/getallpois', {}, 8_000);
-          return { configured: true, reachable: result.ok, pois: result.ok ? normalizePois(result.json, ['AllPOIs', 'allpois', 'pois']) : [] };
+          return {
+            configured: true,
+            reachable: result.ok,
+            pois: result.ok
+              ? normalizePois(result.json, ['AllPOIs', 'allPOIs', 'allpois', 'AllPois', 'POIs', 'Pois', 'pois', 'data', 'results', 'items'])
+              : [],
+          };
         });
       case 'resetregions':
         return this.cached('resetregions', 15_000, async () => {
