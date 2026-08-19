@@ -653,11 +653,16 @@ export default function LiveMapClient() {
         .leaflet-control-layers-toggle { width: 40px !important; height: 40px !important; background-color: #0f172a !important; border-radius: 7px; }
         .leaflet-control-layers-expanded { padding: 9px 10px !important; line-height: 1.8 !important; }
         .leaflet-control-layers label { margin: 2px 0; }
-        .map-frame { height: calc(100vh - 230px); min-height: 520px; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 14px 35px rgba(0,0,0,.22); }
+        .map-frame { position: relative; height: calc(100vh - 230px); min-height: 520px; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 14px 35px rgba(0,0,0,.22); }
         .map-empty-state { position: absolute; z-index: 900; top: 12px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 7px 11px; border: 1px solid #475569; border-radius: 7px; background: rgba(15,23,42,.9); color: #cbd5e1; font-size: 12px; text-align: center; pointer-events: none; }
         .map-viewport-controls { position: absolute; z-index: 1000; top: 10px; left: 10px; display: flex; gap: 5px; }
         .map-viewport-controls button { border: 1px solid #475569; border-radius: 6px; background: rgba(15,23,42,.92); color: #e2e8f0; padding: 6px 8px; font-size: 11px; cursor: pointer; }
         .map-viewport-controls button:hover { background: #1e293b; }
+        .map-search-overlay { position: absolute; z-index: 1000; top: 52px; left: 10px; display: flex; align-items: center; gap: 6px; width: min(360px, calc(100% - 20px)); padding: 6px 8px; border: 1px solid #475569; border-radius: 7px; background: rgba(15,23,42,.94); box-shadow: 0 3px 12px rgba(0,0,0,.3); }
+        .map-search-overlay label { color: #7dd3fc; font-size: 11px; font-weight: 700; white-space: nowrap; }
+        .map-search-overlay input { min-width: 0; flex: 1; border: 1px solid #334155; border-radius: 5px; background: #020617; color: #f8fafc; padding: 5px 7px; font-size: 12px; outline: none; }
+        .map-search-overlay input:focus { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,.22); }
+        .map-search-overlay button { border: 0; border-radius: 5px; background: #334155; color: #e2e8f0; padding: 5px 7px; cursor: pointer; }
         .map-legend { position: absolute; z-index: 1000; right: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 7px 10px; max-width: min(420px, calc(100% - 20px)); padding: 7px 9px; border: 1px solid #475569; border-radius: 7px; background: rgba(15,23,42,.92); color: #cbd5e1; font-size: 11px; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
         .map-legend strong { color: #f8fafc; margin-right: 2px; }
         .map-legend span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
@@ -667,6 +672,7 @@ export default function LiveMapClient() {
           .map-toolbar .toolbar-group { width: 100%; border-right: 0; border-bottom: 1px solid #293241; padding: 0 0 8px; }
           .map-toolbar .toolbar-group:last-child { border-bottom: 0; padding-bottom: 0; }
           .map-frame { height: calc(100vh - 290px); min-height: 430px; }
+          .map-search-overlay { top: 56px; }
         }
       `}</style>
       <div
@@ -1098,6 +1104,17 @@ export default function LiveMapClient() {
           overflow: "hidden",
         }}
       >
+        <div className="map-search-overlay">
+          <label htmlFor="floating-map-search">Search map</label>
+          <input
+            id="floating-map-search"
+            aria-label="Search all map entities"
+            placeholder="Player, zombie, claim, POI…"
+            value={entitySearch}
+            onChange={(event) => setEntitySearch(event.target.value)}
+          />
+          {entitySearch && <button type="button" aria-label="Clear map search" onClick={() => setEntitySearch("")}>×</button>}
+        </div>
         {!feedError && viewed.players.length === 0 && viewed.animals.length === 0 && viewed.hostiles.length === 0 && (
           <div className="map-empty-state" role="status">
             No live entities reported. Other overlays remain available from the layer menu.
