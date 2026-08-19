@@ -8,6 +8,7 @@ const ALLOWED_ENDPOINTS = new Set([
   'gethostilelocation',
   'getanimalslocation',
   'getplayerslocation',
+  'getplayersonline',
   'getplayerinventory',
   'executeconsolecommand',
 ]);

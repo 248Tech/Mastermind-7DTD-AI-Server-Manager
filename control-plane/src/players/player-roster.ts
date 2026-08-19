@@ -17,17 +17,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-function asArray(value: unknown, keys: string[] = []): unknown[] {
-  if (Array.isArray(value)) return value;
-  const record = asRecord(value);
-  if (!record) return [];
-  for (const key of keys) {
-    const nested = record[key];
-    if (Array.isArray(nested)) return nested;
-  }
-  return [];
-}
-
 function text(...values: unknown[]): string {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) return value.trim();
@@ -70,13 +59,13 @@ export function rosterIdentityKey(steamId: string | null, eosId: string | null, 
 
 export function cleanRosterIp(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const trimmed = raw.trim().replace(/^\[|\]$/g, '');
-  if (!trimmed || /^(unknown|none|null|n\/a)$/i.test(trimmed)) return null;
-  const host = trimmed.includes(']:') ? trimmed.replace(/^\[/, '').replace(/\]:\d+$/, '') : trimmed.replace(/:(\d+)$/, (match, port) => {
-    return Number(port) > 0 && Number(port) < 65536 && !trimmed.includes('::') ? '' : match;
-  });
-  const ip = host || trimmed.split('%')[0];
-  return ip.slice(0, 64) || null;
+  const value = raw.trim();
+  if (!value || /^(unknown|none|null|n\/a)$/i.test(value)) return null;
+  const v6 = /^\[([^\]]+)\](?::\d+)?$/.exec(value);
+  if (v6) return v6[1].slice(0, 64);
+  const v4 = /^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/.exec(value);
+  if (v4) return v4[1];
+  return value.slice(0, 64);
 }
 
 function positionFromRecord(row: Record<string, unknown>) {
@@ -128,10 +117,18 @@ function positionFromLpLine(line: string) {
 }
 
 export function parseAllocsPlayersOnline(json: unknown): PlayerRosterRow[] | null {
-  if (json == null) return null;
-  const items = asArray(json, ['Players', 'players', 'data', 'result']);
-  if (!Array.isArray(json) && items.length === 0 && asRecord(json) && !('Players' in (json as object) || 'players' in (json as object) || 'data' in (json as object))) {
-    return null;
+  let items: unknown[] | null = null;
+  if (Array.isArray(json)) items = json;
+  else {
+    const record = asRecord(json);
+    if (!record) return null;
+    for (const key of ['Players', 'players', 'data', 'result']) {
+      if (Array.isArray(record[key])) {
+        items = record[key] as unknown[];
+        break;
+      }
+    }
+    if (!items) return null;
   }
   const rows: PlayerRosterRow[] = [];
   for (const raw of items) {
@@ -144,6 +141,10 @@ export function parseAllocsPlayersOnline(json: unknown): PlayerRosterRow[] | nul
     const steam = steamIdOf(text(item.steamid, item.steamId, item.PlatformId, item.platformId, item.pltfmid));
     const eos = eosIdOf(text(item.crossplatformid, item.crossPlatformId, item.eossid, item.eosId, item.userid, item.crossid));
     const ping = int(item.ping, item.Ping);
+    const zombieKills = int(item.zombiekills, item.zombieKills, item.zombies);
+    const playerKills = int(item.playerkills, item.playerKills, item.players);
+    const deaths = int(item.playerdeaths, item.playerDeaths, item.deaths);
+    const level = int(item.level, item.Level);
     rows.push({
       entityId,
       name,
@@ -152,10 +153,10 @@ export function parseAllocsPlayersOnline(json: unknown): PlayerRosterRow[] | nul
       identityKey: rosterIdentityKey(steam, eos, name),
       ipAddress: cleanRosterIp(text(item.ip, item.ipAddress, item.IP)),
       ping: Number.isInteger(ping) ? ping : null,
-      zombieKills: Number.isInteger(int(item.zombiekills, item.zombieKills, item.zombies)) ? int(item.zombiekills, item.zombieKills, item.zombies) : 0,
-      playerKills: Number.isInteger(int(item.playerkills, item.playerKills, item.players)) ? int(item.playerkills, item.playerKills, item.players) : 0,
-      deaths: Number.isInteger(int(item.playerdeaths, item.playerDeaths, item.deaths)) ? int(item.playerdeaths, item.playerDeaths, item.deaths) : 0,
-      level: Number.isInteger(int(item.level, item.Level)) ? Math.max(1, int(item.level, item.Level)) : 1,
+      zombieKills: Number.isInteger(zombieKills) ? zombieKills : 0,
+      playerKills: Number.isInteger(playerKills) ? playerKills : 0,
+      deaths: Number.isInteger(deaths) ? deaths : 0,
+      level: Number.isInteger(level) ? Math.max(1, level) : 1,
       position: positionFromRecord(item),
     });
   }

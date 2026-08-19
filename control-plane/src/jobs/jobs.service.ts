@@ -16,7 +16,8 @@ import { AlertsService } from '../alerts/alerts.service';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
 import { pruneMap } from '../common/ttl-map';
-import { parseInventoryOutput, parseLpPosition, type InventorySnapshot } from '../players/player-inventory';
+import { parseInventoryOutput, type InventorySnapshot } from '../players/player-inventory';
+import { parseAllocsPlayersOnline, parseLpRoster, type PlayerRosterRow } from '../players/player-roster';
 import { AllocsService } from '../allocs/allocs.service';
 
 @Injectable()
@@ -211,8 +212,11 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (run.job.type === 'PLAYER_LIST_SYNC' && runStatus === 'success' && dto.output && run.job.serverInstanceId) {
-      await this.reconcilePlayers(run.job.orgId, run.job.serverInstanceId, dto.output);
-      await this.enforceConnectionTools(run.job.orgId, run.job.serverInstanceId, dto.output);
+      const rows = parseLpRoster(dto.output);
+      if (rows) {
+        await this.applyPlayerRoster(run.job.orgId, run.job.serverInstanceId, rows);
+        await this.enforceConnectionTools(run.job.orgId, run.job.serverInstanceId, rows);
+      }
     }
     const resultPayload = (run.job.payload ?? {}) as Record<string, unknown>;
     if (run.job.type === 'RCON' && resultPayload.purpose === 'inventory_snapshot' && typeof resultPayload.playerId === 'string' && runStatus === 'success' && dto.output) {

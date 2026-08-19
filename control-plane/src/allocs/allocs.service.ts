@@ -60,6 +60,13 @@ export class AllocsService {
     return parseAllocsInventoryJson(result.json);
   }
 
+  async playersOnlineJson(): Promise<unknown | null> {
+    if (!this.tokenConfigured()) return null;
+    const result = await allocsGet('getplayersonline');
+    if (!result.ok) return null;
+    return result.json;
+  }
+
   async executeAllowed(command: unknown) {
     const allowed = allowedAllocsConsoleCommand(command);
     if (!allowed) throw new BadRequestException('Only visitmap start/stop is allowed');
