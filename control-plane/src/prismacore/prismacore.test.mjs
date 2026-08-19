@@ -30,8 +30,9 @@ const players = normalizePlayers({
 });
 assert(players.length === 1 && players[0].name === 'Wolfie' && players[0].position.x === 10, 'normalizes getplayersonline');
 
-const vehicles = normalizeMarkers({ Vehicles: [{ name: 'EntityMotorcycle', posX: 8, posY: 40, posZ: 12 }] }, ['Vehicles', 'vehicles'], 'vehicle');
+const vehicles = normalizeMarkers({ Vehicles: [{ name: 'EntityMotorcycle', posX: 8, posY: 40, posZ: 12, steamid: 'Steam_76561198000000000' }] }, ['Vehicles', 'vehicles'], 'vehicle');
 assert(vehicles[0].position.x === 8 && vehicles[0].position.z === 12, 'normalizes getvehicles');
+assert(vehicles[0].steamId === '76561198000000000', 'keeps vehicle steam id');
 
 const claims = normalizeClaims({
   claimsize: 41,
@@ -39,8 +40,22 @@ const claims = normalizeClaims({
 });
 assert(claims[0].owner === 'Wolfie' && claims[0].size === 41 && claims[0].eosId === 'e1', 'normalizes getlandclaims');
 
-const homes = normalizeHomes({ homeowners: [{ steamid: 's1', x: 4, y: 5, z: 6, active: true }] });
+const claimIdentityFallback = normalizeClaims({
+  claimSize: 41,
+  claimOwners: [{ steamId: 'Steam_76561198000000000', claims: [
+    { x: 4, y: 2, z: 8, owner: { playerName: 'Builder' }, eosId: 'EOS_abcdef0123456789012345' },
+  ] }],
+});
+assert(claimIdentityFallback[0].owner === 'Builder', 'uses claim-level owner name');
+assert(claimIdentityFallback[0].steamId === '76561198000000000', 'normalizes claim Steam prefix');
+assert(claimIdentityFallback[0].eosId === 'abcdef0123456789012345', 'normalizes claim EOS prefix');
+
+const claimIdLabel = normalizeClaims([{ x: 9, y: 1, z: 3, steamid: 'Steam_76561198000000000' }]);
+assert(claimIdLabel[0].owner === 'Steam …000000', 'labels claims with known id when name is absent');
+
+const homes = normalizeHomes({ homeowners: [{ steamid: '76561198000000000', x: 4, y: 5, z: 6, active: true }] });
 assert(homes[0].active === true && homes[0].position.z === 6, 'normalizes getplayerhomes');
+assert(homes[0].steamId === '76561198000000000', 'keeps home steam id');
 
 const pois = normalizePois({ QuestPOIs: [{ name: 'hospital', x: 20, z: 30, minx: 10, maxx: 30, minz: 20, maxz: 40, containsbed: true }] }, ['QuestPOIs']);
 assert(pois[0].containsBed === true && pois[0].minx === 10, 'normalizes quest pois');

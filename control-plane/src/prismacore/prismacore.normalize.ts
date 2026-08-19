@@ -37,6 +37,48 @@ function bool(value: unknown): boolean {
   return Boolean(value);
 }
 
+function steamIdOf(value: string): string {
+  return /(?:^|Steam_)([0-9]{15,20})$/i.exec(value.trim())?.[1] ?? '';
+}
+
+function eosIdOf(value: string): string {
+  return /(?:^|EOS_)([a-f0-9]{20,64})$/i.exec(value.trim())?.[1] ?? '';
+}
+
+function claimIdentity(row: Record<string, unknown>): { name: string; steamId: string; eosId: string } {
+  const nestedOwner = asRecord(row.owner) || asRecord(row.Owner) || asRecord(row.player) || asRecord(row.Player) || {};
+  const name = text(
+    row.playername, row.playerName, row.PlayerName, row.ownername, row.ownerName,
+    row.username, row.userName, row.displayname, row.displayName, row.name, row.Name,
+    typeof row.owner === 'string' ? row.owner : undefined,
+    typeof row.player === 'string' ? row.player : undefined,
+    nestedOwner.playername, nestedOwner.playerName, nestedOwner.name, nestedOwner.Name,
+    nestedOwner.username, nestedOwner.userName,
+  );
+  const rawSteam = text(
+    row.steamid, row.steamId, row.SteamID, row.nativeuserid, row.platformid, row.platformId,
+    nestedOwner.steamid, nestedOwner.steamId, nestedOwner.SteamID, nestedOwner.nativeuserid,
+  );
+  const rawEos = text(
+    row.eossid, row.eosId, row.EOSID, row.userid, row.userId, row.crossid,
+    row.crossplatformid, row.crossPlatformId,
+    nestedOwner.eossid, nestedOwner.eosId, nestedOwner.EOSID, nestedOwner.userid,
+    nestedOwner.userId, nestedOwner.crossplatformid,
+  );
+  return {
+    name,
+    steamId: steamIdOf(rawSteam) || rawSteam,
+    eosId: eosIdOf(rawEos) || rawEos,
+  };
+}
+
+function identityLabel(identity: { name: string; steamId: string; eosId: string }): string {
+  if (identity.name) return identity.name;
+  if (identity.steamId) return `Steam …${identity.steamId.slice(-6)}`;
+  if (identity.eosId) return `EOS …${identity.eosId.slice(-6)}`;
+  return 'Unknown player';
+}
+
 function positionOf(row: Record<string, unknown>, fallbackIndex = 0) {
   const nested = asRecord(row.position) || asRecord(row.pos);
   return {
@@ -64,17 +106,22 @@ export function normalizeClaims(json: unknown): PrismaCoreClaim[] {
   const claims: PrismaCoreClaim[] = [];
   owners.forEach((ownerRaw, ownerIndex) => {
     const owner = asRecord(ownerRaw) || {};
-    const name = text(owner.playername, owner.playerName, owner.name, owner.Name) || 'Unknown player';
-    const steamId = text(owner.steamid, owner.steamId, owner.nativeuserid);
-    const eosId = text(owner.eossid, owner.eosId, owner.userid);
-    asArray(owner.claims, ['Claims']).forEach((claimRaw, claimIndex) => {
+    const ownerIdentity = claimIdentity(owner);
+    const nestedClaims = asArray(owner.claims, ['Claims', 'landclaims', 'LandClaims', 'claimlist', 'ClaimList']);
+    nestedClaims.forEach((claimRaw, claimIndex) => {
       const claim = asRecord(claimRaw) || {};
+      const identity = claimIdentity(claim);
+      const merged = {
+        name: identity.name || ownerIdentity.name,
+        steamId: identity.steamId || ownerIdentity.steamId,
+        eosId: identity.eosId || ownerIdentity.eosId,
+      };
       const position = positionOf(claim, claimIndex);
       claims.push({
-        id: `${eosId || steamId || ownerIndex}:${position.x}:${position.y}:${position.z}`,
-        owner: name,
-        eosId,
-        steamId,
+        id: `${merged.eosId || merged.steamId || ownerIndex}:${position.x}:${position.y}:${position.z}`,
+        owner: identityLabel(merged),
+        eosId: merged.eosId,
+        steamId: merged.steamId,
         position,
         size,
       });
@@ -85,14 +132,12 @@ export function normalizeClaims(json: unknown): PrismaCoreClaim[] {
       const item = asRecord(row) || {};
       if (item.x == null && item.posX == null && !asRecord(item.position)) return;
       const position = positionOf(item, index);
-      const owner = text(item.owner, item.playername, item.name) || 'Unknown player';
-      const steamId = text(item.steamid, item.steamId);
-      const eosId = text(item.eossid, item.eosId);
+      const identity = claimIdentity(item);
       claims.push({
-        id: `${eosId || steamId || owner}:${position.x}:${position.y}:${position.z}`,
-        owner,
-        eosId,
-        steamId,
+        id: `${identity.eosId || identity.steamId || identity.name || index}:${position.x}:${position.y}:${position.z}`,
+        owner: identityLabel(identity),
+        eosId: identity.eosId,
+        steamId: identity.steamId,
         position,
         size: Math.max(1, num(item.size, size)),
       });
@@ -106,11 +151,15 @@ export function normalizeMarkers(json: unknown, keys: string[], fallbackName: st
     const item = asRecord(row) || {};
     const name = text(item.name, item.Name) || `${fallbackName} ${index + 1}`;
     const position = positionOf(item, index);
+    const steamId = steamIdOf(text(item.steamid, item.steamId, item.owner));
+    const eosId = eosIdOf(text(item.eossid, item.eosId, item.userid, item.crossplatformid));
     return {
       id: `${fallbackName}:${name}:${position.x}:${position.z}:${index}`,
       name,
       position,
       extra: text(item.owner, item.steamid, item.steamId) || undefined,
+      ...(steamId ? { steamId } : {}),
+      ...(eosId ? { eosId } : {}),
     };
   });
 }
@@ -118,12 +167,14 @@ export function normalizeMarkers(json: unknown, keys: string[], fallbackName: st
 export function normalizeHomes(json: unknown): PrismaCoreHome[] {
   return asArray(json, ['homeowners', 'HomeOwners', 'homes', 'data']).map((row, index) => {
     const item = asRecord(row) || {};
-    const steamId = text(item.steamid, item.steamId, item.owner);
+    const steamId = steamIdOf(text(item.steamid, item.steamId, item.owner));
+    const eosId = eosIdOf(text(item.eossid, item.eosId, item.userid));
     const position = positionOf(item, index);
     return {
-      id: `${steamId || 'home'}:${position.x}:${position.z}:${index}`,
+      id: `${steamId || eosId || 'home'}:${position.x}:${position.z}:${index}`,
       owner: text(item.playername, item.name, steamId) || 'Unknown player',
       steamId,
+      ...(eosId ? { eosId } : {}),
       position,
       active: bool(item.active ?? item.Active ?? true),
     };
