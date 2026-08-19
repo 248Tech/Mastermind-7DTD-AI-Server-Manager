@@ -15,18 +15,23 @@ import { reconcileNameFallback } from '../players/player-identity';
 import { AlertsService } from '../alerts/alerts.service';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
+import { pruneMap } from '../common/ttl-map';
+import { parseInventoryOutput, parseLpPosition, type InventorySnapshot } from '../players/player-inventory';
+import { AllocsService } from '../allocs/allocs.service';
 
 @Injectable()
 export class JobsService implements OnModuleInit, OnModuleDestroy {
   private readonly badPingSamples = new Map<string, number>();
   private readonly protectionCooldown = new Map<string, number>();
   private readonly countryCache = new Map<string, { code: string; expires: number }>();
+  private readonly inventoryCooldown = new Map<string, number>();
   private staleTimer?: NodeJS.Timeout;
   constructor(
     private readonly prisma: PrismaService,
     private readonly batchesService: BatchesService,
     private readonly jobsQueueService: JobsQueueService,
     private readonly alerts: AlertsService,
+    private readonly allocs: AllocsService,
   ) {}
 
   async onModuleInit() {
@@ -209,6 +214,10 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       await this.reconcilePlayers(run.job.orgId, run.job.serverInstanceId, dto.output);
       await this.enforceConnectionTools(run.job.orgId, run.job.serverInstanceId, dto.output);
     }
+    const resultPayload = (run.job.payload ?? {}) as Record<string, unknown>;
+    if (run.job.type === 'RCON' && resultPayload.purpose === 'inventory_snapshot' && typeof resultPayload.playerId === 'string' && runStatus === 'success' && dto.output) {
+      await this.storeInventorySnapshot(resultPayload.playerId, dto.output);
+    }
 
     const orgId = run.job.orgId;
     if (run.job.batchId) {
@@ -290,6 +299,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       const playerKills = Number(line.match(/(?:players|playerkills)\s*=\s*(\d+)/i)?.[1] ?? 0);
       const deaths = Number(line.match(/deaths\s*=\s*(\d+)/i)?.[1] ?? 0);
       const level = Number(line.match(/level\s*=\s*(\d+)/i)?.[1] ?? 1);
+      const position = parseLpPosition(line);
       const name = head[2].trim();
       const identityKey = steam ? `steam:${steam}` : eos ? `eos:${eos}` : `name:${name.toLowerCase()}`;
       seen.add(identityKey);
@@ -297,8 +307,8 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       const existing = await this.prisma.player.findUnique({ where: { serverInstanceId_identityKey: { serverInstanceId, identityKey } } });
       const player = await this.prisma.player.upsert({
         where: { serverInstanceId_identityKey: { serverInstanceId, identityKey } },
-        create: { orgId, serverInstanceId, identityKey, steamId: steam, eosId: eos, entityId: Number(head[1]), ipAddress, name, online: true, currentSessionStartedAt: now, lastSeenAt: now, zombieKills, playerKills, deaths, level },
-        update: { steamId: steam ?? existing?.steamId, eosId: eos ?? existing?.eosId, entityId: Number(head[1]), ...(ipAddress ? { ipAddress } : {}), name, online: true, lastSeenAt: now, zombieKills, playerKills, deaths, level, ...(!existing?.online ? { currentSessionStartedAt: now } : {}) },
+        create: { orgId, serverInstanceId, identityKey, steamId: steam, eosId: eos, entityId: Number(head[1]), ipAddress, name, online: true, currentSessionStartedAt: now, lastSeenAt: now, zombieKills, playerKills, deaths, level, ...(position ? { lastPosX: position.x, lastPosY: position.y, lastPosZ: position.z } : {}) },
+        update: { steamId: steam ?? existing?.steamId, eosId: eos ?? existing?.eosId, entityId: Number(head[1]), ...(ipAddress ? { ipAddress } : {}), name, online: true, lastSeenAt: now, zombieKills, playerKills, deaths, level, ...(position ? { lastPosX: position.x, lastPosY: position.y, lastPosZ: position.z } : {}), ...(!existing?.online ? { currentSessionStartedAt: now } : {}) },
       });
       if (!existing?.online) await this.prisma.playerSession.create({ data: { playerId: player.id, startedAt: now } });
     }
@@ -307,7 +317,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       const end = player.lastSeenAt < now ? player.lastSeenAt : now;
       const duration = player.currentSessionStartedAt ? Math.max(0, Math.floor((end.getTime() - player.currentSessionStartedAt.getTime()) / 1000)) : 0;
       await this.prisma.$transaction([
-        this.prisma.player.update({ where: { id: player.id }, data: { online: false, currentSessionStartedAt: null, lifetimeSeconds: { increment: duration } } }),
+        this.prisma.player.update({ where: { id: player.id }, data: { online: false, currentSessionStartedAt: null, lastLogoutAt: end, lifetimeSeconds: { increment: duration } } }),
         this.prisma.playerSession.updateMany({ where: { playerId: player.id, endedAt: null }, data: { endedAt: end, durationSeconds: duration } }),
       ]);
       await this.alerts.sendMatchingRules('PLAYER_DISCONNECTED', {
@@ -319,6 +329,53 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         eosId: player.eosId ?? undefined,
         sessionSeconds: duration,
       }).catch(() => undefined);
+    }
+    await this.queueInventorySnapshots(orgId, serverInstanceId).catch(() => undefined);
+  }
+
+  private async storeInventorySnapshot(playerId: string, output: string) {
+    await this.persistInventorySnapshot(playerId, parseInventoryOutput(output));
+  }
+
+  private async persistInventorySnapshot(playerId: string, snapshot: InventorySnapshot) {
+    const itemCount = snapshot.bag.length + snapshot.belt.length + snapshot.equipment.length;
+    // Do not replace a real snapshot with an empty one when a game build or
+    // missing mod rejects the inventory command. The agent classifies command
+    // errors as failed; this guard also protects against malformed responses.
+    if (!itemCount) return;
+    await this.prisma.player.updateMany({
+      where: { id: playerId },
+      data: {
+        lastInventory: snapshot,
+        lastInventoryAt: new Date(),
+      },
+    });
+  }
+
+  private async queueInventorySnapshots(_orgId: string, serverInstanceId: string) {
+    const now = Date.now();
+    pruneMap(this.inventoryCooldown, (until) => until > now);
+    if (!this.allocs.tokenConfigured()) return;
+    const due = await this.prisma.player.findMany({
+      where: {
+        serverInstanceId,
+        online: true,
+        AND: [
+          { OR: [{ steamId: { not: null } }, { eosId: { not: null } }] },
+          { OR: [{ lastInventoryAt: null }, { lastInventoryAt: { lt: new Date(now - 5 * 60_000) } }] },
+        ],
+      },
+      select: { id: true, steamId: true, eosId: true },
+      take: 8,
+    });
+    let queued = 0;
+    for (const player of due) {
+      if (queued >= 2) break;
+      if ((this.inventoryCooldown.get(player.id) ?? 0) > now) continue;
+      this.inventoryCooldown.set(player.id, now + 2 * 60_000);
+      const snapshot = await this.allocs.inventorySnapshot(player.steamId, player.eosId);
+      if (snapshot) await this.persistInventorySnapshot(player.id, snapshot);
+      queued++;
     }
   }
 
@@ -354,7 +411,13 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     }
   }
   private isPrivateAddress(ip:string){return /^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1$|fc|fd)/i.test(ip);}
+  private pruneProtectionState(now:number){
+    pruneMap(this.protectionCooldown,(until)=>until>now);
+    pruneMap(this.countryCache,(entry)=>entry.expires>now);
+    if(this.badPingSamples.size>2_000)this.badPingSamples.clear();
+  }
   private async countryForIp(ip:string){
+    this.pruneProtectionState(Date.now());
     const cached=this.countryCache.get(ip);if(cached&&cached.expires>Date.now())return cached.code;
     try{const response=await fetch(`https://api.country.is/${encodeURIComponent(ip)}`,{signal:AbortSignal.timeout(3000)});if(!response.ok)return'';const data=await response.json() as {country?:string};const code=String(data.country||'').toUpperCase();if(/^[A-Z]{2}$/.test(code)){this.countryCache.set(ip,{code,expires:Date.now()+24*60*60_000});return code;}}catch{return'';}return'';
   }

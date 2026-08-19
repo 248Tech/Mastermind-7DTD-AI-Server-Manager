@@ -49,7 +49,11 @@ function csvSet(value = '') {
 async function api(path, options = {}, retry = true) {
   const headers = { 'content-type': 'application/json', ...(options.headers || {}) };
   if (session?.token) headers.authorization = `Bearer ${session.token}`;
-  const response = await fetch(`${config.baseUrl}${path}`, { ...options, headers });
+  const response = await fetch(`${config.baseUrl}${path}`, {
+    ...options,
+    headers,
+    signal: options.signal ?? AbortSignal.timeout(15_000),
+  });
   if (response.status === 401 && retry && !path.endsWith('/auth/login')) {
     session = undefined;
     await authenticate();

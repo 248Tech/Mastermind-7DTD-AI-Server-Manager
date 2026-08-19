@@ -1,0 +1,12 @@
+[Unit]
+Description=Restrict 7DTD Allocs (8080) and PrismaCore (11111) API ports
+After=network-pre.target
+Before=7dtd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/mastermind-game-api-firewall.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

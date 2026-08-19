@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.12] - 2026-08-18
+
+- Added the Steam-aware player portal, live map layers, player profiles, map history/trails, claims, inventory/stat displays, and supporter/shop flows.
+- Added Mailgun confirmation, account approval, Steam-link indicators, administrator portal links, escalating login protection, registration quotas, reCAPTCHA support, and encrypted Cloudflare/DigitalOcean settings.
+- Added Allocs/PrismaCore live-data integrations and preserved server-side handling of webtokens and credentials.
+- Reworked the mod editor into an IDE-style editor with tabs, line numbers, syntax coloring, search, wrapping, keyboard save, and AI diff approval.
+- Fixed ServerTools inventory stack quantities being displayed as one item; `Slot N: quantity * item` and common Allocs quantity fields are now preserved.
+- Continued safe restart/save/mod/profile/chat/alert/health/log/Discord operations and agent resilience improvements.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
@@ -7,9 +16,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Post-0.0.11 work (2026-08-17 and 2026-08-18) is included in `0.0.12`.
+
 ### Added
 
-- (none)
+- Steam-signed-in player portal profile (`/player/profile`) with own stats, last `lp` position, last logout time, last inventory snapshot, and supporter summary.
+- Steam-tied Stripe Checkout donations with a signed webhook, org-stored encrypted keys, and Settings → Stripe Donations. Custom gifts are $5–$500; supporter status is granted only from signed Stripe events.
+- Donator shop: public catalog at `/player/shop`, item pages, localStorage cart, multi-item checkout, admin `/donator-shop` and `/purchases`. JPEG/PNG/WebP uploads are magic-byte validated and resized to WebP (master 1920px / thumb 400px).
+- In-game-name password accounts for shop checkout (`auth: name`). Name sessions cannot read profile inventory/location or unlock live-map player markers.
+- PrismaCore ClaimCreator WebAPI client (control-plane only) for staff map overlays (claims, vehicles, drones, homes, traders, POIs, reset regions, advanced claims) and shop live status (`serverReachable`, `playersOnline` count only).
+- Allocs WebAPI client (control-plane only) for hostiles, animals, player inventory JSON, and allowlisted `visitmap` console commands.
+
+### Changed
+
+- Staff and player live maps read entities from Allocs + PrismaCore instead of telnet `le`. Allocs Webinterface 52 authenticates with `X-SDTD-API-TOKENNAME` / `X-SDTD-API-SECRET` headers. Allocs failures return empty arrays and a feed error; there is no telnet fallback.
+- Staff inventory and background snapshots use Allocs `getplayerinventory` JSON instead of `st-pil` RCON jobs.
+- Live-map `visitmap` start/stop is sent through Allocs `executeconsolecommand` (numeric bounds or `stop` only). Progress still comes from the server log file.
+- Telnet `lp` remains the player roster source (ping, IP, kills) until PrismaCore `getplayersonline` can be probed after ClaimCreator `:11111` is up.
+
+### Security
+
+- PrismaCore `apiuser` password and Allocs webtoken stay in control-plane env. They never appear in Next public env, shop JSON, or map JSON.
+- Shop status public keys are only `serverName`, `checkoutEnabled`, `serverReachable`, `playersOnline`.
+- Allocs `executeconsolecommand` rejects `kick`, `give`, `st-pil`, `visitmap full`, and command chaining.
+- Player `/me` omits IP addresses, Stripe identifiers, and other players’ data.
 
 ## [0.0.11] - 2026-08-14
 

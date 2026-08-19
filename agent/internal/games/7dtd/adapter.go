@@ -98,6 +98,11 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 		if err != nil {
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
+		if strings.EqualFold(getString(job.Payload, "purpose", ""), "inventory_snapshot") {
+			if detailed, ok := latestPlayerLogInventory(cfg.InstallPath, cmd); ok {
+				out = detailed
+			}
+		}
 		return agent.JobResult{Status: "success", Output: out}, nil
 	case "PLAYER_LIST_SYNC":
 		out, err := a.SendCommand(ctx, cfg, "lp")
@@ -141,6 +146,22 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 		return resultOrErr(a.Runner.run(ctx, "", "/usr/bin/sudo", "/usr/bin/systemctl", "start", "regionhealer.service"))
 	case "REGION_HEALER_STOP":
 		return resultOrErr(a.Runner.run(ctx, "", "/usr/bin/sudo", "/usr/bin/systemctl", "stop", "regionhealer.service"))
+	case "REGION_HEALER_STATUS":
+		settings, err := regionHealerSettings(ctx)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: settings}, nil
+	case "REGION_HEALER_CONFIGURE":
+		backupTime := strings.TrimSpace(getString(job.Payload, "backup_time", ""))
+		if !regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d$`).MatchString(backupTime) {
+			return agent.JobResult{Status: "failed", Error: "backup time must use 24-hour HH:MM format"}, nil
+		}
+		settings, err := configureRegionHealer(ctx, backupTime)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: settings}, nil
 	case "SAVE_LIST":
 		saves, err := a.ListSaves(cfg, getString(job.Payload, "server_config_path", ""))
 		if err != nil {
@@ -989,6 +1010,7 @@ type modInfo struct {
 	Website     string    `json:"website,omitempty"`
 	Version     string    `json:"version,omitempty"`
 	ActivatedAt time.Time `json:"activatedAt"`
+	PendingRestart bool `json:"pendingRestart,omitempty"`
 	ConfigFiles []string  `json:"configFiles,omitempty"`
 }
 
@@ -1071,7 +1093,47 @@ func listMods(cfg *agent.InstanceConfig, override string) ([]modInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return listModsAt(root)
+	mods, err := listModsAt(root)
+	if err != nil {
+		return nil, err
+	}
+	for index := range mods {
+		mods[index].PendingRestart = modPendingRestart(cfg, mods[index].ActivatedAt)
+	}
+	return mods, nil
+}
+
+// modPendingRestart marks a folder restored after the current game service
+// start. The files are active on disk but 7DTD will not load them until its
+// next restart, so the UI must distinguish this limbo state from loaded mods.
+func modPendingRestart(cfg *agent.InstanceConfig, activatedAt time.Time) bool {
+	if activatedAt.IsZero() || cfg == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, "/usr/bin/systemctl", "is-active", "--quiet", "7dtd.service").Run(); err != nil {
+		return false
+	}
+	out, err := exec.CommandContext(ctx, "/usr/bin/systemctl", "show", "-p", "ExecMainStartTimestamp", "--value", "7dtd.service").Output()
+	if err != nil {
+		return false
+	}
+	started, err := parseSystemdTimestamp(strings.TrimSpace(string(out)))
+	return err == nil && activatedAt.After(started.Add(-2*time.Second))
+}
+
+func parseSystemdTimestamp(value string) (time.Time, error) {
+	for _, layout := range []string{
+		"Mon 2006-01-02 15:04:05 MST",
+		"Mon 2006-01-02 15:04:05 MST -0700",
+		time.RFC3339,
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unrecognized systemd timestamp %q", value)
 }
 
 func listModsAt(root string) ([]modInfo, error) {
@@ -1361,6 +1423,121 @@ type serverConfiguration struct {
 }
 
 const saveBackupRoot = "/opt/regionhealer/RegionAutoFix/Saves"
+const regionHealerConfigPath = "/opt/regionhealer/RegionAutoFix/config.env"
+const regionHealerPolicyPath = "/opt/regionhealer/RegionAutoFix/Saves/.mastermind-policy.env"
+
+func regionHealerEnvValue(data, key, fallback string) string {
+	pattern := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `=["']?([^"'\r\n]*)["']?\s*$`)
+	match := pattern.FindStringSubmatch(data)
+	if len(match) != 2 || strings.TrimSpace(match[1]) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(match[1])
+}
+
+func setRegionHealerEnvValue(data, key, value string) string {
+	line := fmt.Sprintf(`%s="%s"`, key, value)
+	pattern := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `=.*$`)
+	if pattern.MatchString(data) {
+		return pattern.ReplaceAllString(data, line)
+	}
+	if data != "" && !strings.HasSuffix(data, "\n") {
+		data += "\n"
+	}
+	return data + line + "\n"
+}
+
+func countRegionHealerSnapshots() (int, error) {
+	entries, err := os.ReadDir(saveBackupRoot)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() && regexp.MustCompile(`^snap_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$`).MatchString(entry.Name()) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func pruneRegionHealerSnapshots(retain int) error {
+	entries, err := os.ReadDir(saveBackupRoot)
+	if err != nil {
+		return err
+	}
+	ids := make([]string, 0)
+	pattern := regexp.MustCompile(`^snap_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$`)
+	for _, entry := range entries {
+		if entry.IsDir() && pattern.MatchString(entry.Name()) {
+			ids = append(ids, entry.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(ids)))
+	for _, id := range ids[minimum(retain, len(ids)):] {
+		if err := os.RemoveAll(filepath.Join(saveBackupRoot, id)); err != nil {
+			return fmt.Errorf("remove old Region Healer snapshot %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+func minimum(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func regionHealerSettings(ctx context.Context) (map[string]interface{}, error) {
+	data, err := os.ReadFile(regionHealerConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("read Region Healer settings: %w", err)
+	}
+	count, err := countRegionHealerSnapshots()
+	if err != nil {
+		return nil, fmt.Errorf("count Region Healer snapshots: %w", err)
+	}
+	policy, _ := os.ReadFile(regionHealerPolicyPath)
+	configured := string(policy)
+	if configured == "" {
+		configured = string(data)
+	}
+	return map[string]interface{}{
+		"backupTime":     regionHealerEnvValue(configured, "backup_time", "03:00"),
+		"timezone":       regionHealerEnvValue(configured, "backup_timezone", "America/New_York"),
+		"retentionCount": 1,
+		"snapshotCount":  count,
+		"active":         serviceActive(ctx, "regionhealer.service"),
+	}, nil
+}
+
+func configureRegionHealer(ctx context.Context, backupTime string) (map[string]interface{}, error) {
+	policy, _ := os.ReadFile(regionHealerPolicyPath)
+	updated := setRegionHealerEnvValue(string(policy), "backup_time", backupTime)
+	updated = setRegionHealerEnvValue(updated, "backup_timezone", "America/New_York")
+	updated = setRegionHealerEnvValue(updated, "savecount", "1")
+	temporary := regionHealerPolicyPath + ".tmp"
+	if err := os.WriteFile(temporary, []byte(updated), 0644); err != nil {
+		return nil, fmt.Errorf("stage Region Healer policy: %w", err)
+	}
+	if err := os.Rename(temporary, regionHealerPolicyPath); err != nil {
+		_ = os.Remove(temporary)
+		return nil, fmt.Errorf("activate Region Healer policy: %w", err)
+	}
+	if err := pruneRegionHealerSnapshots(1); err != nil {
+		return nil, err
+	}
+	if serviceActive(ctx, "regionhealer.service") {
+		if err := systemctlService(ctx, "stop", "regionhealer.service"); err != nil {
+			return nil, fmt.Errorf("stop Region Healer to apply settings: %w", err)
+		}
+		if err := systemctlService(ctx, "start", "regionhealer.service"); err != nil {
+			return nil, fmt.Errorf("restart Region Healer after applying settings: %w", err)
+		}
+	}
+	return regionHealerSettings(ctx)
+}
 
 type SaveRecord struct {
 	ID        string    `json:"id"`
@@ -2169,7 +2346,10 @@ func playerCommandIdentifier(payload map[string]interface{}) string {
 
 func consoleRejected(output string) bool {
 	lower := strings.ToLower(output)
-	return strings.Contains(lower, " is not a valid ") || strings.Contains(lower, "error executing command")
+	return strings.Contains(lower, " is not a valid ") ||
+		strings.Contains(lower, "error executing command") ||
+		strings.Contains(lower, "unknown command") ||
+		strings.Contains(lower, "no command or topic found")
 }
 
 var playerCountPattern = regexp.MustCompile(`(?i)total of\s+(\d+)\s+in the game`)
@@ -2208,6 +2388,48 @@ func (a *Adapter) GetLogPath(cfg *agent.InstanceConfig) (string, error) {
 	// 7DTD dedicated server log path
 	p := filepath.Join(cfg.InstallPath, "7DaysToDieServer_Data", "output_log.txt")
 	return p, nil
+}
+
+// latestPlayerLogInventory returns the newest ServerTools Player_Logs section
+// for the entity requested by st-pil. Player_Logs includes stack quantities;
+// st-pil itself only prints item names and slots.
+func latestPlayerLogInventory(installPath, command string) (string, bool) {
+	match := regexp.MustCompile(`(?i)^st-pil\s+(\d+)\s*$`).FindStringSubmatch(strings.TrimSpace(command))
+	if len(match) != 2 {
+		return "", false
+	}
+	entityID := match[1]
+	roots := []string{}
+	if filepath.IsAbs(installPath) { roots = append(roots, filepath.Clean(installPath)) }
+	if len(roots) == 0 || roots[0] != "/opt/7dtd/server" { roots = append(roots, "/opt/7dtd/server") }
+	files := []string{}
+	for _, root := range roots {
+		found, err := filepath.Glob(filepath.Join(root, "Mods", "ServerTools_Config", "Logs", "PlayerLogs", "PlayerLog_*.xml"))
+		if err == nil { files = append(files, found...) }
+	}
+	if len(files) == 0 {
+		return "", false
+	}
+	sort.Slice(files, func(i, j int) bool {
+		li, ei := os.Stat(files[i]); lj, ej := os.Stat(files[j])
+		if ei != nil || ej != nil { return files[i] > files[j] }
+		return li.ModTime().After(lj.ModTime())
+	})
+	data, err := os.ReadFile(files[0])
+	if err != nil || len(data) == 0 || len(data) > 64*1024*1024 {
+		return "", false
+	}
+	text := string(data)
+	sectionRE := regexp.MustCompile(`(?s)<Player\b[^>]*>.*?(?=<Player\b|</Player>)`)
+	blocks := sectionRE.FindAllString(text, -1)
+	for i := len(blocks) - 1; i >= 0; i-- {
+		block := blocks[i]
+		if !regexp.MustCompile(`(?m)^\s*EntityId\s+` + regexp.QuoteMeta(entityID) + `\s+/`).MatchString(block) { continue }
+		timestamps := regexp.MustCompile(`(?m)^\s*\d{2}:\d{2}:\d{2}:\s*'`).FindAllStringIndex(block, -1)
+		if len(timestamps) == 0 { return block, true }
+		return block[timestamps[len(timestamps)-1][0]:], true
+	}
+	return "", false
 }
 
 // sendTelnet connects to 7DTD telnet, sends password, then command; returns response.

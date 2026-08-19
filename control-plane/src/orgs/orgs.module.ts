@@ -7,16 +7,19 @@ import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
 import { RequireOrgRoleGuard } from '../server-instances/guards/require-org-role.guard';
 import { ModAiController } from './mod-ai.controller';
 import { ModAiService } from './mod-ai.service';
+import { MailgunService } from '../mailgun/mailgun.service';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
+    AuthModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'change-me-user-secret',
       signOptions: { expiresIn: '7d' },
     }),
   ],
   controllers: [OrgsController, ModAiController],
-  providers: [OrgsService, ModAiService, PrismaService, OrgMemberGuard, RequireOrgRoleGuard],
+  providers: [OrgsService, ModAiService, MailgunService, PrismaService, OrgMemberGuard, RequireOrgRoleGuard],
   exports: [OrgsService],
 })
 export class OrgsModule {}

@@ -2,6 +2,9 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 
+const HEALTH_SAMPLE_RETENTION_MS = 48 * 60 * 60_000;
+const HEALTH_SAMPLE_PRUNE_INTERVAL_MS = 5 * 60_000;
+
 export interface HeartbeatMetrics {
   cpu?: number;
   ramUsedMb?: number;
@@ -15,6 +18,7 @@ export interface HeartbeatMetrics {
 @Injectable()
 export class HostsService {
   private readonly lastHealthSample = new Map<string, number>();
+  private lastHealthPrune = 0;
   constructor(private readonly prisma: PrismaService) {}
 
   /** List all hosts in the org with their server instance count. */
@@ -134,6 +138,7 @@ export class HostsService {
           latencyMs: metrics.latencyMs ?? 0,
           gameReachable: metrics.gameReachable ?? false,
         }});
+        await this.pruneHealthSamples(now);
       }
     }
 
@@ -182,6 +187,14 @@ export class HostsService {
     });
 
     return staleHosts;
+  }
+
+  private async pruneHealthSamples(now: number) {
+    if (now - this.lastHealthPrune < HEALTH_SAMPLE_PRUNE_INTERVAL_MS) return;
+    this.lastHealthPrune = now;
+    await this.prisma.healthSample.deleteMany({
+      where: { createdAt: { lt: new Date(now - HEALTH_SAMPLE_RETENTION_MS) } },
+    });
   }
 
   private toResponse(

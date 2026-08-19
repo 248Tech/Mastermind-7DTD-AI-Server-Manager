@@ -3,19 +3,15 @@
  * Idempotent via upsert. Seeds game types, default org, roles, and admin user.
  */
 import { PrismaClient } from '@prisma/client';
-import { createHash, randomBytes } from 'crypto';
+import { randomBytes, scryptSync } from 'crypto';
 
 const prisma = new PrismaClient();
 
 // ─── Password hashing (same as auth.service.ts) ───────────────────────────
-function hashPassword(password: string, salt: string): string {
-  return createHash('sha256').update(salt + password).digest('hex');
-}
-
 function makePasswordHash(password: string): string {
   const salt = randomBytes(16).toString('hex');
-  const hash = hashPassword(password, salt);
-  return `${salt}:${hash}`;
+  const hash = scryptSync(password, salt, 64).toString('hex');
+  return `scrypt$${salt}$${hash}`;
 }
 
 // ─── Seed data ─────────────────────────────────────────────────────────────
@@ -54,11 +50,9 @@ const DEFAULT_ORG = { name: 'Default', slug: 'default' };
 
 const ROLES = ['admin', 'operator', 'viewer'] as const;
 
-const ADMIN_USER = {
-  email: 'admin@mastermind.local',
-  password: 'changeme',
-  name: 'Admin',
-};
+const BOOTSTRAP_ADMIN_EMAIL = process.env.BOOTSTRAP_ADMIN_EMAIL?.trim().toLowerCase();
+const BOOTSTRAP_ADMIN_PASSWORD = process.env.BOOTSTRAP_ADMIN_PASSWORD;
+const BOOTSTRAP_ADMIN_NAME = process.env.BOOTSTRAP_ADMIN_NAME?.trim() || 'Administrator';
 
 // ─── Main ──────────────────────────────────────────────────────────────────
 
@@ -93,22 +87,41 @@ async function main() {
     console.log(`  ✓ Role: ${roleName}`);
   }
 
-  console.log('Seeding admin user...');
-  const existingUser = await prisma.user.findUnique({ where: { email: ADMIN_USER.email } });
+  if (!BOOTSTRAP_ADMIN_EMAIL) {
+    const existingAdminCount = await prisma.userOrg.count({ where: { roleId: roleMap['admin'].id } });
+    if (existingAdminCount === 0) {
+      throw new Error('BOOTSTRAP_ADMIN_EMAIL is required because no administrator account exists');
+    }
+    console.log('  ~ Existing administrator found; skipping bootstrap administrator');
+    console.log('\nSeed complete.');
+    return;
+  }
+
+  console.log('Seeding bootstrap admin user...');
+  const existingUser = await prisma.user.findUnique({ where: { email: BOOTSTRAP_ADMIN_EMAIL } });
 
   let adminUser: { id: string };
   if (existingUser) {
-    adminUser = existingUser;
-    console.log(`  ~ User already exists: ${ADMIN_USER.email}`);
+    adminUser = existingUser.emailVerifiedAt && existingUser.approvedAt ? existingUser : await prisma.user.update({
+      where: { id: existingUser.id },
+      data: { emailVerifiedAt: existingUser.emailVerifiedAt || new Date(), approvedAt: existingUser.approvedAt || new Date() },
+      select: { id: true },
+    });
+    console.log(`  ~ User already exists: ${BOOTSTRAP_ADMIN_EMAIL}`);
   } else {
+    if (!BOOTSTRAP_ADMIN_PASSWORD || BOOTSTRAP_ADMIN_PASSWORD.length < 12) {
+      throw new Error('BOOTSTRAP_ADMIN_PASSWORD must be at least 12 characters when creating the bootstrap administrator');
+    }
     adminUser = await prisma.user.create({
       data: {
-        email: ADMIN_USER.email,
-        name: ADMIN_USER.name,
-        passwordHash: makePasswordHash(ADMIN_USER.password),
+        email: BOOTSTRAP_ADMIN_EMAIL,
+        name: BOOTSTRAP_ADMIN_NAME,
+        passwordHash: makePasswordHash(BOOTSTRAP_ADMIN_PASSWORD),
+        emailVerifiedAt: new Date(),
+        approvedAt: new Date(),
       },
     });
-    console.log(`  ✓ Created user: ${ADMIN_USER.email}`);
+    console.log(`  ✓ Created user: ${BOOTSTRAP_ADMIN_EMAIL}`);
   }
 
   // Ensure admin user is in the default org as admin
@@ -126,7 +139,15 @@ async function main() {
     });
     console.log(`  ✓ Added admin user to default org as admin`);
   } else {
-    console.log(`  ~ Admin user already in default org`);
+    if (membership.roleId !== roleMap['admin'].id) {
+      await prisma.userOrg.update({
+        where: { userId_orgId: { userId: adminUser.id, orgId: org.id } },
+        data: { roleId: roleMap['admin'].id },
+      });
+      console.log(`  ✓ Promoted bootstrap user to admin`);
+    } else {
+      console.log(`  ~ Admin user already in default org`);
+    }
   }
 
   console.log('\nSeed complete.');

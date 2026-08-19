@@ -24,3 +24,4 @@ Run migrations in this order when applying raw SQL or creating Prisma migrations
 20. **pairing_tokens** (depends: orgs, users, hosts)
 
 **Seed after migrations:** Insert default `roles` (admin, operator, viewer) and at least one `game_type` (e.g. slug `7dtd`).
+23. `20260815000023_escalating_login_security` — escalating login lockouts and encrypted reCAPTCHA settings

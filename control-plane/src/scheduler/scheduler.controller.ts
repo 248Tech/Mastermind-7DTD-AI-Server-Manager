@@ -17,6 +17,7 @@ import { SchedulerService } from './scheduler.service';
 import { JwtAuthGuard } from '../server-instances/guards/jwt-auth.guard';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
 import type { RequestWithUser } from '../server-instances/guards/jwt-auth.guard';
+import { RequireOrgRoleGuard, RequireOrgRoles } from '../server-instances/guards/require-org-role.guard';
 
 @Controller('api/orgs/:orgId/schedules')
 @UseGuards(JwtAuthGuard, OrgMemberGuard)
@@ -29,6 +30,8 @@ export class SchedulerController {
   }
 
   @Post()
+  @UseGuards(RequireOrgRoleGuard)
+  @RequireOrgRoles('admin', 'operator')
   async create(
     @Param('orgId') orgId: string,
     @Body() body: {
@@ -52,6 +55,8 @@ export class SchedulerController {
   }
 
   @Patch(':id')
+  @UseGuards(RequireOrgRoleGuard)
+  @RequireOrgRoles('admin', 'operator')
   async update(
     @Param('orgId') orgId: string,
     @Param('id') id: string,
@@ -67,6 +72,8 @@ export class SchedulerController {
   }
 
   @Delete(':id')
+  @UseGuards(RequireOrgRoleGuard)
+  @RequireOrgRoles('admin', 'operator')
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('orgId') orgId: string, @Param('id') id: string) {
     try {

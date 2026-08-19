@@ -1,13 +1,18 @@
-import { BadRequestException, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { JobsService } from '../jobs/jobs.service';
+import { AllocsService } from '../allocs/allocs.service';
 import { reconcileNameFallback } from './player-identity';
 
 @Injectable()
 export class PlayersService implements OnModuleInit, OnModuleDestroy {
   private timer?: NodeJS.Timeout;
   private polling = false;
-  constructor(private readonly prisma: PrismaService, private readonly jobs: JobsService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jobs: JobsService,
+    private readonly allocs: AllocsService,
+  ) {}
   onModuleInit() {
     const seconds = Math.max(15, Number(process.env.PLAYER_POLL_INTERVAL_SEC || 60));
     this.timer = setInterval(() => void this.pollPlayers(), seconds * 1000);
@@ -63,5 +68,22 @@ export class PlayersService implements OnModuleInit, OnModuleDestroy {
       const sessionSeconds = p.online && p.currentSessionStartedAt ? Math.max(0, Math.floor((now - p.currentSessionStartedAt.getTime()) / 1000)) : 0;
       return { ...p, sessionSeconds, lifetimeSeconds: p.lifetimeSeconds + sessionSeconds };
     });
+  }
+
+  async inventory(orgId: string, playerId: string) {
+    const player = await this.prisma.player.findFirst({
+      where: { id: playerId, orgId },
+      select: { id: true, name: true, steamId: true, eosId: true },
+    });
+    if (!player) throw new NotFoundException('Player not found');
+    if (!player.steamId && !player.eosId) {
+      throw new BadRequestException('Steam or EOS ID is required to read inventory');
+    }
+    if (!this.allocs.tokenConfigured()) {
+      throw new ServiceUnavailableException('Allocs webtoken is not configured');
+    }
+    const snapshot = await this.allocs.inventorySnapshot(player.steamId, player.eosId);
+    if (!snapshot) throw new ServiceUnavailableException('Player inventory is unavailable');
+    return { player: player.name, source: 'allocs', snapshot };
   }
 }

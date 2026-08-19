@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -10,11 +10,11 @@ import {
   Rectangle,
   Tooltip,
   Polyline,
-  useMap,
+  Polygon,
   useMapEvents,
 } from "react-leaflet";
 import L from "leaflet";
-import { api, ServerInstance } from "../../../lib/api";
+import { api, PlayerRecord, ServerInstance } from "../../../lib/api";
 import { getStoredOrgId } from "../../../lib/auth";
 type Entity = {
   id: string | number;
@@ -41,6 +41,39 @@ type Claim = {
   position: { x: number; y: number; z: number };
   size: number;
 };
+type PrismaMarker = {
+  id: string;
+  name: string;
+  position: { x: number; y: number; z: number };
+  extra?: string;
+};
+type PrismaHome = {
+  id: string;
+  owner: string;
+  steamId: string;
+  position: { x: number; y: number; z: number };
+  active: boolean;
+};
+type PrismaPoi = {
+  id: string;
+  name: string;
+  x: number;
+  z: number;
+  minx: number;
+  maxx: number;
+  minz: number;
+  maxz: number;
+  containsBed: boolean;
+};
+type PrismaRect = {
+  id: string;
+  name: string;
+  type: string;
+  e: number;
+  w: number;
+  n: number;
+  s: number;
+};
 type Region = { name: string; x: number; z: number };
 type WorldInfo = {
   width: number;
@@ -48,10 +81,6 @@ type WorldInfo = {
   gameVersion?: string;
   seed?: string;
   source: string;
-};
-type CommandJobRun = {
-  status: string;
-  result?: { errorMessage?: string } | null;
 };
 type VisitMapStatus = {
   state: "idle" | "running" | "stalled" | "stopped" | "complete";
@@ -63,7 +92,32 @@ type VisitMapStatus = {
 };
 const HISTORY_KEY = "mm_live_map_history_v1",
   HISTORY_RETENTION_MS = 72 * 60 * 60 * 1000,
-  MAX_HISTORY = 25_920;
+  MAX_HISTORY = 25_920,
+  MAX_TRAIL_POINTS = 2_000;
+
+function sampleTrail(points: [number, number][]) {
+  if (points.length <= MAX_TRAIL_POINTS) return points;
+  const last = points.length - 1;
+  return Array.from({ length: MAX_TRAIL_POINTS }, (_, index) =>
+    points[Math.round((index * last) / (MAX_TRAIL_POINTS - 1))],
+  );
+}
+function poiBounds(poi: PrismaPoi): [[number, number], [number, number]] {
+  const halfX = Math.floor(Math.abs(poi.minx - poi.maxx) / 2);
+  const halfZ = Math.floor(Math.abs(poi.minz - poi.maxz) / 2);
+  return [
+    [poi.x - halfX, poi.z - halfZ],
+    [poi.x + halfX, poi.z + halfZ],
+  ];
+}
+function rectPolygon(rect: PrismaRect): [number, number][] {
+  return [
+    [rect.e, rect.s],
+    [rect.w, rect.s],
+    [rect.w, rect.n],
+    [rect.e, rect.n],
+  ];
+}
 const dot = (color: string) =>
   L.divIcon({
     className: "",
@@ -99,18 +153,6 @@ function Coordinates() {
     </div>
   );
 }
-function PlayerTracker({ player }: { player?: Entity }) {
-  const map = useMap();
-  useEffect(() => {
-    if (player)
-      map.flyTo(
-        [player.position.x, player.position.z],
-        Math.max(map.getZoom(), 3),
-        { duration: 0.6 },
-      );
-  }, [map, player?.position.x, player?.position.z]);
-  return null;
-}
 export default function LiveMapClient() {
   const orgId = getStoredOrgId();
   const [ready, setReady] = useState(false),
@@ -129,13 +171,28 @@ export default function LiveMapClient() {
     [historyWindow, setHistoryWindow] = useState(120),
     [trackedPlayer, setTrackedPlayer] = useState(""),
     [trackingColor, setTrackingColor] = useState("#ff2bd6"),
+    [showAllPlayerTrails, setShowAllPlayerTrails] = useState(false),
     [showClaims, setShowClaims] = useState(true),
     [showPlayerNames, setShowPlayerNames] = useState(true),
+    [showLogoutLocations, setShowLogoutLocations] = useState(false),
+    [prismaConfigured, setPrismaConfigured] = useState(false),
+    [vehicles, setVehicles] = useState<PrismaMarker[]>([]),
+    [drones, setDrones] = useState<PrismaMarker[]>([]),
+    [traders, setTraders] = useState<PrismaMarker[]>([]),
+    [homes, setHomes] = useState<PrismaHome[]>([]),
+    [questPois, setQuestPois] = useState<PrismaPoi[]>([]),
+    [allPois, setAllPois] = useState<PrismaPoi[]>([]),
+    [resetRegions, setResetRegions] = useState<PrismaRect[]>([]),
+    [advClaims, setAdvClaims] = useState<PrismaRect[]>([]),
+    [showAllPois, setShowAllPois] = useState(false),
+    [advClaimFilter, setAdvClaimFilter] = useState("all"),
+    [logoutMarkers, setLogoutMarkers] = useState<Array<{ id: string; name: string; x: number; y: number | null; z: number; lastLogoutAt: string | null }>>([]),
     [server, setServer] = useState<ServerInstance | null>(null),
     [visitBusy, setVisitBusy] = useState(false),
     [visitNotice, setVisitNotice] = useState(""),
     [visitStatus, setVisitStatus] = useState<VisitMapStatus>({ state: "idle" }),
     [visitSection, setVisitSection] = useState(0);
+  const prismaConfiguredRef = useRef(false);
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
@@ -207,12 +264,20 @@ export default function LiveMapClient() {
             }
             return updated;
           });
-          setFeedError("");
+          const errors = (e.errors || {}) as Record<string, string>;
+          setFeedError(
+            [errors.players, errors.hostiles, errors.animals]
+              .filter(Boolean)
+              .join(" · ") || "",
+          );
         })
         .catch((e) => active && setFeedError(e.message));
       void get("claims-live")
-        .then((c) => active && setClaims(c.claims ?? []))
-        .catch((e) => active && setFeedError(`Claims: ${e.message}`));
+        .then((c) => {
+          if (!active || prismaConfiguredRef.current) return;
+          setClaims(c.claims ?? []);
+        })
+        .catch((e) => active && !prismaConfiguredRef.current && setFeedError(`Claims: ${e.message}`));
       void get("regions-live")
         .then((r) => active && setRegionFiles(r.regions ?? []))
         .catch((e) => active && setFeedError(`Regions: ${e.message}`));
@@ -249,29 +314,110 @@ export default function LiveMapClient() {
       )
       .catch(() => setVisitNotice("Could not find the registered 7DTD server."));
   }, [ready, orgId]);
+  useEffect(() => {
+    if (!ready || !orgId) return;
+    let active = true;
+    const loadPrisma = async () => {
+      try {
+        const status = await api.get<{ configured?: boolean; reachable?: boolean }>(
+          `/api/orgs/${orgId}/prismacore/status`,
+        );
+        if (!active) return;
+        const configured = Boolean(status.configured);
+        prismaConfiguredRef.current = configured;
+        setPrismaConfigured(configured);
+        if (!configured) return;
+        const [land, vehicleRows, droneRows, traderRows, homeRows, questRows, resetRows, advRows, allPoiRows] =
+          await Promise.all([
+            api.get<{ reachable?: boolean; claims?: Claim[] }>(`/api/orgs/${orgId}/prismacore/landclaims`),
+            api.get<{ markers?: PrismaMarker[] }>(`/api/orgs/${orgId}/prismacore/vehicles`),
+            api.get<{ markers?: PrismaMarker[] }>(`/api/orgs/${orgId}/prismacore/drones`),
+            api.get<{ markers?: PrismaMarker[] }>(`/api/orgs/${orgId}/prismacore/traders`),
+            api.get<{ homes?: PrismaHome[] }>(`/api/orgs/${orgId}/prismacore/playerhomes`),
+            api.get<{ pois?: PrismaPoi[] }>(`/api/orgs/${orgId}/prismacore/questpois`),
+            api.get<{ regions?: PrismaRect[] }>(`/api/orgs/${orgId}/prismacore/resetregions`),
+            api.get<{ claims?: PrismaRect[] }>(`/api/orgs/${orgId}/prismacore/advclaims`),
+            showAllPois
+              ? api.get<{ pois?: PrismaPoi[] }>(`/api/orgs/${orgId}/prismacore/allpois`)
+              : Promise.resolve({ pois: [] as PrismaPoi[] }),
+          ]);
+        if (!active) return;
+        if (land.reachable) setClaims(land.claims ?? []);
+        setVehicles(vehicleRows.markers ?? []);
+        setDrones(droneRows.markers ?? []);
+        setTraders(traderRows.markers ?? []);
+        setHomes(homeRows.homes ?? []);
+        setQuestPois(questRows.pois ?? []);
+        setResetRegions(resetRows.regions ?? []);
+        setAdvClaims(advRows.claims ?? []);
+        if (showAllPois) setAllPois(allPoiRows.pois ?? []);
+      } catch {
+        if (!active) return;
+        prismaConfiguredRef.current = false;
+        setPrismaConfigured(false);
+      }
+    };
+    void loadPrisma();
+    const timer = setInterval(() => void loadPrisma(), 10000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [ready, orgId, showAllPois]);
+  useEffect(() => {
+    if (!ready || !orgId || !server || !showLogoutLocations) {
+      if (!showLogoutLocations) setLogoutMarkers([]);
+      return;
+    }
+    let active = true;
+    const load = () =>
+      api
+        .get<PlayerRecord[]>(`/api/orgs/${orgId}/players?serverInstanceId=${encodeURIComponent(server.id)}`)
+        .then((rows) => {
+          if (!active) return;
+          setLogoutMarkers(
+            rows
+              .filter((player) => !player.online && player.lastPosX != null && player.lastPosZ != null)
+              .map((player) => ({
+                id: player.id,
+                name: player.name,
+                x: player.lastPosX as number,
+                y: player.lastPosY,
+                z: player.lastPosZ as number,
+                lastLogoutAt: player.lastLogoutAt,
+              })),
+          );
+        })
+        .catch(() => undefined);
+    load();
+    const timer = setInterval(load, 30000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [ready, orgId, server, showLogoutLocations]);
+  // Keep CRS identity stable across polling/history renders. Leaflet treats a
+  // changed CRS as a viewport reset, which can look like random zooming.
+  const divisor = 2 ** (config?.maxZoom ?? 4);
+  const crs = useMemo(() => L.extend({}, L.CRS.Simple, {
+    projection: {
+      project: (p: L.LatLng) => new L.Point(p.lat / divisor, p.lng / divisor),
+      unproject: (p: L.Point) => new L.LatLng(p.x * divisor, p.y * divisor),
+      bounds: L.bounds([-Infinity, -Infinity], [Infinity, Infinity]),
+    },
+    transformation: new L.Transformation(1, 0, -1, 0),
+    scale: (zoom: number) => 2 ** zoom,
+  }) as L.CRS, [divisor]);
 
   async function sendVisitCommand(command: string, successMessage: string) {
     if (!orgId || !server || visitBusy) return;
     setVisitBusy(true);
     setVisitNotice("");
     try {
-      const queued = await api.post<{ jobRunId: string }>(
-        `/api/orgs/${orgId}/jobs`,
-        { serverInstanceId: server.id, type: "RCON", payload: { command } },
+      await api.post<{ ok: boolean; command: string; result?: string }>(
+        `/api/orgs/${orgId}/allocs/console`,
+        { command },
       );
-      let run: CommandJobRun | null = null;
-      for (let attempt = 0; attempt < 120; attempt++) {
-        run = await api.get<CommandJobRun | null>(
-          `/api/orgs/${orgId}/jobs/runs/${queued.jobRunId}`,
-        );
-        if (run?.status === "success" || run?.status === "failed") break;
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-      if (run?.status !== "success") {
-        throw new Error(
-          run?.result?.errorMessage || "The visitmap command did not start within 30 seconds.",
-        );
-      }
       if (command.startsWith("visitmap ") && command !== "visitmap stop") {
         setVisitStatus({ state: "running", percent: 0 });
       }
@@ -393,16 +539,7 @@ export default function LiveMapClient() {
       </Rectangle>
     );
   });
-  const divisor = 2 ** (config.maxZoom ?? 4);
-  const crs = L.extend({}, L.CRS.Simple, {
-    projection: {
-      project: (p: L.LatLng) => new L.Point(p.lat / divisor, p.lng / divisor),
-      unproject: (p: L.Point) => new L.LatLng(p.x * divisor, p.y * divisor),
-      bounds: L.bounds([-Infinity, -Infinity], [Infinity, Infinity]),
-    },
-    transformation: new L.Transformation(1, 0, -1, 0),
-    scale: (zoom: number) => 2 ** zoom,
-  }) as L.CRS;
+  const mapBounds = L.latLngBounds([worldX1, worldZ1], [worldX2, worldZ2]);
   const windowedHistory = history.filter(
     (snapshot) => snapshot.at >= Date.now() - historyWindow * 60_000,
   );
@@ -410,6 +547,7 @@ export default function LiveMapClient() {
     historyIndex === null
       ? { at: Date.now(), players, animals, hostiles }
       : windowedHistory[historyIndex] || { at: Date.now(), players, animals, hostiles };
+  const visibleAdvClaims = advClaimFilter === "all" ? advClaims : advClaims.filter((claim) => claim.type === advClaimFilter);
   const playerChoices = [
     ...new Map(
       history
@@ -418,22 +556,26 @@ export default function LiveMapClient() {
         .map((p) => [String(p.id), p]),
     ).values(),
   ];
-  const visibleIds = trackedPlayer
-    ? [trackedPlayer]
-    : [...new Set(viewed.players.map((p) => String(p.id)))];
+  const trailHistory = windowedHistory.slice(
+    0,
+    historyIndex === null ? undefined : historyIndex + 1,
+  );
+  const visibleIds = showAllPlayerTrails
+    ? [...new Set(trailHistory.flatMap((s) => s.players.map((p) => String(p.id))))]
+    : trackedPlayer
+      ? [trackedPlayer]
+      : [...new Set(viewed.players.map((p) => String(p.id)))];
   const trails = visibleIds
-    .map((id) =>
-      windowedHistory
-        .slice(0, historyIndex === null ? undefined : historyIndex + 1)
+    .map((id) => {
+      const points = trailHistory
         .flatMap((s) =>
           s.players
             .filter((p) => String(p.id) === id)
             .map((p) => [p.position.x, p.position.z] as [number, number]),
-        )
-        .slice(-60),
-    )
-    .filter((line) => line.length > 1);
-  const tracked = viewed.players.find((p) => String(p.id) === trackedPlayer);
+        );
+      return { id, points: sampleTrail(points) };
+    })
+    .filter((trail) => trail.points.length > 1);
   return (
     <div>
       <div
@@ -469,6 +611,13 @@ export default function LiveMapClient() {
               Hostiles {viewed.hostiles.length}
             </span>
             <span style={{ color: "#c084fc" }}>Claims {claims.length}</span>
+            {prismaConfigured && (
+              <>
+                <span style={{ color: "#38bdf8" }}>Vehicles {vehicles.length}</span>
+                <span style={{ color: "#f472b6" }}>Drones {drones.length}</span>
+                <span style={{ color: "#facc15" }}>Traders {traders.length}</span>
+              </>
+            )}
             {feedError && (
               <span style={{ color: "#fbbf24" }}>Feed error: {feedError}</span>
             )}
@@ -648,11 +797,49 @@ export default function LiveMapClient() {
         >
           <input
             type="checkbox"
+            checked={showAllPlayerTrails}
+            onChange={(event) => setShowAllPlayerTrails(event.target.checked)}
+            style={{ accentColor: "#3b82f6" }}
+          />
+          Show all player trails
+        </label>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            color: "#60a5fa",
+            fontSize: 12,
+            whiteSpace: "nowrap",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
             checked={showPlayerNames}
             onChange={(event) => setShowPlayerNames(event.target.checked)}
             style={{ accentColor: "#3b82f6" }}
           />
           Show player names
+        </label>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            color: "#fbbf24",
+            fontSize: 12,
+            whiteSpace: "nowrap",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={showLogoutLocations}
+            onChange={(event) => setShowLogoutLocations(event.target.checked)}
+            style={{ accentColor: "#f59e0b" }}
+          />
+          Last reported logout locations ({logoutMarkers.length})
         </label>
         <label
           style={{
@@ -673,6 +860,33 @@ export default function LiveMapClient() {
           />
           Show land claims ({claims.length})
         </label>
+        {prismaConfigured && (
+          <>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#38bdf8", fontSize: 12, whiteSpace: "nowrap" }}>
+              PrismaCore
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#e2e8f0", fontSize: 12, whiteSpace: "nowrap", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={showAllPois}
+                onChange={(event) => setShowAllPois(event.target.checked)}
+                style={{ accentColor: "#eab308" }}
+              />
+              All POIs ({allPois.length})
+            </label>
+            <select
+              aria-label="Advanced claim type"
+              value={advClaimFilter}
+              onChange={(event) => setAdvClaimFilter(event.target.value)}
+              style={{ background: "#0d0d14", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 6, padding: "6px 9px" }}
+            >
+              <option value="all">Adv. claims (all)</option>
+              {[...new Set(advClaims.map((claim) => claim.type))].sort().map((type) => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+          </>
+        )}
         <select
           aria-label="Player history timeframe"
           value={historyWindow}
@@ -755,33 +969,45 @@ export default function LiveMapClient() {
           zoom={1}
           minZoom={-1}
           maxZoom={5}
+          maxBounds={mapBounds.pad(0.12)}
+          maxBoundsViscosity={1}
+          scrollWheelZoom
+          wheelDebounceTime={80}
+          wheelPxPerZoomLevel={120}
           crs={crs}
+          fadeAnimation={false}
           style={{ height: "100%", width: "100%", background: "#111827" }}
         >
-          <PlayerTracker player={tracked} />
           <TileLayer
             url="/api/live-map/map/{z}/{x}/{y}.png"
             tileSize={128}
             minZoom={-1}
             minNativeZoom={0}
             maxNativeZoom={config.maxZoom ?? 4}
+            keepBuffer={16}
+            updateInterval={50}
+            updateWhenIdle={false}
+            updateWhenZooming
           />
           <LayersControl position="topright">
             <LayersControl.Overlay name="Players" checked>
               <LayerGroup>
-                {trails.map((line, i) => (
-                  <LayerGroup key={`trail-${i}`}>
-                    {trackedPlayer && <Polyline positions={line} pathOptions={{ color: "#020617", weight: 8, opacity: 0.8 }} />}
+                {trails.map((trail) => {
+                  const selected = Boolean(trackedPlayer) && trail.id === trackedPlayer;
+                  return (
+                  <LayerGroup key={`trail-${trail.id}`}>
+                    {selected && <Polyline positions={trail.points} pathOptions={{ color: "#020617", weight: 8, opacity: 0.8 }} />}
                     <Polyline
-                      positions={line}
+                      positions={trail.points}
                       pathOptions={{
-                        color: trackedPlayer ? trackingColor : "#60a5fa",
-                        weight: trackedPlayer ? 5 : 2,
-                        opacity: trackedPlayer ? 1 : 0.55,
+                        color: selected ? trackingColor : "#60a5fa",
+                        weight: selected ? 5 : 2,
+                        opacity: selected ? 1 : 0.55,
                       }}
                     />
                   </LayerGroup>
-                ))}
+                  );
+                })}
                 {viewed.players.map((e) => (
                   <Marker
                     key={e.id}
@@ -815,6 +1041,41 @@ export default function LiveMapClient() {
                         className="player-map-name"
                       >
                         {e.name}
+                      </Tooltip>
+                    )}
+                  </Marker>
+                ))}
+              </LayerGroup>
+            </LayersControl.Overlay>
+            <LayersControl.Overlay name={`Logout locations (${logoutMarkers.length})`} checked>
+              <LayerGroup>
+                {showLogoutLocations && logoutMarkers.map((marker) => (
+                  <Marker
+                    key={`logout-${marker.id}`}
+                    position={[marker.x, marker.z]}
+                    icon={L.divIcon({
+                      className: "",
+                      html: `<span style="display:block;width:12px;height:12px;border-radius:50%;background:#0f172a;border:2px solid #f59e0b;box-shadow:0 1px 4px #000"></span>`,
+                      iconSize: [16, 16],
+                      iconAnchor: [8, 8],
+                    })}
+                  >
+                    <Popup>
+                      <strong>{marker.name}</strong>
+                      <br />
+                      Last logout
+                      <br />
+                      {Math.round(marker.x)}, {Math.round(marker.y ?? 0)}, {Math.round(marker.z)}
+                      {marker.lastLogoutAt && (
+                        <>
+                          <br />
+                          {new Date(marker.lastLogoutAt).toLocaleString()}
+                        </>
+                      )}
+                    </Popup>
+                    {showPlayerNames && (
+                      <Tooltip permanent direction="top" offset={[0, -8]} opacity={1} className="player-map-name">
+                        {marker.name} (logout)
                       </Tooltip>
                     )}
                   </Marker>
@@ -878,6 +1139,96 @@ export default function LiveMapClient() {
                 })}
               </LayerGroup>
             </LayersControl.Overlay>
+            {prismaConfigured && (
+              <>
+                <LayersControl.Overlay name={`Vehicles (${vehicles.length})`}>
+                  <LayerGroup>
+                    {vehicles.map((marker) => (
+                      <Marker key={marker.id} position={[marker.position.x, marker.position.z]} icon={dot("#38bdf8")}>
+                        <Popup>Vehicle: {marker.name}<br />{Math.round(marker.position.x)}, {Math.round(marker.position.y)}, {Math.round(marker.position.z)}</Popup>
+                      </Marker>
+                    ))}
+                  </LayerGroup>
+                </LayersControl.Overlay>
+                <LayersControl.Overlay name={`Drones (${drones.length})`}>
+                  <LayerGroup>
+                    {drones.map((marker) => (
+                      <Marker key={marker.id} position={[marker.position.x, marker.position.z]} icon={dot("#f472b6")}>
+                        <Popup>Drone: {marker.name}<br />{Math.round(marker.position.x)}, {Math.round(marker.position.y)}, {Math.round(marker.position.z)}</Popup>
+                      </Marker>
+                    ))}
+                  </LayerGroup>
+                </LayersControl.Overlay>
+                <LayersControl.Overlay name={`Beds (${homes.length})`}>
+                  <LayerGroup>
+                    {homes.map((home) => {
+                      const size = 15;
+                      return (
+                        <LayerGroup key={home.id}>
+                          <Rectangle
+                            bounds={[
+                              [home.position.x - size, home.position.z - size],
+                              [home.position.x + size, home.position.z + size],
+                            ]}
+                            pathOptions={{ color: home.active ? "#4ade80" : "#f87171", weight: 1, fillOpacity: 0.12 }}
+                          >
+                            <Tooltip sticky>{home.owner || home.steamId}<br />Bed {home.active ? "active" : "inactive"}</Tooltip>
+                          </Rectangle>
+                          <Marker position={[home.position.x, home.position.z]} icon={dot(home.active ? "#4ade80" : "#f87171")}>
+                            <Popup>{home.owner || home.steamId}<br />Bedroll {home.active ? "active" : "inactive"}<br />{home.position.x}, {home.position.y}, {home.position.z}</Popup>
+                          </Marker>
+                        </LayerGroup>
+                      );
+                    })}
+                  </LayerGroup>
+                </LayersControl.Overlay>
+                <LayersControl.Overlay name={`Traders (${traders.length})`}>
+                  <LayerGroup>
+                    {traders.map((marker) => (
+                      <Marker key={marker.id} position={[marker.position.x, marker.position.z]} icon={dot("#facc15")}>
+                        <Popup>Trader: {marker.name}<br />{Math.round(marker.position.x)}, {Math.round(marker.position.z)}</Popup>
+                      </Marker>
+                    ))}
+                  </LayerGroup>
+                </LayersControl.Overlay>
+                <LayersControl.Overlay name={`Quest POIs (${questPois.length})`}>
+                  <LayerGroup>
+                    {questPois.map((poi) => (
+                      <Rectangle key={poi.id} bounds={poiBounds(poi)} pathOptions={{ color: "#ef4444", weight: 1, fillOpacity: 0.12 }}>
+                        <Tooltip sticky>{poi.name}<br />{poi.x}, {poi.z}{poi.containsBed ? " · bed/lcb" : ""}</Tooltip>
+                      </Rectangle>
+                    ))}
+                  </LayerGroup>
+                </LayersControl.Overlay>
+                <LayersControl.Overlay name={`All POIs (${allPois.length})`}>
+                  <LayerGroup>
+                    {showAllPois && allPois.map((poi) => (
+                      <Rectangle key={poi.id} bounds={poiBounds(poi)} pathOptions={{ color: "#eab308", weight: 1, fillOpacity: 0.08 }}>
+                        <Tooltip sticky>{poi.name}<br />{poi.x}, {poi.z}</Tooltip>
+                      </Rectangle>
+                    ))}
+                  </LayerGroup>
+                </LayersControl.Overlay>
+                <LayersControl.Overlay name={`Reset regions (${resetRegions.length})`}>
+                  <LayerGroup>
+                    {resetRegions.map((rect) => (
+                      <Polygon key={rect.id} positions={rectPolygon(rect)} pathOptions={{ color: "#ef4444", weight: 1, fillOpacity: 0.12 }}>
+                        <Popup>Reset region. Do not build here.</Popup>
+                      </Polygon>
+                    ))}
+                  </LayerGroup>
+                </LayersControl.Overlay>
+                <LayersControl.Overlay name={`Adv. claims (${visibleAdvClaims.length})`}>
+                  <LayerGroup>
+                    {visibleAdvClaims.map((rect) => (
+                      <Polygon key={rect.id} positions={rectPolygon(rect)} pathOptions={{ color: "#22d3ee", weight: 1, fillOpacity: 0.12 }}>
+                        <Popup>{rect.name}<br />Type: {rect.type}</Popup>
+                      </Polygon>
+                    ))}
+                  </LayerGroup>
+                </LayersControl.Overlay>
+              </>
+            )}
             <LayersControl.Overlay name="Region grid">
               <LayerGroup>{regions}</LayerGroup>
             </LayersControl.Overlay>

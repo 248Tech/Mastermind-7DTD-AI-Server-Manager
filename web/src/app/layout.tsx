@@ -2,7 +2,8 @@
 import './globals.css';
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { isLoggedIn, clearAuth } from '../lib/auth';
+import { isLoggedIn, clearAuth, getStoredOrgId } from '../lib/auth';
+import { api, ApiError } from '../lib/api';
 
 const NAV_GROUPS = [
   { label: 'Overview', items: [
@@ -19,6 +20,8 @@ const NAV_GROUPS = [
     { href: '/region-healer', label: 'Region Healer', icon: '✚', title: 'Automatic corrupt-region recovery' },
     { href: '/profile-editor', label: 'Profile Editor', icon: '✎', title: 'Inspect and edit downloaded 7DTD player profile files' },
     { href: '/live-map', label: 'Live Map', icon: '⌖', title: 'Live terrain, players, entities, and region coordinates' },
+    { href: '/donator-shop', label: 'Donator Shop', icon: '♡', title: 'Create priced supporter items for the player portal shop' },
+    { href: '/purchases', label: 'Purchases', icon: '$', title: 'Completed player donations and shop checkouts' },
   ]},
   { label: 'Automation', items: [
     { href: '/jobs', label: 'Jobs', icon: '⚡', title: 'Send one-off commands to your servers' },
@@ -28,11 +31,13 @@ const NAV_GROUPS = [
   { label: 'System', items: [
     { href: '/hosts', label: 'Hosts', icon: '⬡', title: 'Machines running the agent and game servers' },
     { href: '/accounts', label: 'Accounts', icon: '♙', title: 'Create and view Mastermind organization accounts' },
+    { href: '/security', label: 'Security', icon: '◆', title: 'Login lockouts, math challenges, and reCAPTCHA' },
     { href: '/settings', label: 'Settings', icon: '⚙', title: 'Organisation info and account settings' },
   ]},
 ];
 
 const PUBLIC = ['/', '/login'];
+const isPublicPath = (pathname: string) => PUBLIC.includes(pathname) || pathname === '/player' || pathname.startsWith('/player/');
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -50,15 +55,57 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     return()=>window.removeEventListener('mastermind-theme-change',applyTheme);
   }, []);
   useEffect(() => {
-    if (!PUBLIC.includes(pathname) && !isLoggedIn()) {
-      router.replace('/login');
-    } else {
+    let active = true;
+    if (isPublicPath(pathname)) {
       setReady(true);
+      return () => { active = false; };
     }
+    if (!isLoggedIn()) {
+      setReady(false);
+      router.replace('/login');
+      return () => { active = false; };
+    }
+
+    setReady(false);
+    api.get<{ orgs: { orgId: string }[] }>('/api/auth/me')
+      .then((profile) => {
+        if (!active) return;
+        const storedOrgId = getStoredOrgId();
+        const orgId = profile.orgs.some((org) => org.orgId === storedOrgId)
+          ? storedOrgId
+          : profile.orgs[0]?.orgId;
+        if (!orgId) {
+          clearAuth();
+          router.replace('/login');
+          return;
+        }
+        localStorage.setItem('mm_org_id', orgId);
+        setReady(true);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        if (error instanceof ApiError && error.status === 401) {
+          clearAuth();
+          router.replace('/login');
+          return;
+        }
+        // A temporary network failure should not destroy a valid session.
+        setReady(true);
+      });
+    return () => { active = false; };
   }, [pathname, router]);
+  useEffect(() => {
+    const handleInvalidSession = () => {
+      clearAuth();
+      setReady(false);
+      router.replace('/login');
+    };
+    window.addEventListener('mastermind-auth-invalid', handleInvalidSession);
+    return () => window.removeEventListener('mastermind-auth-invalid', handleInvalidSession);
+  }, [router]);
   useEffect(() => { setMenuOpen(false); }, [pathname]);
 
-  const isPublic = PUBLIC.includes(pathname);
+  const isPublic = isPublicPath(pathname);
 
   function handleLogout() {
     clearAuth();
@@ -135,6 +182,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
             {/* Setup Guide */}
             <div className="nav-setup" style={{ padding: '0.5rem 0.75rem', borderTop:'1px solid #1e1e2a', flexShrink:0 }}>
+              <a href="/player" target="_blank" rel="noopener noreferrer" style={{display:'flex',alignItems:'center',gap:'.5rem',padding:'.5rem .75rem',marginBottom:6,borderRadius:6,textDecoration:'none',fontSize:'.8rem',fontWeight:600,color:'#fb923c',background:'rgba(249,115,22,.08)',border:'1px solid rgba(249,115,22,.2)'}}><span>⌖</span><span className="nav-label">View Player Portal</span></a>
               <a
                 href="/hosts"
                 onClick={() => localStorage.setItem('mm_tutorial_open', '1')}

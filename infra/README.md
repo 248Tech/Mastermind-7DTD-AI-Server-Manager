@@ -54,3 +54,10 @@ cd ../web && pnpm dev
 ```
 
 Use `DATABASE_URL=postgresql://mastermind:changeme@localhost:5432/mastermind` and `REDIS_HOST=localhost` in your local `.env`.
+
+## Game-host APIs (optional)
+
+Control-plane compose can point at Allocs (`SEVENDTD_WEB_URL`, webtoken) and PrismaCore (`PRISMACORE_WEB_URL`, apiuser). See `infra/.env.example`, `docs/allocs.md`, and `docs/prismacore.md`. Leave them blank for an API-less local UI; maps/inventory then fail closed instead of opening telnet from Next.js.
+
+On the dedicated game host, `infra/game-host/restrict-game-api-ports.sh` (unit `mastermind-game-api-firewall.service`) keeps `:8080` and `:11111` on WireGuard, Docker, and loopback only. It does not change the INPUT policy, so game ports stay reachable.
+

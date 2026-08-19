@@ -1,6 +1,7 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -28,6 +29,10 @@ export class AgentAuthGuard implements CanActivate {
       throw new UnauthorizedException('Missing or invalid Authorization header');
     }
     const payload = await this.pairingService.verifyAgentKey(token);
+    const pathHostId = req.params?.hostId;
+    if (pathHostId && pathHostId !== payload.sub) {
+      throw new ForbiddenException('Agent host mismatch');
+    }
     req.agentHostId = payload.sub;
     return true;
   }

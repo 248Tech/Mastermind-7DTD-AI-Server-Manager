@@ -15,6 +15,13 @@
 | **websocket** | Real-time: log stream, job status, alerts | @nestjs/websockets, auth |
 | **discord-bot** | Slash commands / messages → translate to API calls | discord.js, auth, jobs |
 | **api** | REST controllers, DTOs, validation | all above |
+| **player-auth** | Steam OpenID and in-game-name sessions; player `/me`; shop live status | JWT, Prisma, PrismaCore |
+| **donations** | Stripe Checkout, signed webhook, shop catalog, WebP image normalize | Stripe, Sharp, player-auth |
+| **prismacore** | ClaimCreator WebAPI read client (staff layers) | control-plane env |
+| **allocs** | Allocs WebAPI hostiles/animals/inventory + allowlisted visitmap | control-plane env, PrismaCore players |
+| **players** | `lp` roster, inventory GET, protection settings | jobs, allocs |
+| **logs** | Agent log ingest, retention, keyword alerts, telnet console box | agent JWT |
+| **health-monitor** | Host CPU/RAM/disk and game reachability samples | agent heartbeat |
 
 ---
 
@@ -29,7 +36,10 @@
 | **jobs** | Job list, create job, view logs/result | form, log viewer (stream) |
 | **schedules** | CRUD scheduled jobs | form, table |
 | **alerts** | Alert rules, history | form, table |
-| **settings** | Org settings, API keys, Discord link | forms |
+| **settings** | Org settings, API keys, Discord link, Stripe Donations | forms |
+| **player-portal** | Public `/player` map, profile, shop, cart | Steam cookie, shop BFF |
+| **donator-shop** | Admin item CRUD and Purchases | dashboard JWT |
+| **live-map** | Staff map; entities via control-plane Allocs/PrismaCore | cookie session + JWT |
 | **realtime** | WS client for log stream + job updates | hook + provider |
 
 ---

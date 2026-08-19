@@ -1,14 +1,16 @@
-import { IsString, IsNotEmpty, IsObject, IsOptional, ValidateNested } from 'class-validator';
+import { IsString, IsNotEmpty, IsObject, IsOptional, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 /** Host metadata sent by agent at pairing (and heartbeat). */
 export class HostMetadataDto {
   @IsOptional()
   @IsString()
+  @MaxLength(128)
   name?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(128)
   cpu?: string;
 
   @IsOptional()
@@ -19,6 +21,7 @@ export class HostMetadataDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(256)
   diskPath?: string;
 
   @IsOptional()
@@ -26,6 +29,7 @@ export class HostMetadataDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(64)
   agentVersion?: string;
 }
 
@@ -36,6 +40,7 @@ export class HostMetadataDto {
 export class PairRequestDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   pairingToken: string;
 
   @IsOptional()

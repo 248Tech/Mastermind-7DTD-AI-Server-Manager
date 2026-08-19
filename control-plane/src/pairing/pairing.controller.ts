@@ -19,6 +19,8 @@ import {
   RequireOrgRoleGuard,
   RequireOrgRoles,
 } from '../server-instances/guards/require-org-role.guard';
+import { AuthRateLimitService } from '../auth/auth-rate-limit.service';
+import { clientIp } from '../common/client-ip';
 
 /** Request with optional user and org from auth */
 interface RequestWithOrg {
@@ -34,7 +36,10 @@ interface RequestWithOrg {
  */
 @Controller()
 export class PairingController {
-  constructor(private readonly pairingService: PairingService) {}
+  constructor(
+    private readonly pairingService: PairingService,
+    private readonly rateLimit: AuthRateLimitService,
+  ) {}
 
   /**
    * Admin: create a pairing token for the org.
@@ -60,16 +65,17 @@ export class PairingController {
 
   /**
    * Agent: pair with control plane using a one-time token.
-   * No auth; rate-limit by IP in production.
+   * No auth; persistent per-IP rate limit.
    */
   @Post('api/agent/pair')
   @HttpCode(HttpStatus.OK)
   async pair(
     @Body() dto: PairRequestDto,
-    @Req() req: { ip?: string; headers?: { 'x-forwarded-for'?: string } },
+    @Req() req: { ip?: string; headers?: Record<string, string | string[] | undefined> },
   ): Promise<PairResponseDto> {
-    const clientIp = (req.headers?.['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip;
-    const result = await this.pairingService.pair(dto, clientIp);
+    const ip = clientIp(req);
+    await this.rateLimit.consumePairing(ip);
+    const result = await this.pairingService.pair(dto, ip);
     return {
       hostId: result.hostId,
       agentKey: result.agentKey,

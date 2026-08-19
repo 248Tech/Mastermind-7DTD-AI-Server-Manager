@@ -22,6 +22,7 @@
 13. [Troubleshooting](#13-troubleshooting)
 14. [Security Notes](#14-security-notes)
 15. [API Quick Reference](#15-api-quick-reference)
+16. [Player portal, shop, and live map](#16-player-portal-shop-and-live-map)
 
 ---
 
@@ -53,6 +54,8 @@ Your Browser  ──►  Web UI (Next.js, port 3000)
 - Run bulk operations across many servers at once (restart wave)
 - Receive Discord alerts when a host goes offline or a server restarts
 - Full audit log of every action
+- Live server map (players from PrismaCore, zombies/animals from Allocs)
+- Player portal shop and Steam profile (separate from staff tools)
 
 ---
 
@@ -973,4 +976,21 @@ curl http://localhost:3001/api/orgs/YOUR_ORG_ID/jobs \
 
 ---
 
-*Guide generated from: docs/, control-plane source, agent source, and AI/SETUP.md — 2026-03-11*
+## 16. Player portal, shop, and live map
+
+Staff Live Map (`/live-map`) is dashboard-login only. It shows players from PrismaCore (Allocs fallback), hostiles/animals from Allocs, and PrismaCore overlays when ClaimCreator is up. `visitmap` start/stop is an allowlisted Allocs console call; progress is read from the server log.
+
+The player portal is separate:
+
+| Path | Who |
+|------|-----|
+| `/player/map` | Terrain, zombies, and animals are public. Other players appear only after Steam OpenID. |
+| `/player/shop` | Public catalog. Checkout needs Steam or an in-game-name password account. |
+| `/player/profile` | Steam sessions only. |
+
+Do not expose Allocs `:8080`, PrismaCore `:11111`, or telnet on the public internet. Shop status may show an online-player count, not names or positions.
+
+---
+
+*Guide updated 2026-08-18 (player portal, shop, Allocs/PrismaCore live data).*
+

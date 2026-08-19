@@ -31,6 +31,7 @@ ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY prisma ./prisma
+COPY scripts ./scripts
 COPY tsconfig.json ./
 COPY package.json ./
 EXPOSE 3001

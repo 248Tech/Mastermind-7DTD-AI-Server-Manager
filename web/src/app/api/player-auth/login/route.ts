@@ -1,0 +1,33 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { parsePlayerReturnPath, requestOrigin } from '../../../../lib/player-auth';
+
+async function nameAuth(request: NextRequest, path: 'login' | 'register') {
+  const publicOrigin = requestOrigin(request);
+  const body = await request.json().catch(() => ({})) as { name?: unknown; password?: unknown; next?: unknown };
+  const control = (process.env.CONTROL_PLANE_INTERNAL_URL || 'http://control-plane:3001').replace(/\/$/, '');
+  const response = await fetch(`${control}/api/player-auth/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  }).catch(() => null);
+  if (!response) return Response.json({ message: 'Player authentication is unavailable' }, { status: 503 });
+  const data = await response.json().catch(() => ({})) as { access_token?: string; next?: string; message?: string };
+  if (!response.ok || !data.access_token) {
+    return Response.json({ message: data.message || 'Could not sign in' }, { status: response.status || 401 });
+  }
+  const next = parsePlayerReturnPath(data.next || body.next, '/player/shop');
+  const out = NextResponse.json({ ok: true, next });
+  out.cookies.set('mm_player_session', data.access_token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: new URL(publicOrigin).protocol === 'https:',
+    path: '/',
+    maxAge: 12 * 60 * 60,
+  });
+  return out;
+}
+
+export async function POST(request: NextRequest) {
+  return nameAuth(request, 'login');
+}
