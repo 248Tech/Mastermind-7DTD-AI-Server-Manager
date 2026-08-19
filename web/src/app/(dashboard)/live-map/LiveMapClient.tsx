@@ -195,6 +195,7 @@ export default function LiveMapClient() {
     [homes, setHomes] = useState<PrismaHome[]>([]),
     [questPois, setQuestPois] = useState<PrismaPoi[]>([]),
     [allPois, setAllPois] = useState<PrismaPoi[]>([]),
+    [poiSearch, setPoiSearch] = useState(""),
     [resetRegions, setResetRegions] = useState<PrismaRect[]>([]),
     [advClaims, setAdvClaims] = useState<PrismaRect[]>([]),
     [showAllPois, setShowAllPois] = useState(false),
@@ -565,6 +566,10 @@ export default function LiveMapClient() {
         windowedHistory.filter((snapshot) => snapshot.at <= historyCursorAt).slice(-1)[0] ||
         { at: Date.now(), players, animals, hostiles };
   const visibleAdvClaims = advClaimFilter === "all" ? advClaims : advClaims.filter((claim) => claim.type === advClaimFilter);
+  const normalizedPoiSearch = poiSearch.trim().toLocaleLowerCase();
+  const matchesPoiSearch = (poi: PrismaPoi) => !normalizedPoiSearch || poi.name.toLocaleLowerCase().includes(normalizedPoiSearch);
+  const visibleQuestPois = questPois.filter(matchesPoiSearch);
+  const visibleAllPois = allPois.filter(matchesPoiSearch);
   const playerChoices = [
     ...new Map(
       history
@@ -914,6 +919,13 @@ export default function LiveMapClient() {
             <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#38bdf8", fontSize: 12, whiteSpace: "nowrap" }}>
               PrismaCore
             </label>
+            <input
+              aria-label="Search POIs by name"
+              placeholder="Search POIs by name…"
+              value={poiSearch}
+              onChange={(event) => setPoiSearch(event.target.value)}
+              style={{ background: "#0d0d14", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 6, padding: "6px 9px", minWidth: 170 }}
+            />
             <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#e2e8f0", fontSize: 12, whiteSpace: "nowrap", cursor: "pointer" }}>
               <input
                 type="checkbox"
@@ -1244,18 +1256,18 @@ export default function LiveMapClient() {
                     ))}
                   </LayerGroup>
                 </LayersControl.Overlay>
-                <LayersControl.Overlay name={`Quest POIs (${questPois.length})`}>
+                <LayersControl.Overlay name={`Quest POIs (${visibleQuestPois.length}${normalizedPoiSearch ? `/${questPois.length}` : ""})`}>
                   <LayerGroup>
-                    {questPois.map((poi) => (
+                    {visibleQuestPois.map((poi) => (
                       <Rectangle key={poi.id} bounds={poiBounds(poi)} pathOptions={{ color: "#ef4444", weight: 1, fillOpacity: 0.12 }}>
                         <Tooltip sticky>{poi.name}<br />{poi.x}, {poi.z}{poi.containsBed ? " · bed/lcb" : ""}</Tooltip>
                       </Rectangle>
                     ))}
                   </LayerGroup>
                 </LayersControl.Overlay>
-                <LayersControl.Overlay name={`All POIs (${allPois.length})`}>
+                <LayersControl.Overlay name={`All POIs (${visibleAllPois.length}${normalizedPoiSearch ? `/${allPois.length}` : ""})`}>
                   <LayerGroup>
-                    {showAllPois && allPois.map((poi) => (
+                    {showAllPois && visibleAllPois.map((poi) => (
                       <Rectangle key={poi.id} bounds={poiBounds(poi)} pathOptions={{ color: "#eab308", weight: 1, fillOpacity: 0.08 }}>
                         <Tooltip sticky>{poi.name}<br />{poi.x}, {poi.z}</Tooltip>
                       </Rectangle>
