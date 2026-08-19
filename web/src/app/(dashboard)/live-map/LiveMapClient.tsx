@@ -630,6 +630,10 @@ export default function LiveMapClient() {
         .map-toolbar { margin: 10px 0; padding: 10px; background: #111118; border: 1px solid #252532; border-radius: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
         .map-toolbar .toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-right: 8px; margin-right: 2px; border-right: 1px solid #293241; }
         .map-toolbar .toolbar-group:last-child { border-right: 0; }
+        .map-filter-details { border-right: 1px solid #293241; }
+        .map-filter-details summary { cursor: pointer; color: #cbd5e1; font-size: 12px; font-weight: 600; padding: 6px 8px; border: 1px solid #334155; border-radius: 6px; list-style-position: inside; white-space: nowrap; }
+        .map-filter-details[open] summary { border-radius: 6px 6px 0 0; }
+        .map-filter-details .filter-detail-content { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 8px 2px 0; }
         .map-toolbar select, .map-toolbar button { min-height: 32px; }
         .map-maintenance { min-width: min(100%, 320px); }
         .map-maintenance summary { cursor: pointer; color: #fbbf24; font-size: 12px; font-weight: 600; padding: 6px 8px; border: 1px solid #3f3f46; border-radius: 6px; background: rgba(120,53,15,.2); list-style-position: inside; }
@@ -867,6 +871,25 @@ export default function LiveMapClient() {
           )}
           </div>
           <div className="toolbar-group">
+            <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#38bdf8", fontSize: 12, whiteSpace: "nowrap" }}>
+              POI search
+            </label>
+            <input
+              aria-label="Search POIs by name"
+              placeholder={prismaConfigured ? "Search by name…" : "PrismaCore unavailable"}
+              value={poiSearch}
+              onChange={(event) => setPoiSearch(event.target.value)}
+              disabled={!prismaConfigured}
+              title={!prismaConfigured ? "Configure PrismaCore to search POIs" : "Filter POIs by name"}
+              style={{ background: "#0d0d14", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 6, padding: "6px 9px", minWidth: 155, opacity: prismaConfigured ? 1 : 0.65 }}
+            />
+            {poiSearch && (
+              <button type="button" aria-label="Clear POI search" onClick={() => setPoiSearch("")} style={{ background: "#334155", color: "#e2e8f0", border: 0, borderRadius: 6, padding: "6px 9px", cursor: "pointer" }}>Clear</button>
+            )}
+          </div>
+          <details className="toolbar-group map-filter-details">
+            <summary>Filters</summary>
+            <div className="filter-detail-content">
         <label
           style={{
             display: "flex",
@@ -886,8 +909,6 @@ export default function LiveMapClient() {
           />
           Show all player trails
         </label>
-          </div>
-          <div className="toolbar-group">
         <label
           style={{
             display: "flex",
@@ -945,25 +966,6 @@ export default function LiveMapClient() {
           />
           Show land claims ({claims.length})
         </label>
-        <input
-          aria-label="Search POIs by name"
-          placeholder={prismaConfigured ? "Search POIs by name…" : "POI search unavailable"}
-          value={poiSearch}
-          onChange={(event) => setPoiSearch(event.target.value)}
-          disabled={!prismaConfigured}
-          title={!prismaConfigured ? "Configure PrismaCore to search POIs" : "Filter POIs by name"}
-          style={{ background: "#0d0d14", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 6, padding: "6px 9px", minWidth: 170, opacity: prismaConfigured ? 1 : 0.65 }}
-        />
-        {poiSearch && (
-          <button
-            type="button"
-            aria-label="Clear POI search"
-            onClick={() => setPoiSearch("")}
-            style={{ background: "#334155", color: "#e2e8f0", border: 0, borderRadius: 6, padding: "6px 9px", cursor: "pointer" }}
-          >
-            Clear
-          </button>
-        )}
         {prismaConfigured && (
           <>
             <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#38bdf8", fontSize: 12, whiteSpace: "nowrap" }}>
@@ -991,7 +993,8 @@ export default function LiveMapClient() {
             </select>
           </>
         )}
-          </div>
+            </div>
+          </details>
           <div className="toolbar-group" style={{ flex: 1, minWidth: 260 }}>
         <select
           aria-label="Player history timeframe"
