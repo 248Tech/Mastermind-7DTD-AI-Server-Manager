@@ -9,6 +9,7 @@ import { CreateJobDto } from './dto/create-job.dto';
 import { JwtAuthGuard } from '../server-instances/guards/jwt-auth.guard';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
 import type { RequestWithUser } from '../server-instances/guards/jwt-auth.guard';
+import { RequireOrgRoleGuard, RequireOrgRoles } from '../server-instances/guards/require-org-role.guard';
 
 @Controller('api/orgs/:orgId/jobs')
 @UseGuards(JwtAuthGuard, OrgMemberGuard)
@@ -19,6 +20,8 @@ export class JobsController {
   ) {}
 
   @Post('mod-upload')
+  @UseGuards(RequireOrgRoleGuard)
+  @RequireOrgRoles('admin', 'operator')
   @UseInterceptors(FileInterceptor('file', { limits: { files: 1, fileSize: 256 * 1024 * 1024 } }))
   async uploadMod(
     @Param('orgId') orgId: string,
@@ -61,6 +64,8 @@ export class JobsController {
 
   /** Create and enqueue a new job for a server instance. */
   @Post()
+  @UseGuards(RequireOrgRoleGuard)
+  @RequireOrgRoles('admin', 'operator')
   async create(
     @Param('orgId') orgId: string,
     @Req() req: RequestWithUser,
@@ -85,7 +90,7 @@ export class JobsController {
   ) {
     const take = limit ? Math.min(100, parseInt(limit, 10) || 20) : 20;
     const jobs = await this.prisma.job.findMany({
-      where: { orgId, type: { not: 'PLAYER_LIST_SYNC' }, ...(serverInstanceId ? { serverInstanceId } : {}) },
+      where: { orgId, NOT: { OR: [{ type: 'PLAYER_LIST_SYNC' }, { type: 'RCON', payload: { path: ['purpose'], equals: 'inventory_snapshot' } }, { type: 'RCON', payload: { path: ['purpose'], equals: 'shop_grant' } }] }, ...(serverInstanceId ? { serverInstanceId } : {}) },
       orderBy: { createdAt: 'desc' },
       take,
       include: {

@@ -1,8 +1,10 @@
 # Folder Structure
 
+As of 2026-08-18. Older design docs may still mention Tailwind/shadcn; the live web UI uses Next.js App Router and inline styles.
+
 ```
 Mastermind-7DTD-AI-Server-Manager/
-├── control-plane/                 # NestJS
+├── control-plane/                 # NestJS API
 │   └── src/
 │       ├── app.module.ts
 │       ├── auth/
@@ -10,47 +12,38 @@ Mastermind-7DTD-AI-Server-Manager/
 │       ├── hosts/
 │       ├── jobs/
 │       ├── scheduler/
-│       ├── events/
 │       ├── alerts/
-│       ├── game-adapters/
+│       ├── player-auth/
+│       ├── donations/
+│       ├── prismacore/
+│       ├── allocs/
+│       ├── players/
+│       ├── logs/
+│       ├── health-monitor/
 │       ├── websocket/
-│       ├── discord-bot/
-│       └── api/
-├── web/                           # Next.js + Tailwind + shadcn
+│       └── prisma.service.ts
+├── web/                           # Next.js App Router
 │   └── src/
 │       ├── app/
 │       │   ├── layout.tsx
 │       │   ├── page.tsx
 │       │   ├── (auth)/login/
-│       │   └── (dashboard)/
-│       │       ├── dashboard/
-│       │       ├── hosts/
-│       │       ├── jobs/
-│       │       ├── schedules/
-│       │       ├── alerts/
-│       │       └── settings/
+│       │   ├── (dashboard)/       # staff: live-map, players, donator-shop, purchases, …
+│       │   ├── player/            # portal: map, profile, shop, cart
+│       │   └── api/               # BFFs: live-map, player-map, player-auth, donations
 │       ├── components/
-│       │   └── ui/
-│       ├── hooks/
 │       └── lib/
-├── agent/                         # Go
-│   ├── main.go
-│   └── internal/
-│       ├── client/
-│       ├── runner/
-│       ├── policy/
-│       ├── heartbeat/
-│       ├── jobs/
-│       ├── games/
-│       └── stream/
+├── agent/                         # Go host agent
+├── discord-bot/
 ├── infra/
 │   ├── docker-compose.yml
-│   └── agent/
-│       └── systemd/
+│   ├── .env.example
+│   └── prismacore/
 ├── docs/
-│   ├── prd-lite.md
 │   ├── architecture.md
-│   ├── module-breakdown.md
-│   └── folder-structure.md
-└── prompts/                       # AI/ops prompts (optional)
+│   ├── allocs.md
+│   ├── prismacore.md
+│   ├── DIGITALOCEAN_DEPLOYMENT.md
+│   └── release-unreleased-2026-08-18-context.md
+└── human/user-guide.md
 ```

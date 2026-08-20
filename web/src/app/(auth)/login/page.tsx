@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, AuthResponse } from '../../../lib/api';
 import { saveAuth } from '../../../lib/auth';
@@ -11,7 +11,30 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+  const [mathPrompt,setMathPrompt]=useState('Loading challenge…');
+  const [mathChallengeToken,setMathChallengeToken]=useState('');
+  const [mathAnswer,setMathAnswer]=useState('');
+  const [recaptchaSiteKey,setRecaptchaSiteKey]=useState('');
+  const [recaptchaEnabled,setRecaptchaEnabled]=useState(false);
+  const recaptchaHost=useRef<HTMLDivElement>(null);
+  const recaptchaWidget=useRef<number|null>(null);
+
+  async function loadSecurityChallenge(){
+    const challenge=await api.get<{mathPrompt:string;mathChallengeToken:string;recaptchaEnabled:boolean;recaptchaSiteKey?:string}>('/api/auth/login-security');
+    setMathPrompt(challenge.mathPrompt);setMathChallengeToken(challenge.mathChallengeToken);setMathAnswer('');setRecaptchaEnabled(challenge.recaptchaEnabled);setRecaptchaSiteKey(challenge.recaptchaSiteKey||'');
+    if(recaptchaWidget.current!==null)window.grecaptcha?.reset(recaptchaWidget.current);
+  }
+  useEffect(()=>{void loadSecurityChallenge().catch(()=>setError('Could not load the sign-in security challenge.'));},[]);
+  useEffect(()=>{
+    if(!recaptchaEnabled||!recaptchaSiteKey||!recaptchaHost.current)return;
+    let cancelled=false;
+    const render=()=>{if(cancelled||!recaptchaHost.current||!window.grecaptcha||recaptchaWidget.current!==null)return;recaptchaWidget.current=window.grecaptcha.render(recaptchaHost.current,{sitekey:recaptchaSiteKey,theme:'dark'});};
+    const existing=document.querySelector<HTMLScriptElement>('script[data-mastermind-recaptcha]');
+    if(existing)render();else{const script=document.createElement('script');script.src='https://www.google.com/recaptcha/api.js?render=explicit';script.async=true;script.defer=true;script.dataset.mastermindRecaptcha='1';script.onload=render;document.head.appendChild(script);}
+    const timer=setInterval(render,250);return()=>{cancelled=true;clearInterval(timer);};
+  },[recaptchaEnabled,recaptchaSiteKey]);
 
   const inputStyle: React.CSSProperties = {
     padding: '0.6rem 0.875rem',
@@ -28,12 +51,29 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
+    setNotice('');
     setLoading(true);
     try {
-      const res = await api.post<AuthResponse>(
+      const recaptchaToken=recaptchaEnabled&&recaptchaWidget.current!==null?window.grecaptcha?.getResponse(recaptchaWidget.current)||'':'';
+      const res = await api.post<AuthResponse | { verification_required: true; email: string } | { approval_required: true; email: string } | { registration_received: true }>(
         mode === 'login' ? '/api/auth/login' : '/api/auth/register',
-        { email, password, ...(mode === 'register' ? { name } : {}) },
+        mode==='login'?{email,password,mathChallengeToken,mathAnswer,recaptchaToken}:{email,password,name},
       );
+      if ('verification_required' in res) {
+        setNotice(`Check ${res.email} for a confirmation link before signing in.`);
+        setMode('login');
+        return;
+      }
+      if ('approval_required' in res) {
+        setNotice(`Your email is confirmed. An administrator must approve ${res.email} before you can sign in.`);
+        setMode('login');
+        return;
+      }
+      if ('registration_received' in res) {
+        setNotice('Registration received. If this is a new account, complete email confirmation and wait for administrator approval.');
+        setMode('login');
+        return;
+      }
       saveAuth(res.access_token, res.userId, res.orgId);
       router.push('/dashboard');
     } catch (err: unknown) {
@@ -43,9 +83,18 @@ export default function LoginPage() {
       } else {
         setError(msg);
       }
+      if(mode==='login')await loadSecurityChallenge().catch(()=>undefined);
     } finally {
       setLoading(false);
     }
+  }
+
+  async function resendVerification() {
+    if (!email.trim()) return;
+    setLoading(true); setError(''); setNotice('');
+    try { await api.post('/api/auth/resend-verification',{email});setNotice('If this address has a pending account, a new confirmation email has been sent.'); }
+    catch(err){setError(err instanceof Error?err.message:'Could not resend confirmation email');}
+    finally{setLoading(false);}
   }
 
   return (
@@ -174,6 +223,9 @@ export default function LoginPage() {
             />
           </div>
 
+          {mode==='login'&&<div><label style={{display:'block',fontSize:'.8rem',color:'#94a3b8',marginBottom:'.375rem',fontWeight:500}}>Security check: {mathPrompt}</label><input inputMode="numeric" autoComplete="off" value={mathAnswer} onChange={e=>setMathAnswer(e.target.value)} required placeholder="Answer" style={inputStyle}/></div>}
+          {mode==='login'&&recaptchaEnabled&&<div ref={recaptchaHost} style={{minHeight:78,overflow:'hidden'}}/>}
+
           {error && (
             <div style={{
               background: 'rgba(239,68,68,0.08)',
@@ -186,10 +238,11 @@ export default function LoginPage() {
               {error}
             </div>
           )}
+          {notice&&<div style={{background:'rgba(34,197,94,.08)',border:'1px solid rgba(34,197,94,.25)',borderRadius:6,padding:'.5rem .75rem',color:'#4ade80',fontSize:'.85rem'}}>{notice}</div>}
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading||(mode==='login'&&!mathChallengeToken)}
             style={{
               padding: '0.65rem',
               background: loading ? '#3f3f52' : 'linear-gradient(135deg, #6366f1 0%, #818cf8 100%)',
@@ -205,24 +258,12 @@ export default function LoginPage() {
           >
             {loading ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
           </button>
+          {mode==='login'&&<button type="button" disabled={loading||!email.trim()} onClick={()=>void resendVerification()} style={{padding:'.5rem',background:'transparent',color:'#818cf8',border:'none',cursor:'pointer',fontSize:'.8rem'}}>Resend confirmation email</button>}
         </form>
 
-        <div style={{ marginTop: '1.5rem', borderTop: '1px solid #1e1e2a', paddingTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
-          <p style={{ margin: 0, fontSize: '0.75rem', color: '#3f3f52' }}>
-            Default: <code style={{ color: '#64748b', fontFamily: 'monospace' }}>admin@mastermind.local</code>
-          </p>
-          <button
-            type="button"
-            onClick={() => { setEmail('admin@mastermind.local'); setPassword('changeme'); setMode('login'); }}
-            style={{
-              flexShrink: 0, padding: '0.3rem 0.625rem', background: 'transparent',
-              border: '1px solid #252532', borderRadius: 5, color: '#64748b',
-              fontSize: '0.72rem', cursor: 'pointer',
-            }}
-          >
-            Fill in
-          </button>
-        </div>
+        <p style={{ margin: '1.5rem 0 0', borderTop: '1px solid #1e1e2a', paddingTop: '1rem', fontSize: '0.75rem', color: '#64748b' }}>
+          New dashboard accounts require email confirmation and administrator approval.
+        </p>
       </div>
     </div>
   );

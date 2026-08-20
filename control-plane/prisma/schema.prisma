@@ -27,6 +27,16 @@ model Org {
   modAiProvider         String   @default("codex") @map("mod_ai_provider")
   kimiApiKeyEncrypted   String?  @map("kimi_api_key_encrypted") @db.Text
   kimiModel             String   @default("kimi-for-coding") @map("kimi_model")
+  cloudflareApiTokenEncrypted String? @map("cloudflare_api_token_encrypted") @db.Text
+  digitalOceanApiTokenEncrypted String? @map("digitalocean_api_token_encrypted") @db.Text
+  mailgunApiKeyEncrypted String? @map("mailgun_api_key_encrypted") @db.Text
+  mailgunDomain          String? @map("mailgun_domain")
+  mailgunFromEmail       String? @map("mailgun_from_email")
+  mailgunRegion          String  @default("us") @map("mailgun_region")
+  recaptchaSiteKey       String? @map("recaptcha_site_key")
+  recaptchaSecretEncrypted String? @map("recaptcha_secret_encrypted") @db.Text
+  stripeSecretKeyEncrypted String? @map("stripe_secret_key_encrypted") @db.Text
+  stripeWebhookSecretEncrypted String? @map("stripe_webhook_secret_encrypted") @db.Text
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
@@ -47,6 +57,8 @@ model Org {
   serverLogs       ServerLog[]
   healthSamples    HealthSample[]
   players          Player[]
+  donations        Donation[]
+  shopItems        ShopItem[]
 }
 
 model User {
@@ -54,6 +66,11 @@ model User {
   email        String   @unique
   name         String?
   passwordHash String?  @map("password_hash")
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  emailVerificationSentAt DateTime? @map("email_verification_sent_at")
+  approvedAt   DateTime? @map("approved_at")
+  approvedById String?   @map("approved_by_id")
+  authVersion  Int       @default(1) @map("auth_version")
   createdAt    DateTime @default(now()) @map("created_at")
 
   userOrgs          UserOrg[]
@@ -66,6 +83,31 @@ model User {
   pairingTokens     PairingToken[]
   commandMacrosCreated CommandMacro[]
   schedulesCreated    Schedule[]
+}
+
+// Persistent, privacy-preserving authentication throttle buckets. Keys are
+// HMACs of normalized account/IP dimensions; raw client IPs are never stored.
+model AuthRateLimit {
+  keyHash         String    @id @map("key_hash")
+  failures        Int       @default(0)
+  windowStartedAt DateTime  @map("window_started_at")
+  blockedUntil    DateTime? @map("blocked_until")
+  lockoutLevel    Int       @default(0) @map("lockout_level")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([updatedAt])
+  @@map("auth_rate_limits")
+}
+
+// Lifetime public-registration quota. Only an HMAC of the source IP is kept;
+// raw registration addresses are never stored in this table.
+model RegistrationIpQuota {
+  ipHash            String   @id @map("ip_hash")
+  registrationCount Int      @default(0) @map("registration_count")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("registration_ip_quotas")
 }
 
 model Role {
@@ -185,6 +227,7 @@ model ServerInstance {
   schedules       Schedule[]
   serverLogs      ServerLog[]
   players         Player[]
+  donations       Donation[]
   protectionSettings ServerProtectionSettings?
 
   @@index([orgId])
@@ -260,16 +303,28 @@ model Player {
   playerKills             Int       @default(0) @map("player_kills")
   deaths                  Int       @default(0)
   level                   Int       @default(1)
+  lastPosX                Float?    @map("last_pos_x")
+  lastPosY                Float?    @map("last_pos_y")
+  lastPosZ                Float?    @map("last_pos_z")
+  lastLogoutAt            DateTime? @map("last_logout_at")
+  lastInventory           Json?     @map("last_inventory")
+  lastInventoryAt         DateTime? @map("last_inventory_at")
+  supporter               Boolean   @default(false)
+  supporterSince          DateTime? @map("supporter_since")
+  totalDonatedCents       Int       @default(0) @map("total_donated_cents")
+  portalPasswordHash      String?   @map("portal_password_hash")
   firstSeenAt             DateTime  @default(now()) @map("first_seen_at")
   lastSeenAt              DateTime  @default(now()) @map("last_seen_at")
 
   org            Org            @relation(fields: [orgId], references: [id], onDelete: Cascade)
   serverInstance ServerInstance @relation(fields: [serverInstanceId], references: [id], onDelete: Cascade)
   sessions       PlayerSession[]
+  donations      Donation[]
 
   @@unique([serverInstanceId, identityKey])
   @@index([orgId, lastSeenAt(sort: Desc)])
   @@index([serverInstanceId, online])
+  @@index([serverInstanceId, name])
 }
 
 model PlayerSession {
@@ -282,6 +337,87 @@ model PlayerSession {
   player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   @@index([playerId, startedAt(sort: Desc)])
+}
+
+model Donation {
+  id                      String    @id @default(cuid())
+  orgId                   String    @map("org_id")
+  serverInstanceId        String    @map("server_instance_id")
+  playerId                String    @map("player_id")
+  steamId                 String    @map("steam_id")
+  amountCents             Int       @map("amount_cents")
+  refundedCents           Int       @default(0) @map("refunded_cents")
+  currency                String    @default("usd")
+  status                  String
+  stripeCheckoutSessionId String    @unique @map("stripe_checkout_session_id")
+  stripePaymentIntentId   String?   @map("stripe_payment_intent_id")
+  shopItemId              String?   @map("shop_item_id")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  completedAt             DateTime? @map("completed_at")
+  refundedAt              DateTime? @map("refunded_at")
+
+  org            Org            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  serverInstance ServerInstance @relation(fields: [serverInstanceId], references: [id], onDelete: Cascade)
+  player         Player         @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  shopItem       ShopItem?      @relation(fields: [shopItemId], references: [id], onDelete: SetNull)
+  lines          DonationLine[]
+
+  @@index([playerId, createdAt(sort: Desc)])
+  @@index([orgId, createdAt(sort: Desc)])
+  @@index([stripePaymentIntentId])
+  @@index([shopItemId])
+}
+
+model ShopItem {
+  id          String   @id @default(cuid())
+  orgId       String   @map("org_id")
+  name        String
+  description String   @default("")
+  priceCents  Int      @map("price_cents")
+  currency    String   @default("usd")
+  imageExt    String?  @map("image_ext")
+  imageMime   String?  @map("image_mime")
+  grantItemName String? @map("grant_item_name")
+  grantQuantity Int     @default(1) @map("grant_quantity")
+  grantQuality  Int?    @map("grant_quality")
+  chatColor     String? @map("chat_color")
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  org       Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  donations Donation[]
+  donationLines DonationLine[]
+
+  @@index([orgId, active, sortOrder])
+}
+
+model DonationLine {
+  id          String   @id @default(cuid())
+  donationId  String   @map("donation_id")
+  shopItemId  String?  @map("shop_item_id")
+  itemName    String   @map("item_name")
+  amountCents Int      @map("amount_cents")
+  quantity    Int      @default(1)
+  grantItemName String?  @map("grant_item_name")
+  grantQuantity Int?     @map("grant_quantity")
+  grantQuality  Int?     @map("grant_quality")
+  chatColor     String?  @map("chat_color")
+  grantStatus   String   @default("none") @map("grant_status")
+  chatColorStatus String @default("none") @map("chat_color_status")
+  grantAttempts Int      @default(0) @map("grant_attempts")
+  grantQueuedAt DateTime? @map("grant_queued_at")
+  grantedAt     DateTime? @map("granted_at")
+  grantError    String?  @map("grant_error")
+
+  donation Donation  @relation(fields: [donationId], references: [id], onDelete: Cascade)
+  shopItem ShopItem? @relation(fields: [shopItemId], references: [id], onDelete: SetNull)
+
+  @@index([donationId])
+  @@index([shopItemId])
+  @@index([grantStatus])
+  @@index([chatColorStatus])
 }
 
 model Schedule {

@@ -12,7 +12,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       POSTGRES_DB: ${POSTGRES_DB:-mastermind}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -25,7 +25,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -41,7 +41,7 @@ services:
       target: runner
     restart: unless-stopped
     ports:
-      - "${CP_PORT:-3001}:3001"
+      - "${BIND_ADDRESS:-127.0.0.1}:${CP_PORT:-3001}:3001"
     environment:
       NODE_ENV: production
       PORT: 3001
@@ -50,8 +50,26 @@ services:
       REDIS_PORT: "6379"
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       JWT_AGENT_SECRET: ${JWT_AGENT_SECRET:-change-me-in-production}
+      PLAYER_JWT_SECRET: ${PLAYER_JWT_SECRET:-${JWT_SECRET:-change-me-in-production}}
+      PLAYER_PORTAL_SERVER_ID: ${PLAYER_PORTAL_SERVER_ID:-}
+      EMAIL_VERIFICATION_SECRET: ${EMAIL_VERIFICATION_SECRET:-${JWT_SECRET:-change-me-in-production}}
       OPENAI_KEY_ENCRYPTION_SECRET: ${OPENAI_KEY_ENCRYPTION_SECRET:-${JWT_SECRET:-change-me-in-production}}
+      PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+      AUTH_RATE_LIMIT_SECRET: ${AUTH_RATE_LIMIT_SECRET:-${JWT_SECRET:-change-me-in-production}}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      PRISMACORE_WEB_URL: ${PRISMACORE_WEB_URL:-}
+      PRISMACORE_API_USER: ${PRISMACORE_API_USER:-}
+      PRISMACORE_API_PASSWORD: ${PRISMACORE_API_PASSWORD:-}
+      SEVENDTD_WEB_URL: ${SEVENDTD_WEB_URL:-http://host.docker.internal:8080}
+      SEVENDTD_WEB_API_TOKEN_NAME: ${SEVENDTD_WEB_API_TOKEN_NAME:-mastermind}
+      SEVENDTD_WEB_API_SECRET: ${SEVENDTD_WEB_API_SECRET:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-Administrator}
       MOD_UPLOAD_DIR: /var/lib/mastermind/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - mod_uploads:/var/lib/mastermind/uploads
     depends_on:
@@ -60,7 +78,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3001/health"]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3001/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -76,16 +94,20 @@ services:
         NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-http://localhost:3001}
     restart: unless-stopped
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
       PROFILE_EDITOR_INTERNAL_URL: http://profile-editor:8000
       CONTROL_PLANE_INTERNAL_URL: http://control-plane:3001
-      SEVENDTD_WEB_URL: http://host.docker.internal:8080
+      PLAYER_SESSION_SECRET: ${PLAYER_SESSION_SECRET:-${JWT_SECRET:-change-me-in-production}}
+      PLAYER_PORTAL_SERVER_ID: ${PLAYER_PORTAL_SERVER_ID:-}
+      # Local installs use the Docker host; split-host deployments can point
+      # these at the game host's private WireGuard address.
+      SEVENDTD_WEB_URL: ${SEVENDTD_WEB_URL:-http://host.docker.internal:8080}
       SEVENDTD_WEB_API_TOKEN_NAME: ${SEVENDTD_WEB_API_TOKEN_NAME:-mastermind}
       SEVENDTD_WEB_API_SECRET: ${SEVENDTD_WEB_API_SECRET:-}
-      SEVENDTD_TELNET_HOST: host.docker.internal
-      SEVENDTD_TELNET_PORT: 18081
+      SEVENDTD_TELNET_HOST: ${SEVENDTD_TELNET_HOST:-host.docker.internal}
+      SEVENDTD_TELNET_PORT: ${SEVENDTD_TELNET_PORT:-18081}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -93,6 +115,7 @@ services:
       - /opt/7dtd/userdata/Saves/Rotterdam/Builder:/7dtd-save:ro
       - /opt/7dtd/userdata/GeneratedWorlds/Rotterdam/map_info.xml:/7dtd-world/map_info.xml:ro
       - /opt/7dtd/logs/server.log:/7dtd-logs/server.log:ro
+      - /opt/7dtd/server/Data/ItemIcons:/7dtd-item-icons:ro
     depends_on:
       control-plane:
         condition: service_healthy
@@ -104,6 +127,22 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  # Outbound-only public HTTPS ingress for Mastermind. The remotely managed
+  # tunnel token lives in a root-owned, gitignored file and is not exposed in
+  # the container command line or environment.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    user: "0:0"
+    command: ["tunnel", "--no-autoupdate", "run", "--token-file", "/run/secrets/cloudflare_tunnel_token"]
+    secrets:
+      - cloudflare_tunnel_token
+    depends_on:
+      web:
+        condition: service_healthy
+      control-plane:
+        condition: service_healthy
 
   # Makes host-loopback-only 7DTD telnet reachable solely through Docker's
   # bridge address. Port 18081 is not bound to a LAN or public interface.
@@ -154,3 +193,7 @@ volumes:
   postgres_data:
   redis_data:
   mod_uploads:
+
+secrets:
+  cloudflare_tunnel_token:
+    file: ./secrets/cloudflare_tunnel_token

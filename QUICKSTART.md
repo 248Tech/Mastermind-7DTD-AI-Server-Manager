@@ -36,8 +36,10 @@ All services in containers, no local Node/Go required.
 # 1. Clone & enter
 git clone <repo-url> && cd Mastermind-7DTD-AI-Server-Manager
 
-# 2. Copy env (defaults work for local)
+# 2. Copy env and choose the first administrator
 cp infra/.env.example infra/.env
+# Edit infra/.env and set BOOTSTRAP_ADMIN_EMAIL and
+# BOOTSTRAP_ADMIN_PASSWORD before the first start.
 
 # 3. Start everything
 cd infra && docker compose up -d
@@ -46,7 +48,8 @@ cd infra && docker compose up -d
 open http://localhost:3000
 ```
 
-**Login:** `admin@mastermind.local` / `changeme`
+**Login:** use the bootstrap administrator credentials you placed in
+`infra/.env`. There is no built-in default password.
 
 > The control plane automatically runs migrations and seeds on startup.
 > First boot takes ~30 s while images build.
@@ -86,7 +89,8 @@ cp control-plane/.env.example control-plane/.env
 cp web/.env.example web/.env.local
 ```
 
-The defaults work for local dev (adjust secrets for production).
+Set `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` before seeding.
+Replace every example secret before production use.
 
 ### Step 4 — Migrate + seed
 
@@ -111,7 +115,7 @@ cd web && pnpm dev
 
 ```
 http://localhost:3000
-admin@mastermind.local / changeme
+# Sign in with the bootstrap administrator from your .env file.
 ```
 
 ---
@@ -358,15 +362,19 @@ make doctor     # Check required tools are installed
 
 ---
 
-## Default Credentials
+## First administrator
 
-| Field | Value |
-|-------|-------|
-| Email | `admin@mastermind.local` |
-| Password | `changeme` |
-| Org slug | `default` |
+Set these in `infra/.env` before the first start:
 
-**Change the password after first login in a production environment.**
+```env
+BOOTSTRAP_ADMIN_EMAIL=you@example.com
+BOOTSTRAP_ADMIN_PASSWORD=use-a-unique-password-of-at-least-12-characters
+BOOTSTRAP_ADMIN_NAME=Administrator
+```
+
+The seed promotes that account to administrator in the `default`
+organization. Public sign-ups are created as pending viewers and cannot open
+the dashboard until an administrator approves them from **Accounts**.
 
 ---
 

@@ -21,7 +21,7 @@ export default function Home() {
       router.replace('/dashboard');
       return;
     }
-    fetch(`${CONTROL_PLANE_URL}/health`)
+    fetch(`${CONTROL_PLANE_URL}/api/health`)
       .then((res) => res.json())
       .then((data) => setHealth(data))
       .catch(() => setHealth({ error: 'unreachable' }));

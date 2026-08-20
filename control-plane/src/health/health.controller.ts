@@ -2,8 +2,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Controller, Get, NotFoundException, Param, Query, Res } from '@nestjs/common';
 import { Response } from 'express';
+import { sanitizeInstallToken, sanitizeInstallUrl } from '../common/install-script';
 
-const pkg = { name: 'mastermind-control-plane', version: '0.0.11' };
+const pkg = { name: 'mastermind-control-plane', version: '0.0.12' };
 
 @Controller()
 export class HealthController {
@@ -68,7 +69,7 @@ export class HealthController {
     };
   }
 
-  @Get('health')
+  @Get(['health', 'api/health'])
   getHealth() {
     return { status: 'ok', service: 'control-plane', at: new Date().toISOString() };
   }
@@ -89,9 +90,9 @@ export class HealthController {
     @Query('name') hostName = '',
     @Res() res: Response,
   ) {
-    const safeName = hostName.replace(/[^a-zA-Z0-9_-]/g, '') || 'my-server';
-    const safeCpUrl = cpUrl || 'http://CHANGE_ME:3001';
-    const safeToken = token || 'MISSING_TOKEN';
+    const safeName = hostName.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) || 'my-server';
+    const safeCpUrl = sanitizeInstallUrl(cpUrl) || 'http://CHANGE_ME:3001';
+    const safeToken = sanitizeInstallToken(token);
 
     const script = `#!/usr/bin/env bash
 # Mastermind Agent — auto-generated setup script

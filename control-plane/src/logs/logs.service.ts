@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma.service';
 import { reconcileNameFallback } from '../players/player-identity';
 import { AlertsService } from '../alerts/alerts.service';
 import { JobsQueueService } from '../jobs/jobs-queue.service';
+import { pruneMap } from '../common/ttl-map';
 
 type ModerationAction = 'log'|'warn'|'kick';
 type BadWordRule = { word:string; action:ModerationAction };
@@ -16,6 +17,7 @@ export class LogsService {
   private readonly chatLineBuffers = new Map<string, string>();
   private readonly chatSamples = new Map<string, number[]>();
   private readonly moderationCooldown = new Map<string, number>();
+  private lastMapPrune = 0;
   constructor(private readonly prisma: PrismaService, private readonly alerts: AlertsService, private readonly jobsQueue: JobsQueueService) {}
 
   async append(hostId: string, serverInstanceId: string, content: string) {
@@ -125,7 +127,7 @@ export class LogsService {
   }
 
   private async moderateChat(orgId:string,serverInstanceId:string,playerId:string,playerName:string,message:string):Promise<boolean>{
-    const cfg=await this.getChatModeration(orgId,serverInstanceId);if(!cfg.enabled)return false;const now=Date.now();const key=`${serverInstanceId}:${playerId}`;const cutoff=now-cfg.floodWindowSeconds*1000;const samples=(this.chatSamples.get(key)??[]).filter(t=>t>=cutoff);samples.push(now);this.chatSamples.set(key,samples);
+    const cfg=await this.getChatModeration(orgId,serverInstanceId);if(!cfg.enabled)return false;const now=Date.now();this.pruneModerationState(now);const key=`${serverInstanceId}:${playerId}`;const cutoff=now-cfg.floodWindowSeconds*1000;const samples=(this.chatSamples.get(key)??[]).filter(t=>t>=cutoff);samples.push(now);this.chatSamples.set(key,samples);
     const muted=cfg.mutedPlayers.some(p=>p.playerId===playerId);const bad=cfg.badWordRules.find(rule=>message.toLowerCase().includes(rule.word));const flood=cfg.floodEnabled&&samples.length>cfg.floodMessages;if(!muted&&!bad&&!flood)return false;
     const reason=muted?'Player is muted':bad?`Blocked word: ${bad.word}`:'Chat flooding';const action=muted?'kick':bad?bad.action:cfg.floodAction;
     await this.prisma.event.create({data:{orgId,sourceType:'server_instance',sourceId:serverInstanceId,eventType:'chat_moderation_action',payload:{playerId,playerName,message,reason,action}}});
@@ -220,7 +222,7 @@ export class LogsService {
         const started = existing.currentSessionStartedAt;
         const duration = started ? Math.max(0, Math.floor((now.getTime() - started.getTime()) / 1000)) : 0;
         await this.prisma.$transaction([
-          this.prisma.player.update({ where: { id: existing.id }, data: { online: false, lastSeenAt: now, currentSessionStartedAt: null, lifetimeSeconds: { increment: duration } } }),
+          this.prisma.player.update({ where: { id: existing.id }, data: { online: false, lastSeenAt: now, currentSessionStartedAt: null, lastLogoutAt: now, lifetimeSeconds: { increment: duration } } }),
           this.prisma.playerSession.updateMany({ where: { playerId: existing.id, endedAt: null }, data: { endedAt: now, durationSeconds: duration } }),
         ]);
         await this.alerts.sendMatchingRules('PLAYER_DISCONNECTED', { orgId, serverInstanceId, serverInstanceName, playerName: name, steamId: steam ?? existing.steamId ?? undefined, eosId: eos ?? existing.eosId ?? undefined, sessionSeconds: duration }).catch(() => undefined);
@@ -318,6 +320,21 @@ export class LogsService {
     await this.prisma.serverLog.deleteMany({
       where: { orgId, createdAt: { lt: new Date(now - org.logRetentionDays * 86_400_000) } },
     });
+    await this.prisma.event.deleteMany({
+      where: {
+        orgId,
+        createdAt: { lt: new Date(now - org.logRetentionDays * 86_400_000) },
+        eventType: { in: ['player_chat', 'player_chat_relay_pending', 'log_keyword_match', 'chat_moderation_action'] },
+      },
+    });
+  }
+
+  private pruneModerationState(now: number) {
+    if (now - this.lastMapPrune < 60_000) return;
+    this.lastMapPrune = now;
+    const sampleCutoff = now - 10 * 60_000;
+    pruneMap(this.chatSamples, (samples) => samples.some((t) => t >= sampleCutoff));
+    pruneMap(this.moderationCooldown, (until) => until >= now);
   }
 
   async list(orgId: string, serverInstanceId?: string, limit = 250, afterId?: string) {

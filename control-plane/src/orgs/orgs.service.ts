@@ -2,10 +2,52 @@ import { Injectable, ForbiddenException, ConflictException, NotFoundException } 
 import { PrismaService } from '../prisma.service';
 import { makePasswordHash } from '../auth/auth.service';
 import {decryptOpenAiKey,encryptOpenAiKey} from './openai-crypto';
+import { encryptIntegrationSecret, decryptIntegrationSecret } from './integration-crypto';
+import { MailgunService } from '../mailgun/mailgun.service';
+import { AuthRateLimitService, LOGIN_LOCKOUT_POLICY } from '../auth/auth-rate-limit.service';
+import { parseStripeSecretKey, parseStripeWebhookSecret } from '../donations/donations.stripe';
+
+function publicStripeWebhookUrl() {
+  const origin = (process.env.PUBLIC_WEB_URL || '').replace(/\/$/, '');
+  return origin ? `${origin}/api/donations/stripe/webhook` : '/api/donations/stripe/webhook';
+}
 
 @Injectable()
 export class OrgsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly mailgun: MailgunService, private readonly authRateLimit:AuthRateLimitService) {}
+
+  async getSecuritySettings(orgId:string) {
+    const org=await this.prisma.org.findUnique({where:{id:orgId},select:{recaptchaSiteKey:true,recaptchaSecretEncrypted:true}});
+    if(!org)throw new NotFoundException('Organization not found');
+    const memberships=await this.prisma.userOrg.findMany({where:{orgId},include:{user:{select:{id:true,email:true,name:true}},role:true},orderBy:{createdAt:'asc'}});
+    const accounts=await Promise.all(memberships.map(async membership=>{
+      const state=await this.authRateLimit.getAccountState(membership.user.email);
+      return{id:membership.user.id,email:membership.user.email,name:membership.user.name,role:membership.role.name,failedAttempts:state.failures,lockoutLevel:state.lockoutLevel,blockedUntil:state.blockedUntil,locked:Boolean(state.blockedUntil&&state.blockedUntil>new Date()),attemptsRemaining:Math.max(0,3-state.failures)};
+    }));
+    return{attemptsPerStage:3,lockoutPolicy:LOGIN_LOCKOUT_POLICY,mathChallengeEnabled:true,registrationIpQuotaEnabled:true,registrationIpLimit:2,recaptchaConfigured:Boolean(org.recaptchaSiteKey&&org.recaptchaSecretEncrypted),recaptchaSiteKey:org.recaptchaSiteKey||'',accounts};
+  }
+
+  async saveRecaptchaSettings(orgId:string,userId:string,input:{siteKey:string;secretKey?:string}) {
+    const existing=await this.prisma.org.findUnique({where:{id:orgId},select:{recaptchaSecretEncrypted:true}});
+    if(!existing)throw new NotFoundException('Organization not found');
+    const siteKey=input.siteKey.trim(),secret=input.secretKey?.trim();
+    if(!/^[A-Za-z0-9_-]{20,256}$/.test(siteKey))throw new ConflictException('Enter a valid reCAPTCHA site key');
+    if(!secret&&!existing.recaptchaSecretEncrypted)throw new ConflictException('reCAPTCHA secret key is required');
+    if(secret&&!/^[A-Za-z0-9_-]{10,512}$/.test(secret))throw new ConflictException('Enter a valid reCAPTCHA secret key');
+    await this.prisma.$transaction([
+      this.prisma.org.update({where:{id:orgId},data:{recaptchaSiteKey:siteKey,...(secret?{recaptchaSecretEncrypted:encryptIntegrationSecret(secret)}:{})}}),
+      this.prisma.auditLog.create({data:{orgId,actorId:userId,action:'recaptcha_settings_updated',resourceType:'org',resourceId:orgId,details:{siteKeyReplaced:true,secretReplaced:Boolean(secret)}}}),
+    ]);
+    return{ok:true,configured:true,siteKey};
+  }
+
+  async clearRecaptchaSettings(orgId:string,userId:string) {
+    await this.prisma.$transaction([
+      this.prisma.org.update({where:{id:orgId},data:{recaptchaSiteKey:null,recaptchaSecretEncrypted:null}}),
+      this.prisma.auditLog.create({data:{orgId,actorId:userId,action:'recaptcha_settings_cleared',resourceType:'org',resourceId:orgId}}),
+    ]);
+    return{ok:true,configured:false};
+  }
 
   getProfileEditorCredit(orgId: string) {
     return {
@@ -21,21 +63,27 @@ export class OrgsService {
   }
 
   async getAccounts(orgId: string) {
-    const memberships = await this.prisma.userOrg.findMany({
+    const [memberships, players] = await Promise.all([this.prisma.userOrg.findMany({
       where: { orgId },
-      include: { user: { select: { id: true, email: true, name: true, createdAt: true } }, role: true },
+      include: { user: { select: { id: true, email: true, name: true, createdAt: true, approvedAt: true, emailVerifiedAt: true, passwordHash: true } }, role: true },
       orderBy: { createdAt: 'asc' },
-    });
+    }), this.prisma.player.findMany({ where: { orgId }, select: { name: true, steamId: true } })]);
+    const steamByName = new Map(players.filter(player => player.steamId).map(player => [player.name.trim().toLocaleLowerCase(), player.steamId as string]));
     return memberships.map(membership => ({
       id: membership.user.id,
       email: membership.user.email,
       name: membership.user.name,
       role: membership.role.name,
       createdAt: membership.user.createdAt,
+      approvedAt: membership.user.approvedAt,
+      emailVerifiedAt: membership.user.emailVerifiedAt,
+      signInEnabled: Boolean(membership.user.passwordHash),
+      steamLinked: Boolean(membership.user.name && steamByName.has(membership.user.name.trim().toLocaleLowerCase())),
+      steamIdLast4: membership.user.name ? (steamByName.get(membership.user.name.trim().toLocaleLowerCase()) || '').slice(-4) || null : null,
     }));
   }
 
-  async createAccount(orgId: string, input: { email: string; password: string; name?: string; role: 'operator' | 'viewer' }) {
+  async createAccount(orgId: string, actingUserId: string, input: { email: string; password: string; name?: string; role: 'operator' | 'viewer' }) {
     const email = input.email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
     if (existing) throw new ConflictException('An account with this email already exists');
@@ -45,11 +93,50 @@ export class OrgsService {
         email,
         name: input.name?.trim() || null,
         passwordHash: makePasswordHash(input.password),
+        emailVerifiedAt: new Date(),
+        approvedAt: new Date(),
+        approvedById: actingUserId,
         userOrgs: { create: { orgId, roleId: role.id } },
       },
       select: { id: true, email: true, name: true, createdAt: true },
     });
-    return { ...user, role: role.name };
+    return { ...user, role: role.name, approvedAt: new Date(), emailVerifiedAt: new Date(), signInEnabled: true };
+  }
+
+  async setAccountApproval(orgId: string, accountId: string, actingUserId: string, approved: boolean) {
+    if (accountId === actingUserId) throw new ForbiddenException('You cannot change your own approval status');
+    const [actor, target] = await Promise.all([
+      this.prisma.userOrg.findUnique({ where: { userId_orgId: { userId: actingUserId, orgId } }, include: { role: true } }),
+      this.prisma.userOrg.findUnique({
+        where: { userId_orgId: { userId: accountId, orgId } },
+        include: { role: true, user: { select: { email: true, emailVerifiedAt: true, passwordHash: true, approvedAt: true } } },
+      }),
+    ]);
+    if (actor?.role.name !== 'admin') throw new ForbiddenException('Only organization administrators may approve accounts');
+    if (!target) throw new NotFoundException('Organization account not found');
+    if (target.role.name === 'admin') throw new ForbiddenException('Administrator approval cannot be changed here');
+    if (approved && !target.user.emailVerifiedAt) throw new ConflictException('Email confirmation is required before approval');
+    if (approved && !target.user.passwordHash) throw new ConflictException('Sign-in is disabled for this account');
+    if (Boolean(target.user.approvedAt) === approved) return { ok: true, approvedAt: target.user.approvedAt };
+
+    const approvedAt = approved ? new Date() : null;
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: accountId },
+        data: { approvedAt, approvedById: approved ? actingUserId : null, authVersion: { increment: 1 } },
+      }),
+      this.prisma.auditLog.create({
+        data: {
+          orgId,
+          actorId: actingUserId,
+          action: approved ? 'account_approved' : 'account_access_revoked',
+          resourceType: 'user',
+          resourceId: accountId,
+          details: { targetEmail: target.user.email },
+        },
+      }),
+    ]);
+    return { ok: true, approvedAt };
   }
 
   async deleteAccount(orgId: string, accountId: string, actingUserId: string) {
@@ -68,7 +155,10 @@ export class OrgsService {
       await tx.userServerRole.deleteMany({ where: { userId: accountId, serverInstance: { orgId } } });
       await tx.userOrg.delete({ where: { userId_orgId: { userId: accountId, orgId } } });
       if (membership.user._count.userOrgs === 1) {
-        await tx.user.update({ where: { id: accountId }, data: { passwordHash: null } });
+        await tx.user.update({
+          where: { id: accountId },
+          data: { passwordHash: null, approvedAt: null, approvedById: null, authVersion: { increment: 1 } },
+        });
       }
     });
     return { ok: true, email: membership.user.email, signInDisabled: membership.user._count.userOrgs === 1 };
@@ -86,7 +176,7 @@ export class OrgsService {
     if (!target) throw new NotFoundException('Organization account not found');
     if (target.role.name === 'admin') throw new ForbiddenException('Administrators may reset passwords only for lower-tier accounts');
     await this.prisma.$transaction([
-      this.prisma.user.update({ where: { id: accountId }, data: { passwordHash: makePasswordHash(newPassword) } }),
+      this.prisma.user.update({ where: { id: accountId }, data: { passwordHash: makePasswordHash(newPassword), authVersion: { increment: 1 } } }),
       this.prisma.auditLog.create({ data: { orgId, actorId: actingUserId, action: 'password_reset', resourceType: 'user', resourceId: accountId, details: { targetEmail: target.user.email } } }),
     ]);
     return { ok: true };
@@ -141,12 +231,11 @@ export class OrgsService {
       id: userOrg.org.id,
       name: userOrg.org.name,
       slug: userOrg.org.slug,
-      discordWebhookUrl: userOrg.org.discordWebhookUrl,
-      frigateUrl: userOrg.org.frigateUrl,
-      frigateApiKey: userOrg.org.frigateApiKey,
-      frigateWebhookSecret: userOrg.org.frigateWebhookSecret,
+      discordWebhookUrl: userOrg.role.name === 'admin' ? userOrg.org.discordWebhookUrl : undefined,
+      discordWebhookConfigured: Boolean(userOrg.org.discordWebhookUrl),
+      frigateConfigured: Boolean(userOrg.org.frigateUrl),
       avoidBloodMoonRestart: userOrg.org.avoidBloodMoonRestart,
-      openaiConfigured:Boolean(userOrg.org.openaiApiKeyEncrypted),openaiModel:userOrg.org.openaiModel,modAiProvider:userOrg.org.modAiProvider,kimiConfigured:Boolean(userOrg.org.kimiApiKeyEncrypted),kimiModel:userOrg.org.kimiModel,
+      openaiConfigured:Boolean(userOrg.org.openaiApiKeyEncrypted),openaiModel:userOrg.org.openaiModel,modAiProvider:userOrg.org.modAiProvider,kimiConfigured:Boolean(userOrg.org.kimiApiKeyEncrypted),kimiModel:userOrg.org.kimiModel,cloudflareConfigured:Boolean(userOrg.org.cloudflareApiTokenEncrypted),digitalOceanConfigured:Boolean(userOrg.org.digitalOceanApiTokenEncrypted),mailgunConfigured:Boolean(userOrg.org.mailgunApiKeyEncrypted&&userOrg.org.mailgunDomain&&userOrg.org.mailgunFromEmail),mailgunDomain:userOrg.org.mailgunDomain,mailgunFromEmail:userOrg.org.mailgunFromEmail,mailgunRegion:userOrg.org.mailgunRegion,stripeConfigured:Boolean(userOrg.org.stripeSecretKeyEncrypted),stripeWebhookConfigured:Boolean(userOrg.org.stripeWebhookSecretEncrypted),stripeWebhookUrl:publicStripeWebhookUrl(),
       createdAt: userOrg.org.createdAt,
       updatedAt: userOrg.org.updatedAt,
       memberCount: userOrg.org._count.userOrgs,
@@ -174,12 +263,10 @@ export class OrgsService {
       id: m.org.id,
       name: m.org.name,
       slug: m.org.slug,
-      discordWebhookUrl: m.org.discordWebhookUrl,
-      frigateUrl: m.org.frigateUrl,
-      frigateApiKey: m.org.frigateApiKey,
-      frigateWebhookSecret: m.org.frigateWebhookSecret,
+      discordWebhookConfigured: Boolean(m.org.discordWebhookUrl),
+      frigateConfigured: Boolean(m.org.frigateUrl),
       avoidBloodMoonRestart: m.org.avoidBloodMoonRestart,
-      openaiConfigured:Boolean(m.org.openaiApiKeyEncrypted),openaiModel:m.org.openaiModel,modAiProvider:m.org.modAiProvider,kimiConfigured:Boolean(m.org.kimiApiKeyEncrypted),kimiModel:m.org.kimiModel,
+      openaiConfigured:Boolean(m.org.openaiApiKeyEncrypted),openaiModel:m.org.openaiModel,modAiProvider:m.org.modAiProvider,kimiConfigured:Boolean(m.org.kimiApiKeyEncrypted),kimiModel:m.org.kimiModel,cloudflareConfigured:Boolean(m.org.cloudflareApiTokenEncrypted),digitalOceanConfigured:Boolean(m.org.digitalOceanApiTokenEncrypted),mailgunConfigured:Boolean(m.org.mailgunApiKeyEncrypted&&m.org.mailgunDomain&&m.org.mailgunFromEmail),mailgunDomain:m.org.mailgunDomain,mailgunFromEmail:m.org.mailgunFromEmail,mailgunRegion:m.org.mailgunRegion,stripeConfigured:Boolean(m.org.stripeSecretKeyEncrypted),stripeWebhookConfigured:Boolean(m.org.stripeWebhookSecretEncrypted),stripeWebhookUrl:publicStripeWebhookUrl(),
       createdAt: m.org.createdAt,
       updatedAt: m.org.updatedAt,
       memberCount: m.org._count.userOrgs,
@@ -262,6 +349,109 @@ export class OrgsService {
   }
   async testKimi(orgId:string){const org=await this.prisma.org.findUnique({where:{id:orgId},select:{kimiApiKeyEncrypted:true,kimiModel:true}});if(!org?.kimiApiKeyEncrypted)return{ok:false,error:'Moonshot API key is not configured'};const started=Date.now();try{const response=await fetch('https://api.moonshot.ai/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${decryptOpenAiKey(org.kimiApiKeyEncrypted)}`,'Content-Type':'application/json','User-Agent':'Mastermind-7DTD/0.0.11'},body:JSON.stringify({model:org.kimiModel,messages:[{role:'user',content:'Reply with OK.'}],max_tokens:16,temperature:0}),signal:AbortSignal.timeout(30000)});if(!response.ok){const data=await response.json().catch(()=>({})) as {error?:{message?:string}};return{ok:false,error:data.error?.message||`Moonshot returned HTTP ${response.status}`,latencyMs:Date.now()-started};}return{ok:true,model:org.kimiModel,latencyMs:Date.now()-started};}catch(error){const timeout=error instanceof Error&&(error.name==='TimeoutError'||error.name==='AbortError');return{ok:false,error:timeout?'Kimi did not respond within 30 seconds. Check the model, key, DNS, firewall, or try again.':error instanceof Error?error.message:String(error),latencyMs:Date.now()-started};}}
   async clearKimiSettings(orgId:string){await this.prisma.org.update({where:{id:orgId},data:{kimiApiKeyEncrypted:null,...({modAiProvider:'codex'} as const)}});return{ok:true,configured:false,provider:'codex'};}
+
+  async saveCloudflareSettings(orgId: string, userId: string, apiToken: string) {
+    const token = apiToken.trim();
+    if (!token) throw new ConflictException('Cloudflare API token is required');
+    const existing = await this.prisma.org.findUnique({
+      where: { id: orgId },
+      select: { cloudflareApiTokenEncrypted: true },
+    });
+    if (!existing) throw new NotFoundException('Organization not found');
+    await this.prisma.$transaction([
+      this.prisma.org.update({
+        where: { id: orgId },
+        data: { cloudflareApiTokenEncrypted: encryptIntegrationSecret(token) },
+      }),
+      this.prisma.auditLog.create({
+        data: {
+          orgId,
+          actorId: userId,
+          action: 'cloudflare_settings_updated',
+          resourceType: 'org',
+          resourceId: orgId,
+          details: { tokenReplaced: Boolean(existing.cloudflareApiTokenEncrypted) },
+        },
+      }),
+    ]);
+    return { ok: true, configured: true };
+  }
+
+  async clearCloudflareSettings(orgId: string, userId: string) {
+    await this.prisma.$transaction([
+      this.prisma.org.update({ where: { id: orgId }, data: { cloudflareApiTokenEncrypted: null } }),
+      this.prisma.auditLog.create({
+        data: { orgId, actorId: userId, action: 'cloudflare_settings_cleared', resourceType: 'org', resourceId: orgId },
+      }),
+    ]);
+    return { ok: true, configured: false };
+  }
+
+  async saveDigitalOceanSettings(orgId:string,userId:string,apiToken:string){const token=apiToken.trim();if(!token)throw new ConflictException('DigitalOcean API token is required');const existing=await this.prisma.org.findUnique({where:{id:orgId},select:{digitalOceanApiTokenEncrypted:true}});if(!existing)throw new NotFoundException('Organization not found');await this.prisma.$transaction([this.prisma.org.update({where:{id:orgId},data:{digitalOceanApiTokenEncrypted:encryptIntegrationSecret(token)}}),this.prisma.auditLog.create({data:{orgId,actorId:userId,action:'digitalocean_settings_updated',resourceType:'org',resourceId:orgId,details:{tokenReplaced:Boolean(existing.digitalOceanApiTokenEncrypted)}}})]);return{ok:true,configured:true};}
+  async testDigitalOcean(orgId:string){const org=await this.prisma.org.findUnique({where:{id:orgId},select:{digitalOceanApiTokenEncrypted:true}});if(!org?.digitalOceanApiTokenEncrypted)return{ok:false,error:'DigitalOcean API token is not configured'};try{const response=await fetch('https://api.digitalocean.com/v2/account',{headers:{Authorization:`Bearer ${decryptOpenAiKey(org.digitalOceanApiTokenEncrypted)}`,'Content-Type':'application/json','User-Agent':'Mastermind-7DTD/0.0.11'},signal:AbortSignal.timeout(15000)});if(!response.ok)return{ok:false,error:`DigitalOcean returned HTTP ${response.status}`};const body=await response.json() as {account?:{status?:string;email_verified?:boolean}};return{ok:true,status:body.account?.status||'unknown',emailVerified:Boolean(body.account?.email_verified)};}catch(error){return{ok:false,error:error instanceof Error?error.message:String(error)};}}
+  async clearDigitalOceanSettings(orgId:string,userId:string){await this.prisma.$transaction([this.prisma.org.update({where:{id:orgId},data:{digitalOceanApiTokenEncrypted:null}}),this.prisma.auditLog.create({data:{orgId,actorId:userId,action:'digitalocean_settings_cleared',resourceType:'org',resourceId:orgId}})]);return{ok:true,configured:false};}
+
+  async saveMailgunSettings(orgId:string,userId:string,input:{apiKey?:string;domain:string;fromEmail:string;region:'us'|'eu'}) {
+    const existing=await this.prisma.org.findUnique({where:{id:orgId},select:{mailgunApiKeyEncrypted:true}});
+    if(!existing)throw new NotFoundException('Organization not found');
+    if(!input.apiKey&&!existing.mailgunApiKeyEncrypted)throw new ConflictException('Mailgun API key is required');
+    const domain=input.domain.trim().toLowerCase();const fromEmail=input.fromEmail.trim().toLowerCase();
+    if(!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain))throw new ConflictException('Enter a valid Mailgun sending domain');
+    await this.prisma.$transaction([
+      this.prisma.org.update({where:{id:orgId},data:{mailgunDomain:domain,mailgunFromEmail:fromEmail,mailgunRegion:input.region,...(input.apiKey?{mailgunApiKeyEncrypted:encryptIntegrationSecret(input.apiKey.trim())}:{})}}),
+      this.prisma.auditLog.create({data:{orgId,actorId:userId,action:'mailgun_settings_updated',resourceType:'org',resourceId:orgId,details:{domain,fromEmail,region:input.region,keyReplaced:Boolean(input.apiKey)}}}),
+    ]);
+    return{ok:true,configured:true,domain,fromEmail,region:input.region};
+  }
+  async testMailgun(orgId:string,userId:string){const user=await this.prisma.user.findUnique({where:{id:userId},select:{email:true}});if(!user)throw new NotFoundException('User not found');await this.mailgun.sendTest(orgId,user.email);return{ok:true,recipient:user.email};}
+  async clearMailgunSettings(orgId:string,userId:string){await this.prisma.$transaction([this.prisma.org.update({where:{id:orgId},data:{mailgunApiKeyEncrypted:null,mailgunDomain:null,mailgunFromEmail:null}}),this.prisma.auditLog.create({data:{orgId,actorId:userId,action:'mailgun_settings_cleared',resourceType:'org',resourceId:orgId}})]);return{ok:true,configured:false};}
+
+  async saveStripeSettings(orgId:string,userId:string,input:{secretKey?:string;webhookSecret?:string}) {
+    const existing=await this.prisma.org.findUnique({where:{id:orgId},select:{stripeSecretKeyEncrypted:true,stripeWebhookSecretEncrypted:true}});
+    if(!existing)throw new NotFoundException('Organization not found');
+    const secretKey=input.secretKey?.trim()?parseStripeSecretKey(input.secretKey):null;
+    const webhookSecret=input.webhookSecret?.trim()?parseStripeWebhookSecret(input.webhookSecret):null;
+    if(input.secretKey?.trim() && !secretKey)throw new ConflictException('Enter a valid Stripe secret key (sk_test_ or sk_live_)');
+    if(input.webhookSecret?.trim() && !webhookSecret)throw new ConflictException('Enter a valid Stripe webhook signing secret (whsec_)');
+    if(!secretKey && !webhookSecret)throw new ConflictException('Enter a Stripe secret key or webhook signing secret');
+    if(!secretKey && !existing.stripeSecretKeyEncrypted)throw new ConflictException('Stripe secret key is required');
+    await this.prisma.$transaction([
+      this.prisma.org.update({
+        where:{id:orgId},
+        data:{
+          ...(secretKey?{stripeSecretKeyEncrypted:encryptIntegrationSecret(secretKey)}:{}),
+          ...(webhookSecret?{stripeWebhookSecretEncrypted:encryptIntegrationSecret(webhookSecret)}:{}),
+        },
+      }),
+      this.prisma.auditLog.create({
+        data:{orgId,actorId:userId,action:'stripe_settings_updated',resourceType:'org',resourceId:orgId,details:{secretKeyReplaced:Boolean(secretKey),webhookSecretReplaced:Boolean(webhookSecret)}},
+      }),
+    ]);
+    return{ok:true,configured:true,webhookConfigured:Boolean(webhookSecret||existing.stripeWebhookSecretEncrypted),webhookUrl:publicStripeWebhookUrl()};
+  }
+
+  async testStripe(orgId:string){
+    const org=await this.prisma.org.findUnique({where:{id:orgId},select:{stripeSecretKeyEncrypted:true}});
+    if(!org?.stripeSecretKeyEncrypted)return{ok:false,error:'Stripe secret key is not configured'};
+    let secretKey='';
+    try{secretKey=decryptIntegrationSecret(org.stripeSecretKeyEncrypted);}catch{return{ok:false,error:'Stored Stripe secret key could not be decrypted'};}
+    try{
+      const response=await fetch('https://api.stripe.com/v1/account',{headers:{authorization:`Bearer ${secretKey}`,'stripe-version':'2024-06-20'},signal:AbortSignal.timeout(15000)});
+      if(!response.ok)return{ok:false,error:`Stripe returned HTTP ${response.status}`};
+      const body=await response.json() as {livemode?:boolean;charges_enabled?:boolean;payouts_enabled?:boolean};
+      return{ok:true,livemode:Boolean(body.livemode),chargesEnabled:Boolean(body.charges_enabled),payoutsEnabled:Boolean(body.payouts_enabled)};
+    }catch(error){
+      return{ok:false,error:error instanceof Error?error.message:String(error)};
+    }
+  }
+
+  async clearStripeSettings(orgId:string,userId:string){
+    await this.prisma.$transaction([
+      this.prisma.org.update({where:{id:orgId},data:{stripeSecretKeyEncrypted:null,stripeWebhookSecretEncrypted:null}}),
+      this.prisma.auditLog.create({data:{orgId,actorId:userId,action:'stripe_settings_cleared',resourceType:'org',resourceId:orgId}}),
+    ]);
+    return{ok:true,configured:false};
+  }
 
   private async resolveRole(name: string): Promise<{ id: string; name: string }> {
     let role = await this.prisma.role.findUnique({ where: { name } });

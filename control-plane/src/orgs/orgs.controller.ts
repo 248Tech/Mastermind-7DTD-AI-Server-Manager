@@ -40,14 +40,17 @@ class UpdateOrgDto {
 
 class CreateOrgAccountDto {
   @IsEmail()
+  @MaxLength(254)
   email!: string;
 
   @IsString()
   @MinLength(12)
+  @MaxLength(128)
   password!: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   name?: string;
 
   @IsIn(['operator', 'viewer'])
@@ -57,11 +60,21 @@ class CreateOrgAccountDto {
 class ResetOrgAccountPasswordDto {
   @IsString()
   @MinLength(12)
+  @MaxLength(128)
   newPassword!: string;
+}
+class SetOrgAccountApprovalDto {
+  @IsBoolean()
+  approved!: boolean;
 }
 class OpenAiSettingsDto{@IsOptional()@IsString()@MinLength(20)@MaxLength(256) apiKey?:string;@IsString()@MinLength(1)@MaxLength(100) model!:string;}
 class KimiSettingsDto{@IsOptional()@IsString()@MinLength(10)@MaxLength(512) apiKey?:string;@IsString()@MinLength(1)@MaxLength(100) model!:string;}
 class ModAiProviderDto{@IsIn(['codex','kimi']) provider!:'codex'|'kimi';}
+class CloudflareSettingsDto{@IsString()@MinLength(20)@MaxLength(2048) apiToken!:string;}
+class DigitalOceanSettingsDto{@IsString()@MinLength(20)@MaxLength(2048) apiToken!:string;}
+class MailgunSettingsDto{@IsOptional()@IsString()@MinLength(10)@MaxLength(512) apiKey?:string;@IsString()@MinLength(3)@MaxLength(255) domain!:string;@IsEmail() fromEmail!:string;@IsIn(['us','eu']) region!:'us'|'eu';}
+class StripeSettingsDto{@IsOptional()@IsString()@MinLength(20)@MaxLength(256) secretKey?:string;@IsOptional()@IsString()@MinLength(20)@MaxLength(256) webhookSecret?:string;}
+class RecaptchaSettingsDto{@IsString()@MinLength(20)@MaxLength(256) siteKey!:string;@IsOptional()@IsString()@MinLength(10)@MaxLength(512) secretKey?:string;}
 
 @Controller('api/orgs')
 @UseGuards(JwtAuthGuard)
@@ -100,8 +113,35 @@ export class OrgsController {
   @Post(':orgId/accounts')
   @UseGuards(OrgMemberGuard, RequireOrgRoleGuard)
   @RequireOrgRoles('admin')
-  async createAccount(@Param('orgId') orgId: string, @Body() dto: CreateOrgAccountDto) {
-    return this.orgsService.createAccount(orgId, dto);
+  async createAccount(@Param('orgId') orgId: string, @Req() req: RequestWithUser, @Body() dto: CreateOrgAccountDto) {
+    return this.orgsService.createAccount(orgId, req.user!.id, dto);
+  }
+
+  @Get(':orgId/security')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  getSecurity(@Param('orgId')orgId:string){return this.orgsService.getSecuritySettings(orgId);}
+
+  @Post(':orgId/integrations/recaptcha')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  saveRecaptcha(@Param('orgId')orgId:string,@Req()req:RequestWithUser,@Body()dto:RecaptchaSettingsDto){return this.orgsService.saveRecaptchaSettings(orgId,req.user!.id,dto);}
+
+  @Delete(':orgId/integrations/recaptcha')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  clearRecaptcha(@Param('orgId')orgId:string,@Req()req:RequestWithUser){return this.orgsService.clearRecaptchaSettings(orgId,req.user!.id);}
+
+  @Patch(':orgId/accounts/:accountId/approval')
+  @UseGuards(OrgMemberGuard, RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  async setAccountApproval(
+    @Param('orgId') orgId: string,
+    @Param('accountId') accountId: string,
+    @Req() req: RequestWithUser,
+    @Body() dto: SetOrgAccountApprovalDto,
+  ) {
+    return this.orgsService.setAccountApproval(orgId, accountId, req.user!.id, dto.approved);
   }
 
   @Delete(':orgId/accounts/:accountId')
@@ -128,7 +168,8 @@ export class OrgsController {
   }
 
   @Patch(':orgId')
-  @UseGuards(OrgMemberGuard)
+  @UseGuards(OrgMemberGuard, RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
   async updateOrg(
     @Param('orgId') orgId: string,
     @Body() dto: UpdateOrgDto,
@@ -172,8 +213,64 @@ export class OrgsController {
   @RequireOrgRoles('admin')
   clearKimi(@Param('orgId')orgId:string){return this.orgsService.clearKimiSettings(orgId);}
 
+  @Post(':orgId/integrations/cloudflare')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  saveCloudflare(@Param('orgId')orgId:string,@Req()req:RequestWithUser,@Body()dto:CloudflareSettingsDto){return this.orgsService.saveCloudflareSettings(orgId,req.user!.id,dto.apiToken);}
+
+  @Delete(':orgId/integrations/cloudflare')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  clearCloudflare(@Param('orgId')orgId:string,@Req()req:RequestWithUser){return this.orgsService.clearCloudflareSettings(orgId,req.user!.id);}
+
+  @Post(':orgId/integrations/digitalocean')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  saveDigitalOcean(@Param('orgId')orgId:string,@Req()req:RequestWithUser,@Body()dto:DigitalOceanSettingsDto){return this.orgsService.saveDigitalOceanSettings(orgId,req.user!.id,dto.apiToken);}
+
+  @Post(':orgId/integrations/digitalocean/test')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  testDigitalOcean(@Param('orgId')orgId:string){return this.orgsService.testDigitalOcean(orgId);}
+
+  @Delete(':orgId/integrations/digitalocean')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  clearDigitalOcean(@Param('orgId')orgId:string,@Req()req:RequestWithUser){return this.orgsService.clearDigitalOceanSettings(orgId,req.user!.id);}
+
+  @Post(':orgId/integrations/mailgun')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  saveMailgun(@Param('orgId')orgId:string,@Req()req:RequestWithUser,@Body()dto:MailgunSettingsDto){return this.orgsService.saveMailgunSettings(orgId,req.user!.id,dto);}
+
+  @Post(':orgId/integrations/mailgun/test')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  testMailgun(@Param('orgId')orgId:string,@Req()req:RequestWithUser){return this.orgsService.testMailgun(orgId,req.user!.id);}
+
+  @Delete(':orgId/integrations/mailgun')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  clearMailgun(@Param('orgId')orgId:string,@Req()req:RequestWithUser){return this.orgsService.clearMailgunSettings(orgId,req.user!.id);}
+
+  @Post(':orgId/integrations/stripe')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  saveStripe(@Param('orgId')orgId:string,@Req()req:RequestWithUser,@Body()dto:StripeSettingsDto){return this.orgsService.saveStripeSettings(orgId,req.user!.id,dto);}
+
+  @Post(':orgId/integrations/stripe/test')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  testStripe(@Param('orgId')orgId:string){return this.orgsService.testStripe(orgId);}
+
+  @Delete(':orgId/integrations/stripe')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  clearStripe(@Param('orgId')orgId:string,@Req()req:RequestWithUser){return this.orgsService.clearStripeSettings(orgId,req.user!.id);}
+
   @Post(':orgId/detection/frigate/test')
-  @UseGuards(OrgMemberGuard)
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
   async testFrigate(@Param('orgId') orgId: string, @Req() req: RequestWithUser) {
     return this.orgsService.testFrigateConnection(orgId, req.user!.id);
   }
