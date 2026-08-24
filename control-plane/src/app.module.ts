@@ -15,6 +15,10 @@ import { WebsocketModule } from './websocket/websocket.module';
 import { LogsModule } from './logs/logs.module';
 import { HealthMonitorModule } from './health-monitor/health-monitor.module';
 import { PlayersModule } from './players/players.module';
+import { PlayerAuthModule } from './player-auth/player-auth.module';
+import { DonationsModule } from './donations/donations.module';
+import { PrismaCoreModule } from './prismacore/prismacore.module';
+import { AllocsModule } from './allocs/allocs.module';
 
 @Module({
   imports: [
@@ -35,6 +39,10 @@ import { PlayersModule } from './players/players.module';
     LogsModule,
     HealthMonitorModule,
     PlayersModule,
+    PlayerAuthModule,
+    DonationsModule,
+    PrismaCoreModule,
+    AllocsModule,
   ],
 })
 export class AppModule {}

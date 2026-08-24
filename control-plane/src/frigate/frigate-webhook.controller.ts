@@ -7,75 +7,57 @@ import {
   HttpCode,
   ForbiddenException,
   NotFoundException,
+  Req,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { AlertsService } from '../alerts/alerts.service';
-
-interface FrigateEventObject {
-  id: string;
-  camera: string;
-  label: string;
-  score: number;
-  top_score: number;
-  false_positive: boolean;
-  start_time: number;
-  end_time: number | null;
-  zones: string[];
-}
-
-interface FrigateWebhookPayload {
-  before: FrigateEventObject;
-  after: FrigateEventObject;
-  type: 'new' | 'update' | 'end';
-}
+import { AuthRateLimitService } from '../auth/auth-rate-limit.service';
+import { clientIp } from '../common/client-ip';
+import { timingSafeEqualText } from '../common/timing-safe';
+import { FrigateWebhookDto } from './dto/frigate-webhook.dto';
 
 @Controller('api/orgs/:orgId/detection/frigate')
 export class FrigateWebhookController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly alerts: AlertsService,
+    private readonly rateLimit: AuthRateLimitService,
   ) {}
 
   /**
    * Receive detection events pushed by Frigate NVR.
-   * Configure Frigate → Settings → Webhooks → URL: http://<host>/api/orgs/<orgId>/detection/frigate/webhook
-   * Only fires an alert on `type: "new"` events that are not false positives.
+   * Requires a configured webhook secret on the organization. Compare in constant time.
    */
   @Post('webhook')
   @HttpCode(200)
   async handleWebhook(
     @Param('orgId') orgId: string,
-    @Body() payload: FrigateWebhookPayload,
+    @Body() payload: FrigateWebhookDto,
+    @Req() req: { ip?: string; headers?: Record<string, string | string[] | undefined> },
     @Headers('x-webhook-secret') incomingSecret?: string,
   ): Promise<{ ok: boolean }> {
+    await this.rateLimit.consumeFrigateWebhook(clientIp(req));
+
     const org = await this.prisma.org.findUnique({
       where: { id: orgId },
-      select: { frigateWebhookSecret: true, discordWebhookUrl: true },
+      select: { frigateWebhookSecret: true },
     });
 
     if (!org) {
       throw new NotFoundException('Org not found');
     }
 
-    // Validate shared secret when one is configured
-    if (org.frigateWebhookSecret) {
-      if (incomingSecret !== org.frigateWebhookSecret) {
-        throw new ForbiddenException('Invalid webhook secret');
-      }
+    const expected = org.frigateWebhookSecret?.trim() ?? '';
+    if (!expected || !timingSafeEqualText(incomingSecret ?? '', expected)) {
+      throw new ForbiddenException('Invalid webhook secret');
     }
 
-    // Only alert on brand-new detections; ignore update/end events
     if (payload?.type !== 'new') {
       return { ok: true };
     }
 
     const detection = payload.after ?? payload.before;
-    if (!detection) {
-      return { ok: true };
-    }
-
-    // Skip Frigate false-positive classifications
-    if (detection.false_positive) {
+    if (!detection || detection.false_positive) {
       return { ok: true };
     }
 

@@ -27,7 +27,7 @@ export class AgentJobsController {
   ) {
     const run = await this.prisma.jobRun.findUnique({ where: { id: jobRunId }, include: { job: true } });
     if (!run || run.hostId !== req.agentHostId) throw new NotFoundException('Job file not found');
-    if (run.job.type !== 'MOD_UPLOAD_QUARANTINE') throw new BadRequestException('Job has no downloadable mod archive');
+    if (run.job.type !== 'MOD_UPLOAD_QUARANTINE' && run.job.type !== 'MOD_UPLOAD_PENDING') throw new BadRequestException('Job has no downloadable mod archive');
     const payload = (run.job.payload ?? {}) as Record<string, unknown>;
     const uploadId = typeof payload.uploadId === 'string' ? payload.uploadId : '';
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uploadId)) {

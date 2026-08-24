@@ -6,9 +6,11 @@ import {
   DISCORD_RETRY_MAX_MS,
 } from './discord.constants';
 import type { DiscordWebhookPayload } from './discord.types';
+import { pruneMap } from '../common/ttl-map';
 
 /** Per-key (e.g. orgId) rate limit state */
 const rateLimitMap = new Map<string, { count: number; windowStart: number }>();
+const DISCORD_POST_TIMEOUT_MS = 10_000;
 
 @Injectable()
 export class DiscordService {
@@ -49,6 +51,7 @@ export class DiscordService {
 
   private tryConsumeRateLimit(key: string): boolean {
     const now = Date.now();
+    pruneMap(rateLimitMap, (entry) => now - entry.windowStart < DISCORD_RATE_LIMIT.windowMs);
     const entry = rateLimitMap.get(key);
     if (!entry) {
       rateLimitMap.set(key, { count: 1, windowStart: now });
@@ -75,6 +78,7 @@ export class DiscordService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(DISCORD_POST_TIMEOUT_MS),
       });
       if (!res.ok) {
         const text = await res.text();

@@ -15,18 +15,35 @@ import { reconcileNameFallback } from '../players/player-identity';
 import { AlertsService } from '../alerts/alerts.service';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
+import { pruneMap } from '../common/ttl-map';
+import { parseInventoryOutput, type AllocsInventoryRow, type InventorySnapshot } from '../players/player-inventory';
+import { parseAllocsPlayersOnline, parseLpRoster, mergeRosterPositions, type PlayerRosterRow } from '../players/player-roster';
+import { decryptIntegrationSecret } from '../orgs/integration-crypto';
+import { AllocsService } from '../allocs/allocs.service';
+import {
+  MAX_GRANT_ATTEMPTS,
+  aggregateGrantStatus,
+  buildChatColorCommand,
+  buildGivePlusCommand,
+  classifyGrantOutput,
+  lineGrantItems,
+} from '../donations/shop-grants';
+import { catalogFromAgentResult } from '../donations/item-catalog';
 
 @Injectable()
 export class JobsService implements OnModuleInit, OnModuleDestroy {
   private readonly badPingSamples = new Map<string, number>();
   private readonly protectionCooldown = new Map<string, number>();
   private readonly countryCache = new Map<string, { code: string; expires: number }>();
+  private readonly inventoryCooldown = new Map<string, number>();
+  private readonly deathPins = new Map<string, { deaths: number; until: number }>();
   private staleTimer?: NodeJS.Timeout;
   constructor(
     private readonly prisma: PrismaService,
     private readonly batchesService: BatchesService,
     private readonly jobsQueueService: JobsQueueService,
     private readonly alerts: AlertsService,
+    private readonly allocs: AllocsService,
   ) {}
 
   async onModuleInit() {
@@ -60,6 +77,19 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     payload?: Record<string, unknown>,
   ): Promise<{ jobId: string; jobRunId: string }> {
     const normalizedJobType = this.normalizeJobType(jobType);
+    const membership = await this.prisma.userOrg.findUnique({
+      where: { userId_orgId: { userId, orgId } },
+      include: { role: true, user: { select: { email: true, name: true } } },
+    });
+    const roleName = membership?.role.name;
+    const viewerAllowed = ['MOD_LIST', 'MOD_QUARANTINE_LIST', 'MOD_PENDING_LIST', 'MOD_UPLOAD_PENDING'];
+    if (roleName === 'viewer' && !viewerAllowed.includes(normalizedJobType)) {
+      throw new ForbiddenException('Verified members may recommend mods, but cannot change installed mods');
+    }
+    if (normalizedJobType === 'MOD_UPLOAD_PENDING') {
+      const recommendedBy = membership?.user.name?.trim() || membership?.user.email || 'Verified member';
+      payload = { ...(payload ?? {}), recommendedBy, recommendedById: userId };
+    }
     if (normalizedJobType === 'RCON' || normalizedJobType === 'SEND_COMMAND') {
       const command = typeof payload?.command === 'string' ? payload.command.trim() : '';
       if (!command) throw new BadRequestException('Console command is required');
@@ -76,6 +106,22 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         throw new ForbiddenException('Only organization administrators may change game administrators');
       }
     }
+    if (normalizedJobType === 'PLAYER_SET_DEATHS') {
+      const membership = await this.prisma.userOrg.findUnique({
+        where: { userId_orgId: { userId, orgId } },
+        include: { role: true },
+      });
+      if (!membership || !['admin', 'operator'].includes(membership.role.name)) {
+        throw new ForbiddenException('Only organization administrators or operators may edit player deaths');
+      }
+      const deaths = Number(payload?.deaths);
+      if (!Number.isInteger(deaths) || deaths < 0 || deaths > 100_000) {
+        throw new BadRequestException('Deaths must be a whole number from 0 to 100000');
+      }
+      const identifier = typeof payload?.identifier === 'string' ? payload.identifier.trim() : '';
+      if (!identifier) throw new BadRequestException('Player identifier is required');
+      payload = { ...(payload ?? {}), deaths, identifier };
+    }
     if (normalizedJobType === 'PLAYER_KICK_ALL' || normalizedJobType === 'SERVER_KILL') {
       const membership = await this.prisma.userOrg.findUnique({
         where: { userId_orgId: { userId, orgId } },
@@ -85,7 +131,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         throw new ForbiddenException('Only organization administrators or operators may perform this action');
       }
     }
-    if (['SAVE_BACKUP', 'SAVE_RESTORE', 'SAVE_DELETE', 'SAVE_RETENTION'].includes(normalizedJobType)) {
+    if (['SAVE_BACKUP', 'SAVE_RESTORE', 'SAVE_DELETE', 'SAVE_RETENTION', 'SERVER_SAVE_STOP'].includes(normalizedJobType)) {
       const membership = await this.prisma.userOrg.findUnique({
         where: { userId_orgId: { userId, orgId } },
         include: { role: true },
@@ -102,16 +148,33 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       const membership = await this.prisma.userOrg.findUnique({ where: { userId_orgId: { userId, orgId } }, include: { role: true } });
       if (!membership || !['admin', 'operator'].includes(membership.role.name)) throw new ForbiddenException('Only organization administrators or operators may upload mods');
     }
+    if (normalizedJobType === 'SERVER_MAINTENANCE') {
+      if (!roleName || !['admin', 'operator'].includes(roleName)) {
+        throw new ForbiddenException('Only organization administrators or operators may change maintenance mode');
+      }
+    }
     const serverInstance = await this.prisma.serverInstance.findFirst({
       where: { id: serverInstanceId, orgId },
       include: {
         host: true,
         gameType: { select: { slug: true } },
-        org: { select: { avoidBloodMoonRestart: true } },
+        org: { select: { avoidBloodMoonRestart: true, maintenancePasswordEncrypted: true } },
       },
     });
     if (!serverInstance) {
       throw new NotFoundException('Server instance not found');
+    }
+    if (normalizedJobType === 'SERVER_MAINTENANCE') {
+      const enabled = payload?.enabled === true;
+      if (enabled) {
+        const encrypted = serverInstance.org.maintenancePasswordEncrypted;
+        if (!encrypted) throw new BadRequestException('Set a maintenance password in Settings first');
+        let password = '';
+        try { password = decryptIntegrationSecret(encrypted); } catch { throw new BadRequestException('Stored maintenance password could not be decrypted'); }
+        payload = { ...(payload ?? {}), enabled: true, password, kick_reason: 'Server entering maintenance' };
+      } else {
+        payload = { ...(payload ?? {}), enabled: false, kick_reason: 'Server leaving maintenance' };
+      }
     }
 
     const mergedPayload = {
@@ -157,6 +220,31 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     return { jobId: job.id, jobRunId: run.id };
   }
 
+  /** Create a pending mod request submitted by an authenticated game player. */
+  async createPlayerModRequest(orgId: string, serverInstanceId: string, payload: Record<string, unknown>) {
+    const serverInstance = await this.prisma.serverInstance.findFirst({
+      where: { id: serverInstanceId, orgId },
+      include: { host: true, gameType: { select: { slug: true } }, org: { select: { avoidBloodMoonRestart: true } } },
+    });
+    if (!serverInstance) throw new NotFoundException('Server instance not found');
+    const mergedPayload = {
+      server_instance_id: serverInstance.id,
+      game_type: serverInstance.gameType.slug,
+      install_path: serverInstance.installPath ?? undefined,
+      start_command: serverInstance.startCommand ?? undefined,
+      telnet_host: serverInstance.telnetHost ?? undefined,
+      telnet_port: serverInstance.telnetPort ?? undefined,
+      telnet_password: serverInstance.telnetPassword ?? undefined,
+      config: serverInstance.config ?? undefined,
+      avoid_blood_moon_restart: serverInstance.org.avoidBloodMoonRestart,
+      ...payload,
+    };
+    const job = await this.prisma.job.create({ data: { orgId, serverInstanceId, type: 'MOD_UPLOAD_PENDING', payload: mergedPayload as Prisma.InputJsonValue, createdById: null } });
+    const run = await this.prisma.jobRun.create({ data: { jobId: job.id, hostId: serverInstance.hostId, status: 'pending' } });
+    await this.jobsQueueService.addJob(orgId, { jobId: job.id, jobRunId: run.id, hostId: serverInstance.hostId, serverInstanceId, type: 'MOD_UPLOAD_PENDING', payload: mergedPayload });
+    return { jobId: job.id, jobRunId: run.id };
+  }
+
   /**
    * Update JobRun with agent result and optionally update batch progress.
    */
@@ -178,11 +266,14 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const runStatus = dto.status === 'success' ? 'success' : 'failed';
+    const resultData = run.job.type === 'ITEM_CATALOG' && runStatus === 'success'
+      ? catalogFromAgentResult(dto.result)
+      : dto.result;
     const result = {
       durationMs: dto.durationMs,
       errorMessage: dto.errorMessage,
       output: dto.output,
-      data: dto.result as Prisma.InputJsonValue | undefined,
+      data: resultData as Prisma.InputJsonValue | undefined,
     };
 
     await this.prisma.jobRun.update({
@@ -193,7 +284,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         result,
       },
     });
-    if (run.job.type === 'MOD_UPLOAD_QUARANTINE') {
+    if (run.job.type === 'MOD_UPLOAD_QUARANTINE' || run.job.type === 'MOD_UPLOAD_PENDING') {
       const payload = (run.job.payload ?? {}) as Record<string, unknown>;
       const uploadId = typeof payload.uploadId === 'string' ? payload.uploadId : '';
       if (/^[0-9a-f-]{36}$/i.test(uploadId)) {
@@ -205,9 +296,40 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       await this.prisma.job.update({ where: { id: run.jobId }, data: { payload: { path: previous.path, staged: runStatus === 'success' } as Prisma.InputJsonValue } });
     }
 
+    if (run.job.type === 'SERVER_MAINTENANCE' && runStatus === 'success' && run.job.serverInstanceId) {
+      const payload = (run.job.payload ?? {}) as Record<string, unknown>;
+      await this.prisma.serverInstance.update({
+        where: { id: run.job.serverInstanceId },
+        data: { maintenanceMode: payload.enabled === true },
+      });
+    }
+    if (run.job.type === 'PLAYER_SET_DEATHS' && runStatus === 'success' && run.job.serverInstanceId) {
+      const payload = (run.job.payload ?? {}) as Record<string, unknown>;
+      const deaths = Number(payload.deaths);
+      const playerId = typeof payload.playerId === 'string' ? payload.playerId : '';
+      if (Number.isInteger(deaths) && playerId) {
+        const player = await this.prisma.player.findFirst({ where: { id: playerId, orgId: run.job.orgId, serverInstanceId: run.job.serverInstanceId } });
+        if (player) {
+          await this.prisma.player.update({ where: { id: player.id }, data: { deaths } });
+          const until = Date.now() + 10 * 60_000;
+          this.deathPins.set(player.id, { deaths, until });
+          this.deathPins.set(`${player.serverInstanceId}:${player.identityKey}`, { deaths, until });
+        }
+      }
+    }
     if (run.job.type === 'PLAYER_LIST_SYNC' && runStatus === 'success' && dto.output && run.job.serverInstanceId) {
-      await this.reconcilePlayers(run.job.orgId, run.job.serverInstanceId, dto.output);
-      await this.enforceConnectionTools(run.job.orgId, run.job.serverInstanceId, dto.output);
+      const rows = parseLpRoster(dto.output);
+      if (rows) {
+        await this.applyPlayerRoster(run.job.orgId, run.job.serverInstanceId, rows);
+        await this.enforceConnectionTools(run.job.orgId, run.job.serverInstanceId, rows);
+      }
+    }
+    const resultPayload = (run.job.payload ?? {}) as Record<string, unknown>;
+    if (run.job.type === 'RCON' && resultPayload.purpose === 'inventory_snapshot' && typeof resultPayload.playerId === 'string' && runStatus === 'success' && dto.output) {
+      await this.storeInventorySnapshot(resultPayload.playerId, dto.output);
+    }
+    if (run.job.type === 'RCON' && resultPayload.purpose === 'shop_grant' && typeof resultPayload.donationLineId === 'string') {
+      await this.finishShopGrant(resultPayload, runStatus, dto.output);
     }
 
     const orgId = run.job.orgId;
@@ -271,34 +393,82 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     return { ok: true };
   }
 
-  private async reconcilePlayers(orgId: string, serverInstanceId: string, output: string) {
-    if (!/Total of\s+\d+\s+in the game/i.test(output)) return;
+  async trySyncPlayersFromAllocs(orgId: string, serverInstanceId: string): Promise<{ needsLpStats: boolean } | false> {
+    if (!this.allocs.tokenConfigured()) return false;
+    let rows: PlayerRosterRow[] | null = null;
+    try {
+      const json = await this.allocs.playersOnlineJson();
+      rows = parseAllocsPlayersOnline(json);
+    } catch {
+      return false;
+    }
+    if (!rows) return false;
+    const merged = mergeRosterPositions(rows, await this.allocs.playerLocations());
+    await this.applyPlayerRoster(orgId, serverInstanceId, merged);
+    await this.enforceConnectionTools(orgId, serverInstanceId, merged);
+    return { needsLpStats: merged.some((row) => row.level == null) };
+  }
+
+  private rosterDeaths(serverInstanceId: string, identityKey: string, playerId: string | null | undefined, live: number) {
+    pruneMap(this.deathPins, (pin) => pin.until > Date.now());
+    const keys = [playerId, `${serverInstanceId}:${identityKey}`].filter((key): key is string => Boolean(key));
+    for (const key of keys) {
+      const pin = this.deathPins.get(key);
+      if (!pin || pin.until <= Date.now()) continue;
+      if (live === pin.deaths) {
+        for (const drop of keys) this.deathPins.delete(drop);
+        return live;
+      }
+      return pin.deaths;
+    }
+    return live;
+  }
+
+  private async applyPlayerRoster(orgId: string, serverInstanceId: string, rows: PlayerRosterRow[]) {
     const now = new Date();
     const server = await this.prisma.serverInstance.findUnique({
       where: { id: serverInstanceId }, select: { name: true },
     });
     const seen = new Set<string>();
-    for (const line of output.split(/\r?\n/)) {
-      const head = line.match(/^\s*\d+\.\s+id=(\d+),\s*([^,]+),/i);
-      if (!head) continue;
-      const steam = line.match(/(?:pltfmid|steamid)=Steam_([0-9]{15,20})/i)?.[1] ?? null;
-      const eos = line.match(/(?:crossid|pltfmid)=EOS_([a-f0-9]{20,64})/i)?.[1] ?? null;
-      const ipAddress = line.match(/\bip\s*=\s*(\[[^\]]+\]|[^,\s]+)/i)?.[1]?.replace(/^\[|\]$/g, '') ?? null;
-      // 7DTD's `lp` response exposes authoritative lifetime combat counters.
-      // Names vary slightly between game versions, so accept both forms.
-      const zombieKills = Number(line.match(/(?:zombies|zombiekills)\s*=\s*(\d+)/i)?.[1] ?? 0);
-      const playerKills = Number(line.match(/(?:players|playerkills)\s*=\s*(\d+)/i)?.[1] ?? 0);
-      const deaths = Number(line.match(/deaths\s*=\s*(\d+)/i)?.[1] ?? 0);
-      const level = Number(line.match(/level\s*=\s*(\d+)/i)?.[1] ?? 1);
-      const name = head[2].trim();
-      const identityKey = steam ? `steam:${steam}` : eos ? `eos:${eos}` : `name:${name.toLowerCase()}`;
-      seen.add(identityKey);
-      await reconcileNameFallback(this.prisma, serverInstanceId, identityKey, name, steam, eos);
-      const existing = await this.prisma.player.findUnique({ where: { serverInstanceId_identityKey: { serverInstanceId, identityKey } } });
+    for (const row of rows) {
+      seen.add(row.identityKey);
+      await reconcileNameFallback(this.prisma, serverInstanceId, row.identityKey, row.name, row.steamId, row.eosId);
+      const existing = await this.prisma.player.findUnique({ where: { serverInstanceId_identityKey: { serverInstanceId, identityKey: row.identityKey } } });
       const player = await this.prisma.player.upsert({
-        where: { serverInstanceId_identityKey: { serverInstanceId, identityKey } },
-        create: { orgId, serverInstanceId, identityKey, steamId: steam, eosId: eos, entityId: Number(head[1]), ipAddress, name, online: true, currentSessionStartedAt: now, lastSeenAt: now, zombieKills, playerKills, deaths, level },
-        update: { steamId: steam ?? existing?.steamId, eosId: eos ?? existing?.eosId, entityId: Number(head[1]), ...(ipAddress ? { ipAddress } : {}), name, online: true, lastSeenAt: now, zombieKills, playerKills, deaths, level, ...(!existing?.online ? { currentSessionStartedAt: now } : {}) },
+        where: { serverInstanceId_identityKey: { serverInstanceId, identityKey: row.identityKey } },
+        create: {
+          orgId,
+          serverInstanceId,
+          identityKey: row.identityKey,
+          steamId: row.steamId,
+          eosId: row.eosId,
+          entityId: row.entityId,
+          ipAddress: row.ipAddress,
+          name: row.name,
+          online: true,
+          currentSessionStartedAt: now,
+          lastSeenAt: now,
+          zombieKills: row.zombieKills,
+          playerKills: row.playerKills,
+          deaths: this.rosterDeaths(serverInstanceId, row.identityKey, null, row.deaths),
+          level: row.level ?? 1,
+          ...(row.position ? { lastPosX: row.position.x, lastPosY: row.position.y, lastPosZ: row.position.z } : {}),
+        },
+        update: {
+          steamId: row.steamId ?? existing?.steamId,
+          eosId: row.eosId ?? existing?.eosId,
+          entityId: row.entityId,
+          ...(row.ipAddress ? { ipAddress: row.ipAddress } : {}),
+          name: row.name,
+          online: true,
+          lastSeenAt: now,
+          zombieKills: row.zombieKills,
+          playerKills: row.playerKills,
+          deaths: this.rosterDeaths(serverInstanceId, row.identityKey, existing?.id, row.deaths),
+          level: row.level ?? existing?.level ?? 1,
+          ...(row.position ? { lastPosX: row.position.x, lastPosY: row.position.y, lastPosZ: row.position.z } : {}),
+          ...(!existing?.online ? { currentSessionStartedAt: now } : {}),
+        },
       });
       if (!existing?.online) await this.prisma.playerSession.create({ data: { playerId: player.id, startedAt: now } });
     }
@@ -307,7 +477,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       const end = player.lastSeenAt < now ? player.lastSeenAt : now;
       const duration = player.currentSessionStartedAt ? Math.max(0, Math.floor((end.getTime() - player.currentSessionStartedAt.getTime()) / 1000)) : 0;
       await this.prisma.$transaction([
-        this.prisma.player.update({ where: { id: player.id }, data: { online: false, currentSessionStartedAt: null, lifetimeSeconds: { increment: duration } } }),
+        this.prisma.player.update({ where: { id: player.id }, data: { online: false, currentSessionStartedAt: null, lastLogoutAt: end, lifetimeSeconds: { increment: duration } } }),
         this.prisma.playerSession.updateMany({ where: { playerId: player.id, endedAt: null }, data: { endedAt: end, durationSeconds: duration } }),
       ]);
       await this.alerts.sendMatchingRules('PLAYER_DISCONNECTED', {
@@ -320,29 +490,269 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         sessionSeconds: duration,
       }).catch(() => undefined);
     }
+    await this.queueInventorySnapshots(orgId, serverInstanceId).catch(() => undefined);
+    await this.enqueuePendingShopGrants(orgId, serverInstanceId).catch(() => undefined);
   }
 
-  private async enforceConnectionTools(orgId:string,serverInstanceId:string,output:string){
+  private async storeInventorySnapshot(playerId: string, output: string) {
+    await this.persistInventorySnapshot(playerId, parseInventoryOutput(output));
+  }
+
+  private async persistInventorySnapshot(playerId: string, snapshot: InventorySnapshot) {
+    const itemCount = snapshot.bag.length + snapshot.belt.length + snapshot.equipment.length;
+    // Do not replace a real snapshot with an empty one when a game build or
+    // missing mod rejects the inventory command. The agent classifies command
+    // errors as failed; this guard also protects against malformed responses.
+    if (!itemCount) return;
+    await this.prisma.player.updateMany({
+      where: { id: playerId },
+      data: {
+        lastInventory: snapshot,
+        lastInventoryAt: new Date(),
+      },
+    });
+  }
+
+  private async queueInventorySnapshots(_orgId: string, serverInstanceId: string) {
+    const now = Date.now();
+    pruneMap(this.inventoryCooldown, (until) => until > now);
+    if (!this.allocs.tokenConfigured()) return;
+    const due = await this.staleOnlinePlayers(serverInstanceId, now);
+    if (!due.length) return;
+    const batch = await this.allocs.inventorySnapshots();
+    if (batch) {
+      for (const player of due) {
+        const row = batch.find((entry) => this.inventoryRowMatches(entry, player));
+        if (!row) continue;
+        await this.persistInventorySnapshot(player.id, row.snapshot);
+      }
+      return;
+    }
+    await this.queueInventorySnapshotsFallback(due, now);
+  }
+
+  private staleOnlinePlayers(serverInstanceId: string, now: number) {
+    return this.prisma.player.findMany({
+      where: {
+        serverInstanceId,
+        online: true,
+        AND: [
+          { OR: [{ steamId: { not: null } }, { eosId: { not: null } }] },
+          { OR: [{ lastInventoryAt: null }, { lastInventoryAt: { lt: new Date(now - 5 * 60_000) } }] },
+        ],
+      },
+      select: { id: true, steamId: true, eosId: true },
+      take: 32,
+    });
+  }
+
+  private inventoryRowMatches(
+    row: AllocsInventoryRow,
+    player: { steamId: string | null; eosId: string | null },
+  ) {
+    if (row.steamId && player.steamId && row.steamId === player.steamId) return true;
+    if (row.eosId && player.eosId && row.eosId.toLowerCase() === player.eosId.toLowerCase()) return true;
+    return false;
+  }
+
+  private async queueInventorySnapshotsFallback(
+    due: Array<{ id: string; steamId: string | null; eosId: string | null }>,
+    now: number,
+  ) {
+    let queued = 0;
+    for (const player of due) {
+      if (queued >= 2) break;
+      if ((this.inventoryCooldown.get(player.id) ?? 0) > now) continue;
+      this.inventoryCooldown.set(player.id, now + 2 * 60_000);
+      const snapshot = await this.allocs.inventorySnapshot(player.steamId, player.eosId);
+      if (snapshot) await this.persistInventorySnapshot(player.id, snapshot);
+      queued++;
+    }
+  }
+
+  async enqueueShopGrants(orgId: string, serverInstanceId: string, playerId: string, steamId: string) {
+    const player = await this.prisma.player.findFirst({
+      where: { id: playerId, orgId, serverInstanceId },
+      select: { id: true, online: true },
+    });
+    if (!player) return;
+    await this.deliverShopGrantLines(orgId, serverInstanceId, player.id, steamId, player.online, 8);
+  }
+
+  private async enqueuePendingShopGrants(orgId: string, serverInstanceId: string) {
+    const online = await this.prisma.player.findMany({
+      where: { orgId, serverInstanceId, online: true, steamId: { not: null } },
+      select: { id: true, steamId: true },
+      take: 32,
+    });
+    for (const player of online) {
+      if (!player.steamId) continue;
+    await this.deliverShopGrantLines(orgId, serverInstanceId, player.id, player.steamId, true, 8);
+    }
+    const colorLines = await this.prisma.donationLine.findMany({
+      where: {
+        chatColorStatus: { in: ['pending', 'queued'] },
+        donation: { orgId, serverInstanceId, status: 'completed' },
+      },
+      include: { donation: { select: { playerId: true, steamId: true } } },
+      take: 8,
+    });
+    for (const line of colorLines) {
+      await this.deliverShopGrantLines(orgId, serverInstanceId, line.donation.playerId, line.donation.steamId, false, 1);
+    }
+  }
+
+  private async deliverShopGrantLines(
+    orgId: string,
+    serverInstanceId: string,
+    playerId: string,
+    steamId: string,
+    online: boolean,
+    limit: number,
+  ) {
+    const member = await this.prisma.userOrg.findFirst({ where: { orgId }, orderBy: { createdAt: 'asc' }, select: { userId: true } });
+    if (!member) return;
+    const staleBefore = new Date(Date.now() - 5 * 60_000);
+    const lines = await this.prisma.donationLine.findMany({
+      where: {
+        donation: { playerId, orgId, serverInstanceId, status: 'completed' },
+        OR: [
+          { grantStatus: { in: ['pending', 'queued'] } },
+          { chatColorStatus: { in: ['pending', 'queued'] } },
+        ],
+      },
+      take: 16,
+    });
+    let queued = 0;
+    for (const line of lines) {
+      if (queued >= limit) break;
+      const stale = !line.grantQueuedAt || line.grantQueuedAt < staleBefore;
+      const colorDue = line.chatColorStatus === 'pending' || (line.chatColorStatus === 'queued' && stale);
+      if (colorDue && line.chatColor && line.grantAttempts < MAX_GRANT_ATTEMPTS) {
+        const command = buildChatColorCommand(steamId, line.chatColor);
+        if (command && await this.queueShopGrantJob(orgId, member.userId, serverInstanceId, line.id, 'chat_color', command, { chatColorStatus: 'queued' })) {
+          queued += 1;
+        }
+      }
+      if (!online) continue;
+      const grants = lineGrantItems(line.grantItems, line);
+      for (let index = 0; index < grants.length; index += 1) {
+        if (queued >= limit) break;
+        const grant = grants[index];
+        const due = grant.status === 'pending' || (grant.status === 'queued' && stale);
+        if (!due || grant.attempts >= MAX_GRANT_ATTEMPTS) continue;
+        const command = buildGivePlusCommand(steamId, grant.name, grant.quantity, grant.quality);
+        if (!command) {
+          grants[index] = { ...grant, status: 'failed', error: 'Invalid grant item' };
+          await this.prisma.donationLine.update({
+            where: { id: line.id },
+            data: { grantItems: grants as Prisma.InputJsonValue, grantStatus: aggregateGrantStatus(grants), grantError: 'Invalid grant item' },
+          });
+          continue;
+        }
+        grants[index] = { ...grant, status: 'queued', attempts: grant.attempts + 1, error: null };
+        if (await this.queueShopGrantJob(orgId, member.userId, serverInstanceId, line.id, 'item', command, {
+          grantStatus: aggregateGrantStatus(grants),
+          grantItems: grants as Prisma.InputJsonValue,
+        }, index)) {
+          queued += 1;
+        } else {
+          grants[index] = { ...grant, status: 'pending' };
+        }
+      }
+    }
+  }
+
+  private async queueShopGrantJob(
+    orgId: string,
+    userId: string,
+    serverInstanceId: string,
+    donationLineId: string,
+    grantKind: 'item' | 'chat_color',
+    command: string,
+    status: { grantStatus?: string; chatColorStatus?: string; grantItems?: Prisma.InputJsonValue },
+    grantItemIndex?: number,
+  ) {
+    try {
+      await this.prisma.donationLine.update({
+        where: { id: donationLineId },
+        data: {
+          ...status,
+          grantQueuedAt: new Date(),
+          grantError: null,
+          ...(grantKind === 'chat_color' ? { grantAttempts: { increment: 1 } } : {}),
+        },
+      });
+      await this.createJob(orgId, userId, serverInstanceId, 'RCON', {
+        command,
+        purpose: 'shop_grant',
+        donationLineId,
+        grantKind,
+        grantItemIndex,
+      });
+      return true;
+    } catch {
+      await this.prisma.donationLine.update({
+        where: { id: donationLineId },
+        data: grantKind === 'item' ? { grantStatus: 'pending' } : { chatColorStatus: 'pending' },
+      }).catch(() => undefined);
+      return false;
+    }
+  }
+
+  private async finishShopGrant(payload: Record<string, unknown>, runStatus: string, output?: string) {
+    const lineId = String(payload.donationLineId || '');
+    if (!lineId) return;
+    const outcome = classifyGrantOutput(output, runStatus);
+    const next = outcome === 'delivered' ? 'delivered' : outcome === 'failed' ? 'failed' : 'pending';
+    const error = next === 'delivered' ? null : String(output || 'Grant command failed').slice(0, 180);
+    if (payload.grantKind === 'chat_color') {
+      await this.prisma.donationLine.updateMany({
+        where: { id: lineId },
+        data: { chatColorStatus: next, grantError: error, grantedAt: next === 'delivered' ? new Date() : undefined },
+      });
+      return;
+    }
+    const line = await this.prisma.donationLine.findUnique({ where: { id: lineId } });
+    if (!line) return;
+    const grants = lineGrantItems(line.grantItems, line);
+    const index = Number(payload.grantItemIndex);
+    const target = Number.isInteger(index) && index >= 0 && index < grants.length
+      ? index
+      : grants.findIndex((item) => item.status === 'queued' || item.status === 'pending');
+    if (target >= 0) {
+      grants[target] = { ...grants[target], status: next, error };
+    }
+    const grantStatus = aggregateGrantStatus(grants);
+    const grantError = grants.map((item) => item.error).filter(Boolean).join('; ').slice(0, 180) || null;
+    await this.prisma.donationLine.update({
+      where: { id: lineId },
+      data: {
+        grantItems: grants as Prisma.InputJsonValue,
+        grantStatus,
+        grantError,
+        grantedAt: grantStatus === 'delivered' || grantStatus === 'partial' ? new Date() : undefined,
+      },
+    });
+  }
+
+  private async enforceConnectionTools(orgId:string,serverInstanceId:string,rows:PlayerRosterRow[]){
     const settings=await this.prisma.serverProtectionSettings.findUnique({where:{serverInstanceId}});
     if(!settings||(!settings.highPingEnabled&&!settings.countryBanEnabled))return;
     const member=await this.prisma.userOrg.findFirst({where:{orgId},orderBy:{createdAt:'asc'},select:{userId:true}});
     if(!member)return;
-    for(const line of output.split(/\r?\n/)){
-      const head=line.match(/^\s*\d+\.\s+id=(\d+),\s*([^,]+),/i);if(!head)continue;
-      const steam=line.match(/(?:pltfmid|steamid)=Steam_([0-9]{15,20})/i)?.[1];
-      const eos=line.match(/(?:crossid|pltfmid)=EOS_([a-f0-9]{20,64})/i)?.[1];
-      const identifier=steam||eos||head[1];const key=`${serverInstanceId}:${identifier}`;
+    for(const row of rows){
+      const identifier=row.steamId||row.eosId||String(row.entityId);const key=`${serverInstanceId}:${identifier}`;
       if((this.protectionCooldown.get(key)||0)>Date.now())continue;
-      const ping=Number(line.match(/\bping\s*=\s*(\d+)/i)?.[1]??NaN);
-      if(settings.highPingEnabled&&Number.isFinite(ping)){
-        const count=ping>settings.highPingThresholdMs?(this.badPingSamples.get(key)||0)+1:0;this.badPingSamples.set(key,count);
+      if(settings.highPingEnabled&&row.ping!=null){
+        const count=row.ping>settings.highPingThresholdMs?(this.badPingSamples.get(key)||0)+1:0;this.badPingSamples.set(key,count);
         if(count>=settings.highPingSamples){
-          await this.createJob(orgId,member.userId,serverInstanceId,'PLAYER_KICK',{identifier,reason:`${settings.highPingReason} (${ping} ms)`});
+          await this.createJob(orgId,member.userId,serverInstanceId,'PLAYER_KICK',{identifier,reason:`${settings.highPingReason} (${row.ping} ms)`});
           this.badPingSamples.set(key,0);this.protectionCooldown.set(key,Date.now()+5*60_000);continue;
         }
       }
       if(settings.countryBanEnabled){
-        const ip=line.match(/\bip\s*=\s*(\[[^\]]+\]|[^,\s]+)/i)?.[1]?.replace(/^\[|\]$/g,'').split(':')[0];
+        const ip=row.ipAddress;
         if(!ip||this.isPrivateAddress(ip))continue;
         const code=await this.countryForIp(ip);const blocked=Array.isArray(settings.blockedCountryCodes)?settings.blockedCountryCodes.map(String):[];
         if(code&&blocked.includes(code)){
@@ -354,7 +764,13 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     }
   }
   private isPrivateAddress(ip:string){return /^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1$|fc|fd)/i.test(ip);}
+  private pruneProtectionState(now:number){
+    pruneMap(this.protectionCooldown,(until)=>until>now);
+    pruneMap(this.countryCache,(entry)=>entry.expires>now);
+    if(this.badPingSamples.size>2_000)this.badPingSamples.clear();
+  }
   private async countryForIp(ip:string){
+    this.pruneProtectionState(Date.now());
     const cached=this.countryCache.get(ip);if(cached&&cached.expires>Date.now())return cached.code;
     try{const response=await fetch(`https://api.country.is/${encodeURIComponent(ip)}`,{signal:AbortSignal.timeout(3000)});if(!response.ok)return'';const data=await response.json() as {country?:string};const code=String(data.country||'').toUpperCase();if(/^[A-Z]{2}$/.test(code)){this.countryCache.set(ip,{code,expires:Date.now()+24*60*60_000});return code;}}catch{return'';}return'';
   }

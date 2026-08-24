@@ -7,9 +7,11 @@ import { PrismaService } from '../prisma.service';
 import { JwtAuthGuard } from '../server-instances/guards/jwt-auth.guard';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
 import { RequireOrgRoleGuard } from '../server-instances/guards/require-org-role.guard';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
+    AuthModule,
     JwtModule.register({
       secret: process.env.JWT_AGENT_SECRET || process.env.JWT_SECRET || 'change-me-agent-secret',
       signOptions: {

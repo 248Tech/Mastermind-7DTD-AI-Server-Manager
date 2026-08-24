@@ -19,3 +19,4 @@ Please **do not** open a public GitHub issue for security vulnerabilities.
 - Use strong `JWT_SECRET` and `JWT_AGENT_SECRET` in production (not defaults).
 - Run Control Plane and Web over HTTPS. Restrict CORS and rate-limit public endpoints (e.g. pairing).
 - Keep dependencies updated (`pnpm update`, `go get -u`); run audits (`pnpm audit`, etc.).
+- Allocs webtokens (`SEVENDTD_WEB_API_SECRET`) and PrismaCore apiuser passwords stay in control-plane env. They must not appear in shop status, map JSON, or Next public env.

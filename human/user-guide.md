@@ -22,6 +22,7 @@
 13. [Troubleshooting](#13-troubleshooting)
 14. [Security Notes](#14-security-notes)
 15. [API Quick Reference](#15-api-quick-reference)
+16. [Player portal, shop, and live map](#16-player-portal-shop-and-live-map)
 
 ---
 
@@ -53,6 +54,8 @@ Your Browser  ──►  Web UI (Next.js, port 3000)
 - Run bulk operations across many servers at once (restart wave)
 - Receive Discord alerts when a host goes offline or a server restarts
 - Full audit log of every action
+- Live server map (players from PrismaCore, zombies/animals from Allocs)
+- Player portal shop and Steam profile (separate from staff tools)
 
 ---
 
@@ -413,6 +416,8 @@ A **job** is a command sent to a specific game server instance. The control plan
 |------|-------------|
 | `start` | Starts the game server process using `startCommand` |
 | `stop` | Stops the game server (graceful via RCON/Telnet, then process kill) |
+| `saveworld` | Sends telnet `saveworld` to flush the live world (server must be online) |
+| `save-stop` | Sends `saveworld`, copies a full-world backup, then shuts the server down |
 | `restart` | Stop then start |
 | `rcon` | Send a raw RCON/Telnet command; result returned in job output |
 | `custom` | Custom payload; adapter handles based on type string |
@@ -427,6 +432,10 @@ A **job** is a command sent to a specific game server instance. The control plan
 6. Click **Submit**.
 
 The job appears in the list with status **Pending**. The page auto-refreshes every 5 seconds. Status changes to **Running** when the agent picks it up, then **Success** or **Failed** when done.
+
+### Recommending mods
+
+Verified organization members (including viewers) can open **Mods → Pending Approval** and upload a ZIP. Mastermind validates `ModInfo.xml` the same way as a staff quarantine upload, then holds the files off the live Mods folder. Administrators and operators can **Approve** (installs into Mods, loads after restart) or **Reject** (deletes the recommendation). Staff can still upload directly to quarantine.
 
 ### From the API
 
@@ -973,4 +982,23 @@ curl http://localhost:3001/api/orgs/YOUR_ORG_ID/jobs \
 
 ---
 
-*Guide generated from: docs/, control-plane source, agent source, and AI/SETUP.md — 2026-03-11*
+## 16. Player portal, shop, and live map
+
+Staff Live Map (`/live-map`) is dashboard-login only. It shows players from PrismaCore (Allocs fallback), hostiles/animals from Allocs, and PrismaCore overlays when ClaimCreator is up. `visitmap` start/stop is an allowlisted Allocs console call; progress is read from the server log.
+
+The player portal is separate:
+
+| Path | Who |
+|------|-----|
+| `/player/map` | Terrain, zombies, and animals are public. Other players appear only after Steam OpenID. |
+| `/player/shop` | Public catalog. Donate with Steam or an in-game-name password account. Item pages list any In-Game Gifts (thank-you gifts after donation — not item purchases). |
+| `/player/profile` | Steam sessions only. |
+
+Staff **Players** uses a card layout and can set an online player's death count (ServerTools). Donator-shop admins can attach optional In-Game Gifts and chat color; delivery status appears under **Donations**.
+
+Do not expose Allocs `:8080`, PrismaCore `:11111`, or telnet on the public internet. Shop status may show an online-player count, not names or positions.
+
+---
+
+*Guide updated 2026-08-20 (shop grants display, Set deaths, players cards).*
+

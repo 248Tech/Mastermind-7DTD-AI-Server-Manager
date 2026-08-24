@@ -4,12 +4,13 @@ export const dynamic='force-dynamic';
 const editor=()=>(process.env.PROFILE_EDITOR_INTERNAL_URL||'http://profile-editor:8000').replace(/\/$/,'');
 const control=()=>(process.env.CONTROL_PLANE_INTERNAL_URL||'http://control-plane:3001').replace(/\/$/,'');
 
-async function proxy(request:NextRequest,{params}:{params:{path:string[]}}){
+async function proxy(request:NextRequest,{params}:{params:Promise<{path:string[]}>}){
  const token=request.cookies.get('mm_profile_editor_session')?.value;
  if(!token)return Response.json({message:'Profile Editor session required'},{status:401});
  const auth=await fetch(`${control()}/api/auth/me`,{headers:{authorization:`Bearer ${token}`},cache:'no-store'}).catch(()=>null);
  if(!auth?.ok)return Response.json({message:'Profile Editor session expired'},{status:401});
- const path=(params.path||['index.php']).join('/');
+ const routeParams=await params;
+ const path=(routeParams.path||['index.php']).join('/');
  const target=new URL(`${editor()}/${path}`);
  request.nextUrl.searchParams.forEach((value,key)=>target.searchParams.append(key,value));
  const headers=new Headers(request.headers);

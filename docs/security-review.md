@@ -1,5 +1,12 @@
 # Security Review — Threat Model, Mitigations, Refactors, Minimum to Ship
 
+> Historical review: this document describes an early implementation and its
+> route/status claims are no longer authoritative. Agent JWT guards, host/token
+> binding, real pairing authorization, polling/heartbeat protection, and much
+> of the listed RBAC work have since been implemented. Use
+> [SECURITY_AUDIT_2026-08-14.md](SECURITY_AUDIT_2026-08-14.md) for the current
+> application/deployment audit and remaining recommendations.
+
 ## 1. Threat Model
 
 ### 1.1 Assets

@@ -2,6 +2,7 @@ package sevendtd
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -77,6 +78,12 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 		return resultOrErr(a.Restart(ctx, cfg))
 	case "SERVER_SAFE_RESTART":
 		return a.SafeRestart(ctx, cfg, job.Payload)
+	case "SERVER_SAVEWORLD":
+		return a.SaveWorld(ctx, cfg)
+	case "SERVER_SAVE_STOP":
+		return a.SaveStop(ctx, cfg, job.Payload)
+	case "SERVER_MAINTENANCE":
+		return a.SetMaintenance(ctx, cfg, job.Payload)
 	case "SERVER_WIPE_SAVE":
 		if !getBool(job.Payload, "confirmed") {
 			return agent.JobResult{Status: "failed", Error: "save wipe requires explicit confirmation"}, nil
@@ -97,6 +104,11 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 		out, err := a.SendCommand(ctx, cfg, cmd)
 		if err != nil {
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		if strings.EqualFold(getString(job.Payload, "purpose", ""), "inventory_snapshot") {
+			if detailed, ok := latestPlayerLogInventory(cfg.InstallPath, cmd); ok {
+				out = detailed
+			}
 		}
 		return agent.JobResult{Status: "success", Output: out}, nil
 	case "PLAYER_LIST_SYNC":
@@ -141,6 +153,22 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 		return resultOrErr(a.Runner.run(ctx, "", "/usr/bin/sudo", "/usr/bin/systemctl", "start", "regionhealer.service"))
 	case "REGION_HEALER_STOP":
 		return resultOrErr(a.Runner.run(ctx, "", "/usr/bin/sudo", "/usr/bin/systemctl", "stop", "regionhealer.service"))
+	case "REGION_HEALER_STATUS":
+		settings, err := regionHealerSettings(ctx)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: settings}, nil
+	case "REGION_HEALER_CONFIGURE":
+		backupTime := strings.TrimSpace(getString(job.Payload, "backup_time", ""))
+		if !regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d$`).MatchString(backupTime) {
+			return agent.JobResult{Status: "failed", Error: "backup time must use 24-hour HH:MM format"}, nil
+		}
+		settings, err := configureRegionHealer(ctx, backupTime)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: settings}, nil
 	case "SAVE_LIST":
 		saves, err := a.ListSaves(cfg, getString(job.Payload, "server_config_path", ""))
 		if err != nil {
@@ -237,6 +265,21 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			return agent.JobResult{Status: "failed", Error: "7DTD rejected ban command", Output: out}, nil
 		}
 		return agent.JobResult{Status: "success", Output: out}, nil
+	case "PLAYER_SET_DEATHS":
+		identifier := playerCommandIdentifier(job.Payload)
+		deaths := getInt(job.Payload, "deaths", -1)
+		command, err := setDeathsCommand(identifier, deaths)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		out, err := a.SendCommand(ctx, cfg, command)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		if consoleRejected(out) || strings.Contains(strings.ToLower(out), "player '") && strings.Contains(strings.ToLower(out), "not found") {
+			return agent.JobResult{Status: "failed", Error: "Could not set deaths. The player must be online, and ServerTools st-SetDeaths must be installed.", Output: out}, nil
+		}
+		return agent.JobResult{Status: "success", Output: out}, nil
 	case "MOD_LIST":
 		mods, err := listMods(cfg, getString(job.Payload, "mods_path", ""))
 		if err != nil {
@@ -254,6 +297,42 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 		return agent.JobResult{Status: "success", Result: map[string]interface{}{"folders": folders, "count": len(folders), "quarantined": true}}, nil
+	case "MOD_UPLOAD_PENDING":
+		folders, err := installUploadedModsToPending(
+			cfg,
+			getString(job.Payload, "mods_path", ""),
+			getString(job.Payload, "archive_path", ""),
+			getString(job.Payload, "originalName", "uploaded-mod.zip"),
+			getString(job.Payload, "recommendedBy", ""),
+			getString(job.Payload, "recommendedById", ""),
+			getString(job.Payload, "description", ""),
+		)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"folders": folders, "count": len(folders), "pending": true}}, nil
+	case "MOD_PENDING_LIST":
+		root, err := pendingPath(cfg, getString(job.Payload, "mods_path", ""))
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		mods, err := listPendingMods(root)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"mods": mods}}, nil
+	case "MOD_PENDING_APPROVE":
+		folder := getString(job.Payload, "folder", "")
+		if err := approvePendingMod(cfg, getString(job.Payload, "mods_path", ""), folder); err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"approved": folder}}, nil
+	case "MOD_PENDING_REJECT":
+		folder := getString(job.Payload, "folder", "")
+		if err := rejectPendingMod(cfg, getString(job.Payload, "mods_path", ""), folder); err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"rejected": folder}}, nil
 	case "MOD_QUARANTINE":
 		folder := getString(job.Payload, "folder", "")
 		if err := quarantineMod(cfg, getString(job.Payload, "mods_path", ""), folder); err != nil {
@@ -298,6 +377,12 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 		return agent.JobResult{Status: "success", Result: map[string]interface{}{"folder": folder, "path": path, "saved": true}}, nil
+	case "ITEM_CATALOG":
+		catalog, err := listItemCatalog(cfg)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: catalog}, nil
 	case "PROFILE_LIST":
 		profiles, err := listPlayerProfiles(job.Payload)
 		if err != nil {
@@ -735,6 +820,7 @@ func quarantineMod(cfg *agent.InstanceConfig, override, folder string) error {
 	if output, err := exec.Command("/usr/bin/mv", "--", target, destination).CombinedOutput(); err != nil {
 		return fmt.Errorf("quarantine mod: %w: %s", err, strings.TrimSpace(string(output)))
 	}
+	_ = os.Remove(activationMarkerPath(cfg, override, folder))
 	return nil
 }
 
@@ -742,6 +828,31 @@ const maxModArchiveFiles = 10000
 const maxModArchiveExpandedBytes int64 = 2 * 1024 * 1024 * 1024
 
 func installUploadedModsToQuarantine(cfg *agent.InstanceConfig, override, archivePath, originalName string) ([]string, error) {
+	dest, err := quarantinePath(cfg, override)
+	if err != nil {
+		return nil, err
+	}
+	return installUploadedMods(dest, archivePath, originalName)
+}
+
+func installUploadedModsToPending(cfg *agent.InstanceConfig, override, archivePath, originalName, recommendedBy, recommendedById, description string) ([]string, error) {
+	dest, err := pendingPath(cfg, override)
+	if err != nil {
+		return nil, err
+	}
+	folders, err := installUploadedMods(dest, archivePath, originalName)
+	if err != nil {
+		return nil, err
+	}
+	for _, folder := range folders {
+		if err := writeRecommendation(dest, folder, recommendedBy, recommendedById, originalName, description); err != nil {
+			return nil, err
+		}
+	}
+	return folders, nil
+}
+
+func installUploadedMods(destRoot, archivePath, originalName string) ([]string, error) {
 	archiveInfo, err := os.Lstat(archivePath)
 	if err != nil {
 		return nil, fmt.Errorf("open uploaded mod archive: %w", err)
@@ -801,14 +912,13 @@ func installUploadedModsToQuarantine(cfg *agent.InstanceConfig, override, archiv
 		}
 	}
 
-	quarantineRoot, err := quarantinePath(cfg, override)
-	if err != nil {
-		return nil, err
+	if destRoot == "" {
+		return nil, fmt.Errorf("mod destination is required")
 	}
-	if err := os.MkdirAll(quarantineRoot, 0750); err != nil {
-		return nil, fmt.Errorf("create quarantine directory: %w", err)
+	if err := os.MkdirAll(destRoot, 0750); err != nil {
+		return nil, fmt.Errorf("create mod destination: %w", err)
 	}
-	stagingRoot, err := os.MkdirTemp(quarantineRoot, ".upload-*")
+	stagingRoot, err := os.MkdirTemp(destRoot, ".upload-*")
 	if err != nil {
 		return nil, fmt.Errorf("create quarantine staging directory: %w", err)
 	}
@@ -835,8 +945,8 @@ func installUploadedModsToQuarantine(cfg *agent.InstanceConfig, override, archiv
 		}
 		usedFolders[strings.ToLower(folder)] = true
 		folderForRoot[root] = folder
-		if _, err := os.Lstat(filepath.Join(quarantineRoot, folder)); !os.IsNotExist(err) {
-			return nil, fmt.Errorf("quarantined mod already exists: %s", folder)
+		if _, err := os.Lstat(filepath.Join(destRoot, folder)); !os.IsNotExist(err) {
+			return nil, fmt.Errorf("mod already exists: %s", folder)
 		}
 		if err := os.MkdirAll(filepath.Join(stagingRoot, folder), 0750); err != nil {
 			return nil, err
@@ -908,12 +1018,12 @@ func installUploadedModsToQuarantine(cfg *agent.InstanceConfig, override, archiv
 		if err := normalizeModPermissions(stagedMod); err != nil {
 			return nil, fmt.Errorf("normalize uploaded mod %s: %w", folder, err)
 		}
-		destination := filepath.Join(quarantineRoot, folder)
+		destination := filepath.Join(destRoot, folder)
 		if err := os.Rename(stagedMod, destination); err != nil {
 			for _, rollback := range moved {
-				_ = os.RemoveAll(filepath.Join(quarantineRoot, rollback))
+				_ = os.RemoveAll(filepath.Join(destRoot, rollback))
 			}
-			return nil, fmt.Errorf("place %s in quarantine: %w", folder, err)
+			return nil, fmt.Errorf("place %s: %w", folder, err)
 		}
 		moved = append(moved, folder)
 		folders = append(folders, folder)
@@ -923,6 +1033,14 @@ func installUploadedModsToQuarantine(cfg *agent.InstanceConfig, override, archiv
 }
 
 func quarantinePath(cfg *agent.InstanceConfig, override string) (string, error) {
+	return modStagePath("/var/lib/mastermind-agent/mod-quarantine", cfg, override)
+}
+
+func pendingPath(cfg *agent.InstanceConfig, override string) (string, error) {
+	return modStagePath("/var/lib/mastermind-agent/mod-pending", cfg, override)
+}
+
+func modStagePath(base string, cfg *agent.InstanceConfig, override string) (string, error) {
 	root, err := modsPath(cfg, override)
 	if err != nil {
 		return "", err
@@ -931,7 +1049,118 @@ func quarantinePath(cfg *agent.InstanceConfig, override string) (string, error) 
 	if serverKey == "" {
 		serverKey = filepath.Base(filepath.Dir(root))
 	}
-	return filepath.Join("/var/lib/mastermind-agent/mod-quarantine", serverKey), nil
+	return filepath.Join(base, serverKey), nil
+}
+
+type pendingRecommendation struct {
+	RecommendedBy   string    `json:"recommendedBy"`
+	RecommendedById string    `json:"recommendedById,omitempty"`
+	OriginalName    string    `json:"originalName,omitempty"`
+	Description     string    `json:"description,omitempty"`
+	RecommendedAt   time.Time `json:"recommendedAt"`
+}
+
+func recommendationPath(root, folder string) string {
+	return filepath.Join(root, folder, ".mastermind-recommendation.json")
+}
+
+func writeRecommendation(root, folder, recommendedBy, recommendedById, originalName, description string) error {
+	record := pendingRecommendation{
+		RecommendedBy:   strings.TrimSpace(recommendedBy),
+		RecommendedById: strings.TrimSpace(recommendedById),
+		OriginalName:    strings.TrimSpace(originalName),
+		Description:     strings.TrimSpace(description),
+		RecommendedAt:   time.Now().UTC(),
+	}
+	if record.RecommendedBy == "" {
+		record.RecommendedBy = "Verified member"
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(recommendationPath(root, folder), data, 0640)
+}
+
+func listPendingMods(root string) ([]modInfo, error) {
+	mods, err := listModsAt(root)
+	if err != nil {
+		return nil, err
+	}
+	for index := range mods {
+		data, err := os.ReadFile(recommendationPath(root, mods[index].Folder))
+		if err != nil {
+			continue
+		}
+		var record pendingRecommendation
+		if json.Unmarshal(data, &record) != nil {
+			continue
+		}
+		mods[index].RecommendedBy = record.RecommendedBy
+		mods[index].OriginalName = record.OriginalName
+		mods[index].Description = record.Description
+		if record.Description != "" {
+			mods[index].RecommendedBy = record.RecommendedBy + " — " + record.Description
+		}
+		if !record.RecommendedAt.IsZero() {
+			mods[index].RecommendedAt = record.RecommendedAt.UTC().Format(time.RFC3339)
+			mods[index].ActivatedAt = record.RecommendedAt.UTC()
+		}
+	}
+	return mods, nil
+}
+
+func approvePendingMod(cfg *agent.InstanceConfig, override, folder string) error {
+	pendingRoot, err := pendingPath(cfg, override)
+	if err != nil {
+		return err
+	}
+	source, err := realModDirectory(pendingRoot, folder)
+	if err != nil {
+		return fmt.Errorf("pending %w", err)
+	}
+	root, err := modsPath(cfg, override)
+	if err != nil {
+		return err
+	}
+	destination := filepath.Join(root, folder)
+	if _, err := os.Lstat(destination); !os.IsNotExist(err) {
+		return fmt.Errorf("active mod folder already exists: %s", folder)
+	}
+	if output, err := exec.Command("/usr/bin/mv", "--", source, destination).CombinedOutput(); err != nil {
+		return fmt.Errorf("approve pending mod: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	_ = os.Remove(recommendationPath(root, folder))
+	if err := normalizeModPermissions(destination); err != nil {
+		return fmt.Errorf("make approved mod readable by game server: %w", err)
+	}
+	now := time.Now()
+	if err := os.Chtimes(destination, now, now); err != nil {
+		return fmt.Errorf("record approved mod activation time: %w", err)
+	}
+	marker := activationMarkerPath(cfg, override, folder)
+	if err := os.MkdirAll(filepath.Dir(marker), 0750); err != nil {
+		return fmt.Errorf("create mod activation state: %w", err)
+	}
+	if err := os.WriteFile(marker, []byte(now.UTC().Format(time.RFC3339Nano)+"\n"), 0640); err != nil {
+		return fmt.Errorf("record mod activation state: %w", err)
+	}
+	return nil
+}
+
+func rejectPendingMod(cfg *agent.InstanceConfig, override, folder string) error {
+	pendingRoot, err := pendingPath(cfg, override)
+	if err != nil {
+		return err
+	}
+	target, err := realModDirectory(pendingRoot, folder)
+	if err != nil {
+		return fmt.Errorf("pending %w", err)
+	}
+	if err := os.RemoveAll(target); err != nil {
+		return fmt.Errorf("reject pending mod: %w", err)
+	}
+	return nil
 }
 
 func restoreMod(cfg *agent.InstanceConfig, override, folder string) error {
@@ -961,6 +1190,13 @@ func restoreMod(cfg *agent.InstanceConfig, override, folder string) error {
 	if err := os.Chtimes(destination, now, now); err != nil {
 		return fmt.Errorf("record restored mod activation time: %w", err)
 	}
+	marker := activationMarkerPath(cfg, override, folder)
+	if err := os.MkdirAll(filepath.Dir(marker), 0750); err != nil {
+		return fmt.Errorf("create mod activation state: %w", err)
+	}
+	if err := os.WriteFile(marker, []byte(now.UTC().Format(time.RFC3339Nano)+"\n"), 0640); err != nil {
+		return fmt.Errorf("record mod activation state: %w", err)
+	}
 	return nil
 }
 
@@ -976,20 +1212,25 @@ func normalizeModPermissions(root string) error {
 			return nil
 		}
 		if info.IsDir() {
-			return os.Chmod(path, 0750)
+			return os.Chmod(path, 0770)
 		}
-		return os.Chmod(path, 0640)
+		return os.Chmod(path, 0660)
 	})
 }
 
 type modInfo struct {
-	Folder      string    `json:"folder"`
-	Name        string    `json:"name"`
-	Author      string    `json:"author,omitempty"`
-	Website     string    `json:"website,omitempty"`
-	Version     string    `json:"version,omitempty"`
-	ActivatedAt time.Time `json:"activatedAt"`
-	ConfigFiles []string  `json:"configFiles,omitempty"`
+	Folder         string    `json:"folder"`
+	Name           string    `json:"name"`
+	Author         string    `json:"author,omitempty"`
+	Website        string    `json:"website,omitempty"`
+	Version        string    `json:"version,omitempty"`
+	ActivatedAt    time.Time `json:"activatedAt"`
+	PendingRestart bool      `json:"pendingRestart,omitempty"`
+	ConfigFiles    []string  `json:"configFiles,omitempty"`
+	RecommendedBy  string    `json:"recommendedBy,omitempty"`
+	RecommendedAt  string    `json:"recommendedAt,omitempty"`
+	OriginalName   string    `json:"originalName,omitempty"`
+	Description    string    `json:"description,omitempty"`
 }
 
 type serverAdmin struct {
@@ -1071,7 +1312,85 @@ func listMods(cfg *agent.InstanceConfig, override string) ([]modInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return listModsAt(root)
+	mods, err := listModsAt(root)
+	if err != nil {
+		return nil, err
+	}
+	for index := range mods {
+		mods[index].PendingRestart = modPendingRestart(cfg, override, mods[index].Folder)
+	}
+	return mods, nil
+}
+
+// modPendingRestart marks a folder restored after the current game service
+// start. The files are active on disk but 7DTD will not load them until its
+// next restart, so the UI must distinguish this limbo state from loaded mods.
+func activationMarkerPath(cfg *agent.InstanceConfig, override, folder string) string {
+	root, err := quarantinePath(cfg, override)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(root, ".activation", folder+".txt")
+}
+
+func modPendingRestart(cfg *agent.InstanceConfig, override, folder string) bool {
+	if cfg == nil || folder == "" {
+		return false
+	}
+	marker := activationMarkerPath(cfg, override, folder)
+	if marker == "" {
+		return false
+	}
+	contents, err := os.ReadFile(marker)
+	if err != nil {
+		// Mods restored before activation markers were introduced are already
+		// established installations; do not resurrect a stale queue warning
+		// from their mutable folder timestamp.
+		return false
+	}
+	activatedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(contents)))
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, "/usr/bin/systemctl", "is-active", "--quiet", "7dtd.service").Run(); err != nil {
+		return false
+	}
+	var started time.Time
+	for _, property := range []string{"ActiveEnterTimestamp", "ExecMainStartTimestamp"} {
+		out, showErr := exec.CommandContext(ctx, "/usr/bin/systemctl", "show", "-p", property, "--value", "7dtd.service").Output()
+		if showErr != nil {
+			continue
+		}
+		candidate, parseErr := parseSystemdTimestamp(strings.TrimSpace(string(out)))
+		if parseErr == nil && candidate.After(started) {
+			started = candidate
+		}
+	}
+	if started.IsZero() {
+		return false
+	}
+	if !activatedAt.After(started.Add(-2 * time.Second)) {
+		// The server has started since this restore. Remove the marker so
+		// subsequent restarts cannot be affected by mod-written timestamps.
+		_ = os.Remove(marker)
+		return false
+	}
+	return true
+}
+
+func parseSystemdTimestamp(value string) (time.Time, error) {
+	for _, layout := range []string{
+		"Mon 2006-01-02 15:04:05 MST",
+		"Mon 2006-01-02 15:04:05 MST -0700",
+		time.RFC3339,
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unrecognized systemd timestamp %q", value)
 }
 
 func listModsAt(root string) ([]modInfo, error) {
@@ -1084,7 +1403,7 @@ func listModsAt(root string) ([]modInfo, error) {
 	}
 	mods := make([]modInfo, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		info := modInfo{Folder: entry.Name(), Name: entry.Name()}
@@ -1204,6 +1523,59 @@ func readModConfig(cfg *agent.InstanceConfig, override, folder, relativePath str
 	return string(content), nil
 }
 
+func modConfigFileWritable(target string) bool {
+	file, err := os.OpenFile(target, os.O_WRONLY, 0)
+	if err != nil {
+		return false
+	}
+	_ = file.Close()
+	return true
+}
+
+func modConfigDirectoryWritable(dir string) bool {
+	probe, err := os.CreateTemp(dir, ".mastermind-write-probe-*")
+	if err != nil {
+		return false
+	}
+	probePath := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(probePath)
+	return true
+}
+
+func ensureModConfigWritable(target string) error {
+	if modConfigFileWritable(target) {
+		return nil
+	}
+	cmd := exec.Command("sudo", "/usr/local/sbin/mastermind-ensure-mod-config-writable", target)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			message = "permission repair failed"
+		}
+		return fmt.Errorf("mod config is not writable by the agent (%s): %w", message, err)
+	}
+	if !modConfigFileWritable(target) {
+		return fmt.Errorf("mod config is still not writable after permission repair")
+	}
+	return nil
+}
+
+func writeModConfigFile(target string, content string, mode os.FileMode) error {
+	file, err := os.OpenFile(target, os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err = file.WriteString(content); err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	return err
+}
+
 func writeModConfig(cfg *agent.InstanceConfig, override, folder, relativePath, content string) error {
 	if len(content) > maxModConfigBytes {
 		return fmt.Errorf("mod config exceeds 64 KiB editor limit")
@@ -1216,30 +1588,38 @@ func writeModConfig(cfg *agent.InstanceConfig, override, folder, relativePath, c
 	if err != nil {
 		return err
 	}
+	if err := ensureModConfigWritable(target); err != nil {
+		return err
+	}
 	info, err := os.Stat(target)
 	if err != nil {
 		return fmt.Errorf("stat mod config: %w", err)
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(target), ".mastermind-config-*")
-	if err != nil {
-		return fmt.Errorf("create temporary mod config: %w", err)
+	targetDir := filepath.Dir(target)
+	if modConfigDirectoryWritable(targetDir) {
+		temporary, tempErr := os.CreateTemp(targetDir, ".mastermind-config-*")
+		if tempErr == nil {
+			temporaryPath := temporary.Name()
+			defer os.Remove(temporaryPath)
+			if _, err = temporary.WriteString(content); err == nil {
+				err = temporary.Sync()
+			}
+			if closeErr := temporary.Close(); err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				return fmt.Errorf("write temporary mod config: %w", err)
+			}
+			if err = os.Chmod(temporaryPath, info.Mode().Perm()); err != nil {
+				return fmt.Errorf("preserve mod config permissions: %w", err)
+			}
+			if err = os.Rename(temporaryPath, target); err == nil {
+				return nil
+			}
+		}
 	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if _, err = temporary.WriteString(content); err == nil {
-		err = temporary.Sync()
-	}
-	if closeErr := temporary.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return fmt.Errorf("write temporary mod config: %w", err)
-	}
-	if err = os.Chmod(temporaryPath, info.Mode().Perm()); err != nil {
-		return fmt.Errorf("preserve mod config permissions: %w", err)
-	}
-	if err = os.Rename(temporaryPath, target); err != nil {
-		return fmt.Errorf("replace mod config: %w", err)
+	if err := writeModConfigFile(target, content, info.Mode().Perm()); err != nil {
+		return fmt.Errorf("write mod config: %w", err)
 	}
 	return nil
 }
@@ -1302,6 +1682,7 @@ func deleteModWithPipe(ctx context.Context, cfg *agent.InstanceConfig, override,
 	if _, err := os.Lstat(target); !os.IsNotExist(err) {
 		return fmt.Errorf("mod folder still exists after delete")
 	}
+	_ = os.Remove(activationMarkerPath(cfg, override, folder))
 	return nil
 }
 
@@ -1361,6 +1742,121 @@ type serverConfiguration struct {
 }
 
 const saveBackupRoot = "/opt/regionhealer/RegionAutoFix/Saves"
+const regionHealerConfigPath = "/opt/regionhealer/RegionAutoFix/config.env"
+const regionHealerPolicyPath = "/opt/regionhealer/RegionAutoFix/Saves/.mastermind-policy.env"
+
+func regionHealerEnvValue(data, key, fallback string) string {
+	pattern := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `=["']?([^"'\r\n]*)["']?\s*$`)
+	match := pattern.FindStringSubmatch(data)
+	if len(match) != 2 || strings.TrimSpace(match[1]) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(match[1])
+}
+
+func setRegionHealerEnvValue(data, key, value string) string {
+	line := fmt.Sprintf(`%s="%s"`, key, value)
+	pattern := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `=.*$`)
+	if pattern.MatchString(data) {
+		return pattern.ReplaceAllString(data, line)
+	}
+	if data != "" && !strings.HasSuffix(data, "\n") {
+		data += "\n"
+	}
+	return data + line + "\n"
+}
+
+func countRegionHealerSnapshots() (int, error) {
+	entries, err := os.ReadDir(saveBackupRoot)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() && regexp.MustCompile(`^snap_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$`).MatchString(entry.Name()) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func pruneRegionHealerSnapshots(retain int) error {
+	entries, err := os.ReadDir(saveBackupRoot)
+	if err != nil {
+		return err
+	}
+	ids := make([]string, 0)
+	pattern := regexp.MustCompile(`^snap_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$`)
+	for _, entry := range entries {
+		if entry.IsDir() && pattern.MatchString(entry.Name()) {
+			ids = append(ids, entry.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(ids)))
+	for _, id := range ids[minimum(retain, len(ids)):] {
+		if err := os.RemoveAll(filepath.Join(saveBackupRoot, id)); err != nil {
+			return fmt.Errorf("remove old Region Healer snapshot %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+func minimum(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func regionHealerSettings(ctx context.Context) (map[string]interface{}, error) {
+	data, err := os.ReadFile(regionHealerConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("read Region Healer settings: %w", err)
+	}
+	count, err := countRegionHealerSnapshots()
+	if err != nil {
+		return nil, fmt.Errorf("count Region Healer snapshots: %w", err)
+	}
+	policy, _ := os.ReadFile(regionHealerPolicyPath)
+	configured := string(policy)
+	if configured == "" {
+		configured = string(data)
+	}
+	return map[string]interface{}{
+		"backupTime":     regionHealerEnvValue(configured, "backup_time", "03:00"),
+		"timezone":       regionHealerEnvValue(configured, "backup_timezone", "America/New_York"),
+		"retentionCount": 1,
+		"snapshotCount":  count,
+		"active":         serviceActive(ctx, "regionhealer.service"),
+	}, nil
+}
+
+func configureRegionHealer(ctx context.Context, backupTime string) (map[string]interface{}, error) {
+	policy, _ := os.ReadFile(regionHealerPolicyPath)
+	updated := setRegionHealerEnvValue(string(policy), "backup_time", backupTime)
+	updated = setRegionHealerEnvValue(updated, "backup_timezone", "America/New_York")
+	updated = setRegionHealerEnvValue(updated, "savecount", "1")
+	temporary := regionHealerPolicyPath + ".tmp"
+	if err := os.WriteFile(temporary, []byte(updated), 0644); err != nil {
+		return nil, fmt.Errorf("stage Region Healer policy: %w", err)
+	}
+	if err := os.Rename(temporary, regionHealerPolicyPath); err != nil {
+		_ = os.Remove(temporary)
+		return nil, fmt.Errorf("activate Region Healer policy: %w", err)
+	}
+	if err := pruneRegionHealerSnapshots(1); err != nil {
+		return nil, err
+	}
+	if serviceActive(ctx, "regionhealer.service") {
+		if err := systemctlService(ctx, "stop", "regionhealer.service"); err != nil {
+			return nil, fmt.Errorf("stop Region Healer to apply settings: %w", err)
+		}
+		if err := systemctlService(ctx, "start", "regionhealer.service"); err != nil {
+			return nil, fmt.Errorf("restart Region Healer after applying settings: %w", err)
+		}
+	}
+	return regionHealerSettings(ctx)
+}
 
 type SaveRecord struct {
 	ID        string    `json:"id"`
@@ -1408,6 +1904,110 @@ func resolveLiveSave(cfg *agent.InstanceConfig, configOverride string) (string, 
 		return "", fmt.Errorf("resolved save path is outside Saves")
 	}
 	return target, nil
+}
+
+type maintenanceState struct {
+	Enabled          bool   `json:"enabled"`
+	PreviousPassword string `json:"previousPassword"`
+}
+
+func maintenanceStatePath(cfg *agent.InstanceConfig) string {
+	id := strings.TrimSpace(cfg.ServerInstanceID)
+	if id == "" {
+		id = "default"
+	}
+	return filepath.Join("/var/lib/mastermind-agent/maintenance", id+".json")
+}
+
+func applyMaintenancePassword(cfg *agent.InstanceConfig, enabled bool, password string) error {
+	configPath := filepath.Join(filepath.Dir(cfg.InstallPath), "serverconfig.xml")
+	current, err := readServerConfigProperty(configPath, "ServerPassword")
+	if err != nil {
+		return err
+	}
+	stateFile := maintenanceStatePath(cfg)
+	if enabled {
+		if password == "" {
+			return fmt.Errorf("maintenance password is required")
+		}
+		state := maintenanceState{Enabled: true, PreviousPassword: current}
+		if existing, err := os.ReadFile(stateFile); err == nil {
+			var previous maintenanceState
+			if json.Unmarshal(existing, &previous) == nil && previous.Enabled {
+				state.PreviousPassword = previous.PreviousPassword
+			}
+		}
+		if err := os.MkdirAll(filepath.Dir(stateFile), 0750); err != nil {
+			return fmt.Errorf("create maintenance state: %w", err)
+		}
+		data, _ := json.Marshal(state)
+		if err := os.WriteFile(stateFile, data, 0640); err != nil {
+			return fmt.Errorf("write maintenance state: %w", err)
+		}
+		return writeServerConfigProperty(configPath, "ServerPassword", password)
+	}
+	previous := ""
+	if existing, err := os.ReadFile(stateFile); err == nil {
+		var state maintenanceState
+		if json.Unmarshal(existing, &state) == nil {
+			previous = state.PreviousPassword
+		}
+	}
+	if err := writeServerConfigProperty(configPath, "ServerPassword", previous); err != nil {
+		return err
+	}
+	_ = os.Remove(stateFile)
+	return nil
+}
+
+func readServerConfigProperty(path, name string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read server configuration: %w", err)
+	}
+	pattern := regexp.MustCompile(`(?i)<property\s+name="` + regexp.QuoteMeta(name) + `"\s+value="([^"]*)"`)
+	match := pattern.FindSubmatch(data)
+	if len(match) == 2 {
+		return string(match[1]), nil
+	}
+	return "", nil
+}
+
+func writeServerConfigProperty(path, name, value string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read server configuration: %w", err)
+	}
+	escaped := escapeXMLAttr(value)
+	pattern := regexp.MustCompile(`(?i)(<property\s+name="` + regexp.QuoteMeta(name) + `"\s+value=")[^"]*(")`)
+	updated := data
+	if pattern.Match(data) {
+		updated = pattern.ReplaceAll(data, []byte(`${1}`+escaped+`${2}`))
+	} else {
+		insert := []byte("\t<property name=\"" + name + "\" value=\"" + escaped + "\"/>\n")
+		closing := []byte("</ServerSettings>")
+		idx := bytes.LastIndex(bytes.ToLower(data), bytes.ToLower(closing))
+		if idx < 0 {
+			return fmt.Errorf("server configuration is missing </ServerSettings>")
+		}
+		updated = append([]byte{}, data[:idx]...)
+		updated = append(updated, insert...)
+		updated = append(updated, data[idx:]...)
+	}
+	tmp := path + ".mastermind-tmp"
+	if err := os.WriteFile(tmp, updated, 0640); err != nil {
+		return fmt.Errorf("write server configuration: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("replace server configuration: %w", err)
+	}
+	return nil
+}
+
+func escapeXMLAttr(value string) string {
+	replacer := strings.NewReplacer(`&`, "&amp;", `<`, "&lt;", `>`, "&gt;", `"`, "&quot;", `'`, "&apos;")
+	return replacer.Replace(value)
 }
 
 func validSaveID(id string) bool {
@@ -1929,6 +2529,76 @@ func (a *Adapter) Start(ctx context.Context, cfg *agent.InstanceConfig) error {
 	return fmt.Errorf("no start_command and no start.sh in install_path %q", cfg.InstallPath)
 }
 
+func (a *Adapter) SaveWorld(ctx context.Context, cfg *agent.InstanceConfig) (agent.JobResult, error) {
+	if !serviceActive(ctx, "7dtd.service") {
+		return agent.JobResult{Status: "failed", Error: "server is not running"}, nil
+	}
+	out, err := a.SendCommand(ctx, cfg, "saveworld")
+	if err != nil {
+		return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+	}
+	if consoleRejected(out) {
+		return agent.JobResult{Status: "failed", Error: "7DTD rejected saveworld", Output: out}, nil
+	}
+	return agent.JobResult{Status: "success", Output: out, Result: map[string]interface{}{"command": "saveworld"}}, nil
+}
+
+// SaveStop flushes the world, copies a manual full-world backup, then stops 7DTD.
+func (a *Adapter) SaveStop(ctx context.Context, cfg *agent.InstanceConfig, payload map[string]interface{}) (agent.JobResult, error) {
+	if !serviceActive(ctx, "7dtd.service") {
+		return agent.JobResult{Status: "failed", Error: "server is not running"}, nil
+	}
+	backup, err := a.BackupSave(ctx, cfg, getString(payload, "server_config_path", ""), getInt(payload, "retention_count", 10))
+	if err != nil {
+		return agent.JobResult{Status: "failed", Error: fmt.Sprintf("save-stop backup: %v", err)}, nil
+	}
+	if err := a.Stop(ctx, cfg); err != nil {
+		return agent.JobResult{Status: "failed", Error: fmt.Sprintf("world saved and backup %s created, but shutdown failed: %v", backup.ID, err), Result: map[string]interface{}{"backup": backup}}, nil
+	}
+	if err := waitFor7DTDState(ctx, false, 2*time.Minute); err != nil {
+		return agent.JobResult{Status: "failed", Error: fmt.Sprintf("world saved and backup %s created, but server did not stop: %v", backup.ID, err), Result: map[string]interface{}{"backup": backup}}, nil
+	}
+	return agent.JobResult{
+		Status: "success",
+		Output: fmt.Sprintf("Saved world, created backup %s, and stopped the server", backup.ID),
+		Result: map[string]interface{}{"backup": backup, "stopped": true},
+	}, nil
+}
+
+func (a *Adapter) SetMaintenance(ctx context.Context, cfg *agent.InstanceConfig, payload map[string]interface{}) (agent.JobResult, error) {
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+	enabled := getBool(payload, "enabled")
+	password := getString(payload, "password", "")
+	if err := applyMaintenancePassword(cfg, enabled, password); err != nil {
+		return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+	}
+	if serviceActive(ctx, "7dtd.service") {
+		if enabled {
+			payload["kick_reason"] = getString(payload, "kick_reason", "Server entering maintenance")
+		} else if getString(payload, "kick_reason", "") == "" {
+			payload["kick_reason"] = "Server leaving maintenance"
+		}
+		result, err := a.SafeRestart(ctx, cfg, payload)
+		if err != nil {
+			return result, err
+		}
+		if result.Result == nil {
+			result.Result = map[string]interface{}{}
+		}
+		result.Result["maintenance"] = enabled
+		if result.Output == "" {
+			result.Output = fmt.Sprintf("Maintenance %s; server restarted", map[bool]string{true: "enabled", false: "disabled"}[enabled])
+		}
+		return result, nil
+	}
+	if err := a.Start(ctx, cfg); err != nil {
+		return agent.JobResult{Status: "failed", Error: fmt.Sprintf("password updated but server did not start: %v", err)}, nil
+	}
+	return agent.JobResult{Status: "success", Output: fmt.Sprintf("Maintenance %s; server started", map[bool]string{true: "enabled", false: "disabled"}[enabled]), Result: map[string]interface{}{"maintenance": enabled, "started": true}}, nil
+}
+
 func (a *Adapter) Stop(ctx context.Context, cfg *agent.InstanceConfig) error {
 	if cfg.StopCommand != "" {
 		parts := strings.Fields(cfg.StopCommand)
@@ -2010,6 +2680,16 @@ func (a *Adapter) SafeRestart(ctx context.Context, cfg *agent.InstanceConfig, pa
 			"Server will be rebooting in 20 seconds",
 			"Server will be rebooting in 10 seconds",
 		}
+		if getBool(payload, "enabled") {
+			warnings = []string{
+				"Server entering maintenance. Reboot in 1 minute",
+				"Server entering maintenance. Reboot in 50 seconds",
+				"Server entering maintenance. Reboot in 40 seconds",
+				"Server entering maintenance. Reboot in 30 seconds",
+				"Server entering maintenance. Reboot in 20 seconds",
+				"Server entering maintenance. Reboot in 10 seconds",
+			}
+		}
 		for _, warning := range warnings {
 			if _, err := a.SendCommand(ctx, cfg, fmt.Sprintf("say %q", warning)); err != nil {
 				return agent.JobResult{Status: "failed", Error: fmt.Sprintf("send restart warning: %v", err)}, nil
@@ -2027,7 +2707,11 @@ func (a *Adapter) SafeRestart(ctx context.Context, cfg *agent.InstanceConfig, pa
 		return agent.JobResult{Status: "failed", Error: fmt.Sprintf("safe restart backup: %v", err)}, nil
 	}
 
-	kickOutput, err := a.SendCommand(ctx, cfg, `kickall "Server is Restarting"`)
+	kickReason := getString(payload, "kick_reason", "Server is Restarting")
+	if kickReason == "" {
+		kickReason = "Server is Restarting"
+	}
+	kickOutput, err := a.SendCommand(ctx, cfg, fmt.Sprintf("kickall %q", kickReason))
 	if err != nil {
 		return agent.JobResult{Status: "failed", Error: fmt.Sprintf("safe restart kickall: %v", err)}, nil
 	}
@@ -2167,9 +2851,26 @@ func playerCommandIdentifier(payload map[string]interface{}) string {
 	return identifier
 }
 
+func setDeathsCommand(identifier string, deaths int) (string, error) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return "", fmt.Errorf("player identifier required")
+	}
+	if strings.ContainsAny(identifier, " \t\"'`") {
+		return "", fmt.Errorf("player identifier must not contain spaces or quotes")
+	}
+	if deaths < 0 || deaths > 100000 {
+		return "", fmt.Errorf("deaths must be a whole number from 0 to 100000")
+	}
+	return fmt.Sprintf("st-SetDeaths %s %d", identifier, deaths), nil
+}
+
 func consoleRejected(output string) bool {
 	lower := strings.ToLower(output)
-	return strings.Contains(lower, " is not a valid ") || strings.Contains(lower, "error executing command")
+	return strings.Contains(lower, " is not a valid ") ||
+		strings.Contains(lower, "error executing command") ||
+		strings.Contains(lower, "unknown command") ||
+		strings.Contains(lower, "no command or topic found")
 }
 
 var playerCountPattern = regexp.MustCompile(`(?i)total of\s+(\d+)\s+in the game`)
@@ -2208,6 +2909,61 @@ func (a *Adapter) GetLogPath(cfg *agent.InstanceConfig) (string, error) {
 	// 7DTD dedicated server log path
 	p := filepath.Join(cfg.InstallPath, "7DaysToDieServer_Data", "output_log.txt")
 	return p, nil
+}
+
+// latestPlayerLogInventory returns the newest ServerTools Player_Logs section
+// for the entity requested by st-pil. Player_Logs includes stack quantities;
+// st-pil itself only prints item names and slots.
+func latestPlayerLogInventory(installPath, command string) (string, bool) {
+	match := regexp.MustCompile(`(?i)^st-pil\s+(\d+)\s*$`).FindStringSubmatch(strings.TrimSpace(command))
+	if len(match) != 2 {
+		return "", false
+	}
+	entityID := match[1]
+	roots := []string{}
+	if filepath.IsAbs(installPath) {
+		roots = append(roots, filepath.Clean(installPath))
+	}
+	if len(roots) == 0 || roots[0] != "/opt/7dtd/server" {
+		roots = append(roots, "/opt/7dtd/server")
+	}
+	files := []string{}
+	for _, root := range roots {
+		found, err := filepath.Glob(filepath.Join(root, "Mods", "ServerTools_Config", "Logs", "PlayerLogs", "PlayerLog_*.xml"))
+		if err == nil {
+			files = append(files, found...)
+		}
+	}
+	if len(files) == 0 {
+		return "", false
+	}
+	sort.Slice(files, func(i, j int) bool {
+		li, ei := os.Stat(files[i])
+		lj, ej := os.Stat(files[j])
+		if ei != nil || ej != nil {
+			return files[i] > files[j]
+		}
+		return li.ModTime().After(lj.ModTime())
+	})
+	data, err := os.ReadFile(files[0])
+	if err != nil || len(data) == 0 || len(data) > 64*1024*1024 {
+		return "", false
+	}
+	text := string(data)
+	sectionRE := regexp.MustCompile(`(?s)<Player\b[^>]*>.*?(?=<Player\b|</Player>)`)
+	blocks := sectionRE.FindAllString(text, -1)
+	for i := len(blocks) - 1; i >= 0; i-- {
+		block := blocks[i]
+		if !regexp.MustCompile(`(?m)^\s*EntityId\s+` + regexp.QuoteMeta(entityID) + `\s+/`).MatchString(block) {
+			continue
+		}
+		timestamps := regexp.MustCompile(`(?m)^\s*\d{2}:\d{2}:\d{2}:\s*'`).FindAllStringIndex(block, -1)
+		if len(timestamps) == 0 {
+			return block, true
+		}
+		return block[timestamps[len(timestamps)-1][0]:], true
+	}
+	return "", false
 }
 
 // sendTelnet connects to 7DTD telnet, sends password, then command; returns response.

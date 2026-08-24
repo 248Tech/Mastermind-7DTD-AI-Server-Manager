@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.12] - 2026-08-18
+
+- Added the Steam-aware player portal, live map layers, player profiles, map history/trails, claims, inventory/stat displays, and supporter/shop flows.
+- Added Mailgun confirmation, account approval, Steam-link indicators, administrator portal links, escalating login protection, registration quotas, reCAPTCHA support, and encrypted Cloudflare/DigitalOcean settings.
+- Added Allocs/PrismaCore live-data integrations and preserved server-side handling of webtokens and credentials.
+- Reworked the mod editor into an IDE-style editor with tabs, line numbers, syntax coloring, search, wrapping, keyboard save, and AI diff approval.
+- Fixed ServerTools inventory stack quantities being displayed as one item; `Slot N: quantity * item` and common Allocs quantity fields are now preserved.
+- Continued safe restart/save/mod/profile/chat/alert/health/log/Discord operations and agent resilience improvements.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
@@ -7,9 +16,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Post-0.0.11 portal/shop/Allocs/PrismaCore work shipped in `0.0.12` (2026-08-18). The items below are **already live in production** as of 2026-08-20; see [docs/live-features-2026-08-20.md](docs/live-features-2026-08-20.md). They are not a pending deploy checklist.
+
 ### Added
 
-- (none)
+- Donator-shop optional In-Game Gifts (item/qty/quality) and donor chat color; donation snapshots and delivery status; sanitized telnet `giveplus` / `playerchatcolor` with offline retry. Copy frames gifts as thank-you gifts after donation — not item purchases.
+- Player shop pages show In-Game Gifts with `/item-icon/{name}` icons; admin gift autocomplete from ItemIcons + agent `ITEM_CATALOG` (items and blocks, including `keystoneBlock`).
+- Staff **Set deaths** (`PLAYER_SET_DEATHS` → ServerTools `st-SetDeaths`) with a short control-plane pin after success.
+- Server controls **Save world** (`SERVER_SAVEWORLD` → telnet `saveworld`) and **Save-stop** (`SERVER_SAVE_STOP`: saveworld, full-world backup, then shutdown).
+- Verified members can recommend mods from the Mods page. Uploads land in **Pending Approval** until staff approve them into Mods or reject them.
+- Manager **Status** button shows Online / Offline / Maintenance. Staff can enter or leave maintenance: the password from Settings is written to `serverconfig.xml` `ServerPassword`, then the server does a safe restart.
+
+### Changed
+
+- Players page uses a responsive card layout (no wide horizontal table scroll).
+- Live-map client keeps player-track hooks above early returns (fixes a React hooks crash).
+- Agent item catalog scans vanilla/mod `items.xml` and `blocks.xml` plus ItemIcons; shop open can force a fresh catalog load.
+- Mod config writes use direct writable-file fallbacks and safer replacement; pending-restart markers remain on the live agent.
+
+### Security
+
+- Shop In-Game Gifts remain server-built `giveplus` / `playerchatcolor` only. Item names are charset-limited; `giveplus all` is never sent.
 
 ## [0.0.11] - 2026-08-14
 
@@ -266,3 +293,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - (none)
+## 0.0.13 — 2026-08-24
+
+- Added verified player-facing Mod Request uploads at `/player`.
+- Added short request descriptions and backend attribution to the authenticated in-game/Steam player.
+- Added pending approval staging, normalized ZIP extraction, staff approve/reject workflow, and agent-side recommendation metadata.
+- Rebuilt and deployed the control plane, web portal, and host agent without restarting the game server.

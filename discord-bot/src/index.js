@@ -35,6 +35,8 @@ const commands = [
   ['stop', 'Gracefully stop the configured game server', 'SERVER_STOP'],
   ['reboot', 'Restart the configured game server', 'SERVER_RESTART'],
   ['safereboot', 'Countdown, save, back up, kick players, and restart', 'SERVER_SAFE_RESTART'],
+  ['saveworld', 'Send saveworld to flush the live world', 'SERVER_SAVEWORLD'],
+  ['savestop', 'Save, create a backup, then shut down', 'SERVER_SAVE_STOP'],
 ].map(([name, description, jobType]) => ({
   jobType,
   definition: new SlashCommandBuilder().setName(name).setDescription(description),
@@ -49,7 +51,11 @@ function csvSet(value = '') {
 async function api(path, options = {}, retry = true) {
   const headers = { 'content-type': 'application/json', ...(options.headers || {}) };
   if (session?.token) headers.authorization = `Bearer ${session.token}`;
-  const response = await fetch(`${config.baseUrl}${path}`, { ...options, headers });
+  const response = await fetch(`${config.baseUrl}${path}`, {
+    ...options,
+    headers,
+    signal: options.signal ?? AbortSignal.timeout(15_000),
+  });
   if (response.status === 401 && retry && !path.endsWith('/auth/login')) {
     session = undefined;
     await authenticate();
@@ -92,7 +98,7 @@ function authorized(interaction) {
 
 async function queueAndWait(jobType) {
   if (!session) await authenticate();
-  const payload = jobType === 'SERVER_SAFE_RESTART' ? { retention_count: 10 } : {};
+  const payload = jobType === 'SERVER_SAFE_RESTART' || jobType === 'SERVER_SAVE_STOP' ? { retention_count: 10 } : {};
   const queued = await api(`/api/orgs/${encodeURIComponent(session.orgId)}/jobs`, {
     method: 'POST',
     body: JSON.stringify({ serverInstanceId: session.serverId, type: jobType, payload }),

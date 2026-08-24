@@ -1,5 +1,6 @@
 'use client';
 import { useCallback,useEffect,useRef,useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { api,ServerInstance } from '../../../lib/api';
 import { getStoredOrgId } from '../../../lib/auth';
 
@@ -9,9 +10,25 @@ type ProfileResult={data?:{profiles?:Profile[];profile?:Profile;contentBase64?:s
 const card:React.CSSProperties={background:'#111118',border:'1px solid #1e1e2a',borderRadius:10,padding:'1.25rem',marginBottom:'1rem'};
 const button:React.CSSProperties={padding:'.55rem .8rem',border:0,borderRadius:7,background:'#4f46e5',color:'white',fontWeight:600,cursor:'pointer'};
 
+function matchProfile(profiles:Profile[],steamId:string|null,eosId:string|null,name:string|null){
+  const lowerName=name?.trim().toLocaleLowerCase()||'';
+  return profiles.find(profile=>{
+    const file=profile.name.toLowerCase();
+    if(steamId&&(file.includes(steamId.toLowerCase())||file.includes(`steam_${steamId}`.toLowerCase())))return true;
+    if(eosId&&(file.includes(eosId.toLowerCase())||file.includes(`eos_${eosId}`.toLowerCase())))return true;
+    if(lowerName&&profile.playerName?.trim().toLocaleLowerCase()===lowerName)return true;
+    return false;
+  });
+}
+
 export default function ProfileEditorPage(){
- const orgId=getStoredOrgId();const [credit,setCredit]=useState<Credit|null>(null);const [servers,setServers]=useState<ServerInstance[]>([]);const [serverId,setServerId]=useState('');const [profiles,setProfiles]=useState<Profile[]>([]);const [open,setOpen]=useState(false);const [selectedProfile,setSelectedProfile]=useState<Profile|null>(null);const [frameSrc,setFrameSrc]=useState('/api/profile-editor-tool/index.php?lang=en');const [busy,setBusy]=useState(false);const [staging,setStaging]=useState(false);const [error,setError]=useState('');const [message,setMessage]=useState('');const [frameKey,setFrameKey]=useState(0);const frameRef=useRef<HTMLIFrameElement>(null);
- useEffect(()=>{if(!orgId)return;void api.get<Credit>(`/api/orgs/${orgId}/integrations/profile-editor`).then(setCredit).catch(()=>undefined);void api.get<ServerInstance[]>(`/api/orgs/${orgId}/server-instances`).then(rows=>{const found=rows.filter(row=>row.gameType==='7dtd');setServers(found);if(found[0])setServerId(found[0].id);}).catch(e=>setError(e instanceof Error?e.message:'Could not load servers'));},[orgId]);
+ const searchParams=useSearchParams();
+ const deepLinkServer=searchParams.get('serverId');
+ const deepLinkSteam=searchParams.get('steamId');
+ const deepLinkEos=searchParams.get('eosId');
+ const deepLinkName=searchParams.get('name');
+ const orgId=getStoredOrgId();const [credit,setCredit]=useState<Credit|null>(null);const [servers,setServers]=useState<ServerInstance[]>([]);const [serverId,setServerId]=useState('');const [profiles,setProfiles]=useState<Profile[]>([]);const [open,setOpen]=useState(false);const [selectedProfile,setSelectedProfile]=useState<Profile|null>(null);const [frameSrc,setFrameSrc]=useState('/api/profile-editor-tool/index.php?lang=en');const [busy,setBusy]=useState(false);const [staging,setStaging]=useState(false);const [error,setError]=useState('');const [message,setMessage]=useState('');const [frameKey,setFrameKey]=useState(0);const frameRef=useRef<HTMLIFrameElement>(null);const deepLinkHandled=useRef(false);
+ useEffect(()=>{if(!orgId)return;void api.get<Credit>(`/api/orgs/${orgId}/integrations/profile-editor`).then(setCredit).catch(()=>undefined);void api.get<ServerInstance[]>(`/api/orgs/${orgId}/server-instances`).then(rows=>{const found=rows.filter(row=>row.gameType==='7dtd');setServers(found);if(deepLinkServer&&found.some(row=>row.id===deepLinkServer))setServerId(deepLinkServer);else if(found[0])setServerId(found[0].id);}).catch(e=>setError(e instanceof Error?e.message:'Could not load servers'));},[orgId,deepLinkServer]);
  const waitForJob=useCallback(async(runId:string)=>{for(let i=0;i<120;i++){await new Promise(resolve=>setTimeout(resolve,1000));const run=await api.get<{status:string;result:ProfileResult|null}|null>(`/api/orgs/${orgId}/jobs/runs/${runId}`);if(run?.status==='failed')throw new Error(run.result?.errorMessage||'Profile operation failed');if(run?.status==='success')return(run.result||{})as ProfileResult;}throw new Error('Profile operation timed out');},[orgId]);
  const run=useCallback(async(type:string,payload:Record<string,unknown>={})=>{if(!orgId||!serverId)throw new Error('Select a server first');const queued=await api.post<{jobRunId:string}>(`/api/orgs/${orgId}/jobs`,{serverInstanceId:serverId,type,payload});return waitForJob(queued.jobRunId);},[orgId,serverId,waitForJob]);
  const authorize=useCallback(async(target?:Profile)=>{const token=localStorage.getItem('mm_token');if(!token)throw new Error('Sign in again before opening the editor.');const response=await fetch('/api/profile-editor-session',{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(target?{orgId,serverId,path:target.path}:{}),credentials:'same-origin'});if(!response.ok)throw new Error('Could not authorize the Profile Editor session');},[orgId,serverId]);
@@ -19,6 +36,13 @@ export default function ProfileEditorPage(){
  useEffect(()=>{if(serverId)void refresh();},[serverId,refresh]);
  async function launch(){setBusy(true);setError('');setMessage('');setSelectedProfile(null);try{await authorize();setFrameSrc('/api/profile-editor-tool/upload.php?reset=1&lang=en');setOpen(true);setFrameKey(value=>value+1);}catch(e){setError(e instanceof Error?e.message:'Could not open Profile Editor');}finally{setBusy(false);}}
  async function edit(profile:Profile){setBusy(true);setError('');setMessage(`Copying ${profile.name} from the server…`);try{await authorize(profile);const result=await run('PROFILE_READ',{path:profile.path});const encoded=result.data?.contentBase64;if(!encoded)throw new Error('The agent returned an empty profile copy');const bytes=Uint8Array.from(atob(encoded),value=>value.charCodeAt(0));const form=new FormData();form.append('ttpFile',new Blob([bytes],{type:'application/octet-stream'}),profile.name);const uploaded=await fetch('/api/profile-editor-tool/upload.php?lang=en',{method:'POST',body:form,credentials:'same-origin'});if(!uploaded.ok)throw new Error(`Editor rejected the profile (${uploaded.status})`);setSelectedProfile(profile);setFrameSrc('/api/profile-editor-tool/upload.php?lang=en');setOpen(true);setFrameKey(value=>value+1);setMessage(`Loaded ${profile.name}. Make your changes, then use “Inject modified file at next reboot”.`);}catch(e){setSelectedProfile(null);setError(e instanceof Error?e.message:'Could not load profile');setMessage('');}finally{setBusy(false);}}
+ useEffect(()=>{
+  if(deepLinkHandled.current||busy||!profiles.length||(!deepLinkSteam&&!deepLinkEos&&!deepLinkName))return;
+  const match=matchProfile(profiles,deepLinkSteam,deepLinkEos,deepLinkName);
+  if(!match){setError(`No profile file matched ${deepLinkName||deepLinkSteam||deepLinkEos||'that player'}. Refresh the list or open the editor manually.`);deepLinkHandled.current=true;return;}
+  deepLinkHandled.current=true;
+  void edit(match);
+ },[profiles,busy,deepLinkSteam,deepLinkEos,deepLinkName]);
  async function stageEditedProfile(){if(!selectedProfile||staging)return;const frameDocument=frameRef.current?.contentDocument;const form=frameDocument?.querySelector<HTMLFormElement>('#profile-edit-form');if(!form){setError('The profile editor is not ready. Wait for it to finish loading and try again.');return;}if(!window.confirm(`Queue the current edits for ${selectedProfile.playerName||selectedProfile.name}?\n\nThe live profile will not change now. Mastermind will back it up and inject this edited copy while the server is stopped during the next managed start or reboot.`))return;setStaging(true);setError('');setMessage(`Validating and staging ${selectedProfile.name}…`);try{const response=await fetch('/api/profile-editor-tool/save.php',{method:'POST',body:new FormData(form),credentials:'same-origin',cache:'no-store'});if(!response.ok){const detail=await response.text();throw new Error(detail.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim()||`Editor rejected the changes (${response.status})`);}if(response.headers.get('x-mastermind-profile-staged')!=='true')throw new Error('The edited file was created, but Mastermind did not receive a staging target. Reload the profile with Edit copy and try again.');const runId=response.headers.get('x-mastermind-profile-job-run-id');if(runId)await waitForJob(runId);await refresh();setMessage(`${selectedProfile.playerName||selectedProfile.name} is queued for injection on the next Mastermind-managed start or reboot. The original will be timestamped and backed up first.`);}catch(e){setError(e instanceof Error?e.message:'Could not stage the edited profile');setMessage('');}finally{setStaging(false);}}
  return <div><div style={{marginBottom:'1.5rem'}}><h1 style={{margin:0,fontSize:'1.5rem'}}>7D2D Profile Editor</h1><p style={{color:'#64748b',margin:'.3rem 0 0'}}>Load a copy of an existing server profile or upload one manually.</p></div>
   <div style={{...card,borderColor:'#92400e',background:'rgba(120,53,15,.12)'}}><h2 style={{marginTop:0,fontSize:'1rem',color:'#fbbf24'}}>Staged live editing</h2><p style={{color:'#cbd5e1',fontSize:'.84rem',lineHeight:1.6,marginBottom:0}}>After editing a server profile, use <strong>Inject modified file at next reboot</strong> to queue it for that exact player. The live file stays unchanged until the next Mastermind-managed start or restart. With 7DTD stopped, the agent backs up the current profile and installs the queued version atomically before starting the server.</p></div>

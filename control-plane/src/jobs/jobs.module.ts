@@ -9,12 +9,14 @@ import { PairingModule } from '../pairing/pairing.module';
 import { PrismaService } from '../prisma.service';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
 import { AlertsModule } from '../alerts/alerts.module';
+import { AllocsModule } from '../allocs/allocs.module';
 
 @Module({
   imports: [
     BatchesModule,
     PairingModule,
     AlertsModule,
+    AllocsModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'change-me-user-secret',
       signOptions: { expiresIn: '7d' },

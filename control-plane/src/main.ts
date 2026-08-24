@@ -1,37 +1,53 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
-import * as net from 'net';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import type { NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
 
-function isPortAvailable(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => {
-      server.close(() => resolve(true));
-    });
-    server.listen(port, '0.0.0.0');
-  });
-}
-
-async function findAvailablePort(preferred: number, maxAttempts = 10): Promise<number> {
-  for (let i = 0; i < maxAttempts; i++) {
-    const port = preferred + i;
-    if (await isPortAvailable(port)) return port;
+function validateProductionConfiguration() {
+  if (process.env.NODE_ENV !== 'production') return;
+  for (const key of ['JWT_SECRET', 'JWT_AGENT_SECRET', 'EMAIL_VERIFICATION_SECRET', 'OPENAI_KEY_ENCRYPTION_SECRET']) {
+    const value = process.env[key] || '';
+    if (value.length < 32 || /change-me|changeme/i.test(value)) {
+      throw new Error(`${key} must be a non-default secret of at least 32 characters`);
+    }
   }
-  throw new Error(`No available port in range ${preferred}–${preferred + maxAttempts - 1}`);
+  const publicUrl = process.env.PUBLIC_WEB_URL || '';
+  if (!publicUrl.startsWith('https://')) throw new Error('PUBLIC_WEB_URL must use HTTPS in production');
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  app.enableCors({ origin: '*' });
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
-  const preferred = parseInt(process.env.PORT ?? '3001', 10);
-  const port = await findAvailablePort(preferred);
-  if (port !== preferred) {
-    console.warn(`Port ${preferred} in use — using port ${port} instead`);
-  }
-  await app.listen(port);
+  validateProductionConfiguration();
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
+  app.useBodyParser('json', { limit: '256kb' });
+  app.useBodyParser('urlencoded', { limit: '256kb', extended: true });
+  const allowedOrigins = new Set([process.env.PUBLIC_WEB_URL?.replace(/\/$/, '')].filter(Boolean));
+  if (process.env.NODE_ENV !== 'production') allowedOrigins.add('http://localhost:3000');
+  app.enableCors({
+    origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) =>
+      callback(null, !origin || allowedOrigins.has(origin)),
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type'],
+    credentials: false,
+    maxAge: 600,
+  });
+  app.use((_req: Request, response: Response, next: NextFunction) => {
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+    response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    response.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Frame-Options', 'DENY');
+    response.setHeader('X-XSS-Protection', '0');
+    next();
+  });
+  // Several legacy DTOs are intentionally still plain TypeScript shapes. Keep
+  // decorator validation active without stripping those request bodies until
+  // every endpoint has been migrated to decorated DTOs.
+  app.useGlobalPipes(new ValidationPipe({ transform: true, forbidUnknownValues: false }));
+  const port = parseInt(process.env.PORT ?? '3001', 10);
+  await app.listen(port, '0.0.0.0');
   console.log(`Control plane listening on http://localhost:${port}`);
 }
 

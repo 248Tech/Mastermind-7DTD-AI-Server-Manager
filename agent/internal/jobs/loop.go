@@ -157,7 +157,7 @@ func (l *executionLimiter) mutationIsBusy() bool { return l.mutationBusy.Load() 
 // game state and therefore must pass through the serialized mutation gate.
 func isReadOnly(jobType string) bool {
 	switch jobType {
-	case "MOD_LIST", "MOD_QUARANTINE_LIST", "MOD_CONFIG_READ", "PROFILE_LIST", "PROFILE_READ", "PLAYER_LIST_SYNC", "PLAYER_ADMIN_LIST", "SAVE_LIST":
+	case "MOD_LIST", "MOD_QUARANTINE_LIST", "MOD_PENDING_LIST", "MOD_CONFIG_READ", "PROFILE_LIST", "PROFILE_READ", "PLAYER_LIST_SYNC", "PLAYER_ADMIN_LIST", "SAVE_LIST", "REGION_HEALER_STATUS", "ITEM_CATALOG":
 		return true
 	default:
 		return false
@@ -175,7 +175,7 @@ func runOne(ctx context.Context, c client.Client, hostID string, j client.Job, e
 		}
 	}()
 	maxDuration := 15 * time.Minute
-	if j.Type == "SERVER_SAFE_RESTART" || j.Type == "SERVER_RESTART" {
+	if j.Type == "SERVER_SAFE_RESTART" || j.Type == "SERVER_RESTART" || j.Type == "SERVER_SAVE_STOP" || j.Type == "SERVER_MAINTENANCE" {
 		maxDuration = 24 * time.Hour
 	} else if isReadOnly(j.Type) {
 		maxDuration = 3 * time.Minute
@@ -188,7 +188,7 @@ func runOne(ctx context.Context, c client.Client, hostID string, j client.Job, e
 		}
 	})
 	var downloadedArchive string
-	if j.Type == "MOD_UPLOAD_QUARANTINE" {
+	if j.Type == "MOD_UPLOAD_QUARANTINE" || j.Type == "MOD_UPLOAD_PENDING" {
 		_ = c.SubmitJobProgress(ctx, hostID, j.ID, "downloading", "Downloading uploaded mod archive")
 		temporary, err := os.CreateTemp("", "mastermind-mod-upload-*.zip")
 		if err != nil {

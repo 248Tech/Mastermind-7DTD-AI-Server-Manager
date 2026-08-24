@@ -1,66 +1,12 @@
 import { NextRequest } from "next/server";
 import { readFile, readdir, open } from "fs/promises";
 import pathModule from "path";
-import net from "net";
 export const dynamic = "force-dynamic";
 const allowed =
   /^(entities-live|claims-live|regions-live|world-info|visitmap-status|api\/(map\/config|serverstats)|map\/\d+\/-?\d+\/-?\d+\.png)$/;
-type LiveEntity = {
-  id: number;
-  name: string;
-  type: string;
-  position: { x: number; y: number; z: number };
-};
-async function liveEntities() {
-  return new Promise<LiveEntity[]>((resolve, reject) => {
-    const socket = net.createConnection({
-      host: process.env.SEVENDTD_TELNET_HOST || "host.docker.internal",
-      port: Number(process.env.SEVENDTD_TELNET_PORT || 18081),
-    });
-    let output = "",
-      done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      socket.destroy();
-      const entities: LiveEntity[] = [];
-      for (const line of output.split(/\r?\n/)) {
-        const identity = /^\d+\.\s+id=(\d+),\s+\[type=([^,\]]+),\s+name=([^,\]]+)/i.exec(line);
-        const position = /\bpos=\((-?[\d.]+),\s*(-?[\d.]+),\s*(-?[\d.]+)\)/i.exec(line);
-        const dead = /\bdead=(true|false)\b/i.exec(line);
-        if (!identity || !position || dead?.[1].toLowerCase() === "true") continue;
-        entities.push({
-          id: Number(identity[1]),
-          type: identity[2].trim(),
-          name: identity[3].trim(),
-          position: {
-            x: Number(position[1]),
-            y: Number(position[2]),
-            z: Number(position[3]),
-          },
-        });
-      }
-      resolve(entities);
-    };
-    const timer = setTimeout(() => {
-      socket.destroy();
-      reject(new Error("entity query timed out"));
-    }, 7000);
-    socket.setEncoding("utf8");
-    socket.on("connect", () => setTimeout(() => socket.write("le\n"), 500));
-    socket.on("data", (chunk) => {
-      output += chunk;
-      if (/Total of \d+ in the game/.test(output)) finish();
-    });
-    socket.on("error", (error) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      reject(error);
-    });
-  });
-}
+// PrismaCore overlays and Allocs hostiles/animals/inventory stay on the
+// control plane so apiuser / webtoken credentials never leave it.
+type AuthProfile = { orgs?: Array<{ orgId: string }> };
 
 async function offlineMapConfig() {
   let maxZoom = 4;
@@ -105,7 +51,7 @@ async function offlineMapConfig() {
 }
 export async function GET(
   request: NextRequest,
-  { params }: { params: { path: string[] } },
+  { params }: { params: Promise<{ path: string[] }> },
 ) {
   const token = request.cookies.get("mm_live_map_session")?.value;
   if (!token)
@@ -125,7 +71,8 @@ export async function GET(
       { message: "Live Map session expired" },
       { status: 401 },
     );
-  const path = (params.path || []).join("/");
+  const routeParams = await params;
+  const path = (routeParams.path || []).join("/");
   if (!allowed.test(path))
     return Response.json(
       { message: "Unsupported map resource" },
@@ -328,29 +275,43 @@ export async function GET(
     }
   }
   if (path === "entities-live") {
-    try {
-      const all = await liveEntities();
+    const me = (await auth.json().catch(() => null)) as AuthProfile | null;
+    const orgId = me?.orgs?.[0]?.orgId;
+    if (!orgId) {
       return Response.json(
-        {
-          data: {
-            players: all.filter((e) => /EntityPlayer/i.test(e.type)),
-            animals: all.filter((e) => /Animal/i.test(`${e.type} ${e.name}`)),
-            hostiles: all.filter((e) => /Zombie|Enemy|Vulture/i.test(e.type)),
-          },
-        },
-        { headers: { "cache-control": "no-store" } },
-      );
-    } catch (error) {
-      return Response.json(
-        {
-          message:
-            error instanceof Error
-              ? error.message
-              : "Live entities unavailable",
-        },
+        { message: "Organization required" },
         { status: 503 },
       );
     }
+    const response = await fetch(
+      `${control}/api/orgs/${orgId}/allocs/entities`,
+      {
+        headers: { authorization: `Bearer ${token}` },
+        cache: "no-store",
+        redirect: "error",
+      },
+    ).catch(() => null);
+    if (!response) {
+      return Response.json(
+        { message: "Live entities unavailable" },
+        { status: 503 },
+      );
+    }
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return Response.json(
+        {
+          message:
+            (body as { message?: string }).message ||
+            "Live entities unavailable",
+        },
+        { status: response.status },
+      );
+    }
+    return Response.json(
+      { data: body },
+      { headers: { "cache-control": "no-store" } },
+    );
   }
   const tile = path.match(/^map\/(\d+)\/(-?\d+)\/(-?\d+)\.png$/);
   if (tile) {
@@ -373,7 +334,10 @@ export async function GET(
       return new Response(await readFile(file), {
         headers: {
           "content-type": "image/png",
-          "cache-control": "private, max-age=30",
+          // Terrain tiles contain no player/entity data and change only when
+          // visitmap regenerates them. Let browsers and the edge reuse them.
+          "cache-control":
+            "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800",
         },
       });
     } catch {

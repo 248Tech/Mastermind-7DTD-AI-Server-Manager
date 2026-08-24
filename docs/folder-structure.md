@@ -1,8 +1,10 @@
 # Folder Structure
 
+As of 2026-08-20. Older design docs may still mention Tailwind/shadcn; the live web UI uses Next.js App Router and inline styles.
+
 ```
 Mastermind-7DTD-AI-Server-Manager/
-├── control-plane/                 # NestJS
+├── control-plane/                 # NestJS API
 │   └── src/
 │       ├── app.module.ts
 │       ├── auth/
@@ -10,47 +12,39 @@ Mastermind-7DTD-AI-Server-Manager/
 │       ├── hosts/
 │       ├── jobs/
 │       ├── scheduler/
-│       ├── events/
 │       ├── alerts/
-│       ├── game-adapters/
+│       ├── player-auth/
+│       ├── donations/             # Stripe, shop catalog, kit grants
+│       ├── prismacore/
+│       ├── allocs/
+│       ├── players/               # roster, inventory, Set deaths
+│       ├── logs/
+│       ├── health-monitor/
 │       ├── websocket/
-│       ├── discord-bot/
-│       └── api/
-├── web/                           # Next.js + Tailwind + shadcn
+│       └── prisma.service.ts
+├── web/                           # Next.js App Router
 │   └── src/
 │       ├── app/
 │       │   ├── layout.tsx
 │       │   ├── page.tsx
 │       │   ├── (auth)/login/
-│       │   └── (dashboard)/
-│       │       ├── dashboard/
-│       │       ├── hosts/
-│       │       ├── jobs/
-│       │       ├── schedules/
-│       │       ├── alerts/
-│       │       └── settings/
+│       │   ├── (dashboard)/       # staff: live-map, players, donator-shop, purchases, …
+│       │   ├── player/            # portal: map, profile, shop, cart
+│       │   └── api/               # BFFs: live-map, player-map, player-auth, donations, item-icons
 │       ├── components/
-│       │   └── ui/
-│       ├── hooks/
 │       └── lib/
-├── agent/                         # Go
-│   ├── main.go
-│   └── internal/
-│       ├── client/
-│       ├── runner/
-│       ├── policy/
-│       ├── heartbeat/
-│       ├── jobs/
-│       ├── games/
-│       └── stream/
+├── agent/                         # Go host agent (7DTD adapter, ITEM_CATALOG items+blocks)
+├── discord-bot/
 ├── infra/
 │   ├── docker-compose.yml
-│   └── agent/
-│       └── systemd/
+│   ├── .env.example
+│   └── prismacore/
 ├── docs/
-│   ├── prd-lite.md
 │   ├── architecture.md
-│   ├── module-breakdown.md
-│   └── folder-structure.md
-└── prompts/                       # AI/ops prompts (optional)
+│   ├── allocs.md
+│   ├── prismacore.md
+│   ├── DIGITALOCEAN_DEPLOYMENT.md
+│   ├── release-0.0.12-context.md
+│   └── live-features-2026-08-20.md
+└── human/user-guide.md
 ```

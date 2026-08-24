@@ -99,12 +99,12 @@ func TestCancelledWaitDoesNotDeadlock(t *testing.T) {
 }
 
 func TestReadOnlyClassification(t *testing.T) {
-	for _, jobType := range []string{"MOD_LIST", "MOD_QUARANTINE_LIST", "MOD_CONFIG_READ", "PROFILE_LIST", "PROFILE_READ", "PLAYER_LIST_SYNC", "PLAYER_ADMIN_LIST", "SAVE_LIST"} {
+	for _, jobType := range []string{"MOD_LIST", "MOD_QUARANTINE_LIST", "MOD_PENDING_LIST", "MOD_CONFIG_READ", "PROFILE_LIST", "PROFILE_READ", "PLAYER_LIST_SYNC", "PLAYER_ADMIN_LIST", "SAVE_LIST", "ITEM_CATALOG"} {
 		if !isReadOnly(jobType) {
 			t.Errorf("%s should be read-only", jobType)
 		}
 	}
-	for _, jobType := range []string{"RCON", "SEND_COMMAND", "SERVER_RESTART", "PLAYER_KICK", "MOD_DELETE"} {
+	for _, jobType := range []string{"RCON", "SEND_COMMAND", "SERVER_RESTART", "PLAYER_KICK", "PLAYER_SET_DEATHS", "MOD_DELETE"} {
 		if isReadOnly(jobType) {
 			t.Errorf("%s must be serialized", jobType)
 		}

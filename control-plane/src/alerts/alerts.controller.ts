@@ -30,6 +30,8 @@ export class AlertsController {
   }
 
   @Post()
+  @UseGuards(RequireOrgRoleGuard)
+  @RequireOrgRoles('admin', 'operator')
   async create(
     @Param('orgId') orgId: string,
     @Body() body: { name: string; condition: unknown; channel: unknown; enabled?: boolean },
@@ -41,6 +43,8 @@ export class AlertsController {
   }
 
   @Patch(':id')
+  @UseGuards(RequireOrgRoleGuard)
+  @RequireOrgRoles('admin', 'operator')
   async update(
     @Param('orgId') orgId: string,
     @Param('id') id: string,
@@ -67,6 +71,8 @@ export class AlertsController {
   }
 
   @Delete(':id')
+  @UseGuards(RequireOrgRoleGuard)
+  @RequireOrgRoles('admin', 'operator')
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('orgId') orgId: string, @Param('id') id: string) {
     try {
