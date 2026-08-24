@@ -4,11 +4,22 @@ import { DUMMY_PASSWORD_HASH, makePasswordHash, verifyPassword } from '../auth/a
 import { stripeCheckoutEnabledForOrg } from '../donations/donations.credentials';
 import { PrismaService } from '../prisma.service';
 import { PrismaCoreService } from '../prismacore/prismacore.service';
+import { JobsService } from '../jobs/jobs.service';
+import { randomUUID } from 'crypto';
+import { mkdir, unlink, writeFile } from 'fs/promises';
+import { join } from 'path';
 import { parsePortalPassword, parsePortalPlayerName, parseShopReturnPath } from './player-auth.names';
 import { emptyPlayerPlaces, filterPlayerPlaces } from './player-places';
 
 const STEAM_OPENID = 'https://steamcommunity.com/openid/login';
 const CLAIMED_ID = /^https?:\/\/steamcommunity\.com\/openid\/id\/(7656119\d{10})$/;
+
+function hostLooksOnline(host: { status: string | null; lastHeartbeatAt: Date | null }) {
+  if (host.status === 'online') return true;
+  if (host.status === 'offline') return false;
+  if (!host.lastHeartbeatAt) return false;
+  return Date.now() - host.lastHeartbeatAt.getTime() < 120_000;
+}
 
 @Injectable()
 export class PlayerAuthService {
@@ -16,6 +27,7 @@ export class PlayerAuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly prismaCore: PrismaCoreService,
+    private readonly jobs: JobsService,
   ) {}
 
   async verifySteam(serverInstanceId: string, returnTo: string, openid: Record<string, unknown>) {
@@ -79,6 +91,75 @@ export class PlayerAuthService {
       serverReachable: live.serverReachable,
       playersOnline: live.playersOnline,
     };
+  }
+
+  async publicLanding() {
+    let orgId: string | null = null;
+    try {
+      orgId = (await this.portalServer()).orgId;
+    } catch {
+      const first = await this.prisma.org.findFirst({ select: { id: true }, orderBy: { createdAt: 'asc' } });
+      orgId = first?.id ?? null;
+    }
+    if (!orgId) {
+      return {
+        ok: false as const,
+        orgName: null,
+        headline: 'Mastermind',
+        servers: [] as Array<{
+          id: string;
+          name: string;
+          hostName: string;
+          playersOnline: number;
+          shopPath: string;
+          mapPath: string;
+        }>,
+      };
+    }
+
+    const org = await this.prisma.org.findUnique({ where: { id: orgId }, select: { name: true } });
+    const orgName = org?.name?.trim() || 'Mastermind';
+    const instances = await this.prisma.serverInstance.findMany({
+      where: { orgId },
+      select: {
+        id: true,
+        name: true,
+        host: { select: { name: true, status: true, lastHeartbeatAt: true } },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    const onlineIds = instances
+      .filter((row) => hostLooksOnline(row.host))
+      .map((row) => row.id);
+
+    const counts = onlineIds.length
+      ? await this.prisma.player.groupBy({
+          by: ['serverInstanceId'],
+          where: { orgId, serverInstanceId: { in: onlineIds }, online: true, NOT: { identityKey: { startsWith: 'name:' } } },
+          _count: { _all: true },
+        })
+      : [];
+    const countByServer = new Map(counts.map((row) => [row.serverInstanceId, row._count._all]));
+
+    const servers = instances
+      .filter((row) => onlineIds.includes(row.id))
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        hostName: row.host.name,
+        playersOnline: countByServer.get(row.id) ?? 0,
+        shopPath: `/player/shop?server=${encodeURIComponent(row.id)}`,
+        mapPath: `/player/map?server=${encodeURIComponent(row.id)}`,
+      }));
+
+    const headline = servers.length === 1
+      ? `${orgName} is Currently Hosting — ${servers[0].name}`
+      : servers.length > 1
+        ? `${orgName} is Currently Hosting`
+        : `${orgName} — no servers online`;
+
+    return { ok: true as const, orgName, headline, servers };
   }
 
   async registerName(input: { name?: unknown; password?: unknown; next?: unknown }) {
@@ -258,6 +339,32 @@ export class PlayerAuthService {
         recent: recent.map((row) => ({ amountCents: row.amountCents, at: row.createdAt.toISOString() })),
       },
     };
+  }
+
+  async requestMod(token: string, file: { originalname: string; size: number; buffer: Buffer } | undefined, description: unknown) {
+    const player = await this.requirePlayer(token);
+    const text = typeof description === 'string' ? description.trim() : '';
+    if (!text) throw new BadRequestException('Add a short description of the mod');
+    if (text.length > 500) throw new BadRequestException('Mod description cannot exceed 500 characters');
+    if (!file?.buffer?.length) throw new BadRequestException('Choose a non-empty ZIP archive');
+    if (!/\.zip$/i.test(file.originalname || '')) throw new BadRequestException('Only .zip mod archives are supported');
+    if (file.size > 256 * 1024 * 1024) throw new BadRequestException('ZIP exceeds the 256 MiB upload limit');
+    const signature = file.buffer.subarray(0, 4).toString('hex');
+    if (!['504b0304', '504b0506', '504b0708'].includes(signature)) throw new BadRequestException('The uploaded file is not a valid ZIP archive');
+    const uploadId = randomUUID();
+    const root = process.env.MOD_UPLOAD_DIR || '/var/lib/mastermind/uploads';
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const stagedPath = join(root, `${uploadId}.zip`);
+    await writeFile(stagedPath, file.buffer, { mode: 0o600, flag: 'wx' });
+    try {
+      return await this.jobs.createPlayerModRequest(player.orgId, player.serverInstanceId, {
+        uploadId, originalName: file.originalname, sizeBytes: file.size, description: text,
+        recommendedBy: player.name, recommendedById: player.id,
+      });
+    } catch (error) {
+      await unlink(stagedPath).catch(() => undefined);
+      throw error;
+    }
   }
 
   async places(token: string) {

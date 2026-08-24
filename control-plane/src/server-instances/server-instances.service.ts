@@ -234,6 +234,7 @@ export class ServerInstancesService {
       telnetHost: string | null;
       telnetPort: number | null;
       telnetPassword: string | null;
+      maintenanceMode?: boolean;
       createdAt: Date;
       updatedAt: Date;
       gameType?: { slug: string; capabilities: unknown };
@@ -255,6 +256,7 @@ export class ServerInstancesService {
       startCommand: row.startCommand,
       telnetHost: row.telnetHost,
       telnetPort: row.telnetPort,
+      maintenanceMode: Boolean((row as { maintenanceMode?: boolean }).maintenanceMode),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };

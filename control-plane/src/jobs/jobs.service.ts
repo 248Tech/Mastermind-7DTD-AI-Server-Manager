@@ -17,14 +17,18 @@ import { unlink } from 'fs/promises';
 import { join } from 'path';
 import { pruneMap } from '../common/ttl-map';
 import { parseInventoryOutput, type AllocsInventoryRow, type InventorySnapshot } from '../players/player-inventory';
-import { parseAllocsPlayersOnline, parseLpRoster, type PlayerRosterRow } from '../players/player-roster';
+import { parseAllocsPlayersOnline, parseLpRoster, mergeRosterPositions, type PlayerRosterRow } from '../players/player-roster';
+import { decryptIntegrationSecret } from '../orgs/integration-crypto';
 import { AllocsService } from '../allocs/allocs.service';
 import {
   MAX_GRANT_ATTEMPTS,
+  aggregateGrantStatus,
   buildChatColorCommand,
   buildGivePlusCommand,
   classifyGrantOutput,
+  lineGrantItems,
 } from '../donations/shop-grants';
+import { catalogFromAgentResult } from '../donations/item-catalog';
 
 @Injectable()
 export class JobsService implements OnModuleInit, OnModuleDestroy {
@@ -32,6 +36,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
   private readonly protectionCooldown = new Map<string, number>();
   private readonly countryCache = new Map<string, { code: string; expires: number }>();
   private readonly inventoryCooldown = new Map<string, number>();
+  private readonly deathPins = new Map<string, { deaths: number; until: number }>();
   private staleTimer?: NodeJS.Timeout;
   constructor(
     private readonly prisma: PrismaService,
@@ -72,6 +77,19 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     payload?: Record<string, unknown>,
   ): Promise<{ jobId: string; jobRunId: string }> {
     const normalizedJobType = this.normalizeJobType(jobType);
+    const membership = await this.prisma.userOrg.findUnique({
+      where: { userId_orgId: { userId, orgId } },
+      include: { role: true, user: { select: { email: true, name: true } } },
+    });
+    const roleName = membership?.role.name;
+    const viewerAllowed = ['MOD_LIST', 'MOD_QUARANTINE_LIST', 'MOD_PENDING_LIST', 'MOD_UPLOAD_PENDING'];
+    if (roleName === 'viewer' && !viewerAllowed.includes(normalizedJobType)) {
+      throw new ForbiddenException('Verified members may recommend mods, but cannot change installed mods');
+    }
+    if (normalizedJobType === 'MOD_UPLOAD_PENDING') {
+      const recommendedBy = membership?.user.name?.trim() || membership?.user.email || 'Verified member';
+      payload = { ...(payload ?? {}), recommendedBy, recommendedById: userId };
+    }
     if (normalizedJobType === 'RCON' || normalizedJobType === 'SEND_COMMAND') {
       const command = typeof payload?.command === 'string' ? payload.command.trim() : '';
       if (!command) throw new BadRequestException('Console command is required');
@@ -88,6 +106,22 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         throw new ForbiddenException('Only organization administrators may change game administrators');
       }
     }
+    if (normalizedJobType === 'PLAYER_SET_DEATHS') {
+      const membership = await this.prisma.userOrg.findUnique({
+        where: { userId_orgId: { userId, orgId } },
+        include: { role: true },
+      });
+      if (!membership || !['admin', 'operator'].includes(membership.role.name)) {
+        throw new ForbiddenException('Only organization administrators or operators may edit player deaths');
+      }
+      const deaths = Number(payload?.deaths);
+      if (!Number.isInteger(deaths) || deaths < 0 || deaths > 100_000) {
+        throw new BadRequestException('Deaths must be a whole number from 0 to 100000');
+      }
+      const identifier = typeof payload?.identifier === 'string' ? payload.identifier.trim() : '';
+      if (!identifier) throw new BadRequestException('Player identifier is required');
+      payload = { ...(payload ?? {}), deaths, identifier };
+    }
     if (normalizedJobType === 'PLAYER_KICK_ALL' || normalizedJobType === 'SERVER_KILL') {
       const membership = await this.prisma.userOrg.findUnique({
         where: { userId_orgId: { userId, orgId } },
@@ -97,7 +131,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         throw new ForbiddenException('Only organization administrators or operators may perform this action');
       }
     }
-    if (['SAVE_BACKUP', 'SAVE_RESTORE', 'SAVE_DELETE', 'SAVE_RETENTION'].includes(normalizedJobType)) {
+    if (['SAVE_BACKUP', 'SAVE_RESTORE', 'SAVE_DELETE', 'SAVE_RETENTION', 'SERVER_SAVE_STOP'].includes(normalizedJobType)) {
       const membership = await this.prisma.userOrg.findUnique({
         where: { userId_orgId: { userId, orgId } },
         include: { role: true },
@@ -114,16 +148,33 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       const membership = await this.prisma.userOrg.findUnique({ where: { userId_orgId: { userId, orgId } }, include: { role: true } });
       if (!membership || !['admin', 'operator'].includes(membership.role.name)) throw new ForbiddenException('Only organization administrators or operators may upload mods');
     }
+    if (normalizedJobType === 'SERVER_MAINTENANCE') {
+      if (!roleName || !['admin', 'operator'].includes(roleName)) {
+        throw new ForbiddenException('Only organization administrators or operators may change maintenance mode');
+      }
+    }
     const serverInstance = await this.prisma.serverInstance.findFirst({
       where: { id: serverInstanceId, orgId },
       include: {
         host: true,
         gameType: { select: { slug: true } },
-        org: { select: { avoidBloodMoonRestart: true } },
+        org: { select: { avoidBloodMoonRestart: true, maintenancePasswordEncrypted: true } },
       },
     });
     if (!serverInstance) {
       throw new NotFoundException('Server instance not found');
+    }
+    if (normalizedJobType === 'SERVER_MAINTENANCE') {
+      const enabled = payload?.enabled === true;
+      if (enabled) {
+        const encrypted = serverInstance.org.maintenancePasswordEncrypted;
+        if (!encrypted) throw new BadRequestException('Set a maintenance password in Settings first');
+        let password = '';
+        try { password = decryptIntegrationSecret(encrypted); } catch { throw new BadRequestException('Stored maintenance password could not be decrypted'); }
+        payload = { ...(payload ?? {}), enabled: true, password, kick_reason: 'Server entering maintenance' };
+      } else {
+        payload = { ...(payload ?? {}), enabled: false, kick_reason: 'Server leaving maintenance' };
+      }
     }
 
     const mergedPayload = {
@@ -169,6 +220,31 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     return { jobId: job.id, jobRunId: run.id };
   }
 
+  /** Create a pending mod request submitted by an authenticated game player. */
+  async createPlayerModRequest(orgId: string, serverInstanceId: string, payload: Record<string, unknown>) {
+    const serverInstance = await this.prisma.serverInstance.findFirst({
+      where: { id: serverInstanceId, orgId },
+      include: { host: true, gameType: { select: { slug: true } }, org: { select: { avoidBloodMoonRestart: true } } },
+    });
+    if (!serverInstance) throw new NotFoundException('Server instance not found');
+    const mergedPayload = {
+      server_instance_id: serverInstance.id,
+      game_type: serverInstance.gameType.slug,
+      install_path: serverInstance.installPath ?? undefined,
+      start_command: serverInstance.startCommand ?? undefined,
+      telnet_host: serverInstance.telnetHost ?? undefined,
+      telnet_port: serverInstance.telnetPort ?? undefined,
+      telnet_password: serverInstance.telnetPassword ?? undefined,
+      config: serverInstance.config ?? undefined,
+      avoid_blood_moon_restart: serverInstance.org.avoidBloodMoonRestart,
+      ...payload,
+    };
+    const job = await this.prisma.job.create({ data: { orgId, serverInstanceId, type: 'MOD_UPLOAD_PENDING', payload: mergedPayload as Prisma.InputJsonValue, createdById: null } });
+    const run = await this.prisma.jobRun.create({ data: { jobId: job.id, hostId: serverInstance.hostId, status: 'pending' } });
+    await this.jobsQueueService.addJob(orgId, { jobId: job.id, jobRunId: run.id, hostId: serverInstance.hostId, serverInstanceId, type: 'MOD_UPLOAD_PENDING', payload: mergedPayload });
+    return { jobId: job.id, jobRunId: run.id };
+  }
+
   /**
    * Update JobRun with agent result and optionally update batch progress.
    */
@@ -190,11 +266,14 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const runStatus = dto.status === 'success' ? 'success' : 'failed';
+    const resultData = run.job.type === 'ITEM_CATALOG' && runStatus === 'success'
+      ? catalogFromAgentResult(dto.result)
+      : dto.result;
     const result = {
       durationMs: dto.durationMs,
       errorMessage: dto.errorMessage,
       output: dto.output,
-      data: dto.result as Prisma.InputJsonValue | undefined,
+      data: resultData as Prisma.InputJsonValue | undefined,
     };
 
     await this.prisma.jobRun.update({
@@ -205,7 +284,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         result,
       },
     });
-    if (run.job.type === 'MOD_UPLOAD_QUARANTINE') {
+    if (run.job.type === 'MOD_UPLOAD_QUARANTINE' || run.job.type === 'MOD_UPLOAD_PENDING') {
       const payload = (run.job.payload ?? {}) as Record<string, unknown>;
       const uploadId = typeof payload.uploadId === 'string' ? payload.uploadId : '';
       if (/^[0-9a-f-]{36}$/i.test(uploadId)) {
@@ -217,6 +296,27 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       await this.prisma.job.update({ where: { id: run.jobId }, data: { payload: { path: previous.path, staged: runStatus === 'success' } as Prisma.InputJsonValue } });
     }
 
+    if (run.job.type === 'SERVER_MAINTENANCE' && runStatus === 'success' && run.job.serverInstanceId) {
+      const payload = (run.job.payload ?? {}) as Record<string, unknown>;
+      await this.prisma.serverInstance.update({
+        where: { id: run.job.serverInstanceId },
+        data: { maintenanceMode: payload.enabled === true },
+      });
+    }
+    if (run.job.type === 'PLAYER_SET_DEATHS' && runStatus === 'success' && run.job.serverInstanceId) {
+      const payload = (run.job.payload ?? {}) as Record<string, unknown>;
+      const deaths = Number(payload.deaths);
+      const playerId = typeof payload.playerId === 'string' ? payload.playerId : '';
+      if (Number.isInteger(deaths) && playerId) {
+        const player = await this.prisma.player.findFirst({ where: { id: playerId, orgId: run.job.orgId, serverInstanceId: run.job.serverInstanceId } });
+        if (player) {
+          await this.prisma.player.update({ where: { id: player.id }, data: { deaths } });
+          const until = Date.now() + 10 * 60_000;
+          this.deathPins.set(player.id, { deaths, until });
+          this.deathPins.set(`${player.serverInstanceId}:${player.identityKey}`, { deaths, until });
+        }
+      }
+    }
     if (run.job.type === 'PLAYER_LIST_SYNC' && runStatus === 'success' && dto.output && run.job.serverInstanceId) {
       const rows = parseLpRoster(dto.output);
       if (rows) {
@@ -293,7 +393,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     return { ok: true };
   }
 
-  async trySyncPlayersFromAllocs(orgId: string, serverInstanceId: string): Promise<boolean> {
+  async trySyncPlayersFromAllocs(orgId: string, serverInstanceId: string): Promise<{ needsLpStats: boolean } | false> {
     if (!this.allocs.tokenConfigured()) return false;
     let rows: PlayerRosterRow[] | null = null;
     try {
@@ -303,9 +403,25 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
     if (!rows) return false;
-    await this.applyPlayerRoster(orgId, serverInstanceId, rows);
-    await this.enforceConnectionTools(orgId, serverInstanceId, rows);
-    return true;
+    const merged = mergeRosterPositions(rows, await this.allocs.playerLocations());
+    await this.applyPlayerRoster(orgId, serverInstanceId, merged);
+    await this.enforceConnectionTools(orgId, serverInstanceId, merged);
+    return { needsLpStats: merged.some((row) => row.level == null) };
+  }
+
+  private rosterDeaths(serverInstanceId: string, identityKey: string, playerId: string | null | undefined, live: number) {
+    pruneMap(this.deathPins, (pin) => pin.until > Date.now());
+    const keys = [playerId, `${serverInstanceId}:${identityKey}`].filter((key): key is string => Boolean(key));
+    for (const key of keys) {
+      const pin = this.deathPins.get(key);
+      if (!pin || pin.until <= Date.now()) continue;
+      if (live === pin.deaths) {
+        for (const drop of keys) this.deathPins.delete(drop);
+        return live;
+      }
+      return pin.deaths;
+    }
+    return live;
   }
 
   private async applyPlayerRoster(orgId: string, serverInstanceId: string, rows: PlayerRosterRow[]) {
@@ -334,8 +450,8 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
           lastSeenAt: now,
           zombieKills: row.zombieKills,
           playerKills: row.playerKills,
-          deaths: row.deaths,
-          level: row.level,
+          deaths: this.rosterDeaths(serverInstanceId, row.identityKey, null, row.deaths),
+          level: row.level ?? 1,
           ...(row.position ? { lastPosX: row.position.x, lastPosY: row.position.y, lastPosZ: row.position.z } : {}),
         },
         update: {
@@ -348,8 +464,8 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
           lastSeenAt: now,
           zombieKills: row.zombieKills,
           playerKills: row.playerKills,
-          deaths: row.deaths,
-          level: row.level,
+          deaths: this.rosterDeaths(serverInstanceId, row.identityKey, existing?.id, row.deaths),
+          level: row.level ?? existing?.level ?? 1,
           ...(row.position ? { lastPosX: row.position.x, lastPosY: row.position.y, lastPosZ: row.position.z } : {}),
           ...(!existing?.online ? { currentSessionStartedAt: now } : {}),
         },
@@ -471,12 +587,11 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     });
     for (const player of online) {
       if (!player.steamId) continue;
-      await this.deliverShopGrantLines(orgId, serverInstanceId, player.id, player.steamId, true, 2);
+    await this.deliverShopGrantLines(orgId, serverInstanceId, player.id, player.steamId, true, 8);
     }
     const colorLines = await this.prisma.donationLine.findMany({
       where: {
         chatColorStatus: { in: ['pending', 'queued'] },
-        grantAttempts: { lt: MAX_GRANT_ATTEMPTS },
         donation: { orgId, serverInstanceId, status: 'completed' },
       },
       include: { donation: { select: { playerId: true, steamId: true } } },
@@ -500,7 +615,6 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     const staleBefore = new Date(Date.now() - 5 * 60_000);
     const lines = await this.prisma.donationLine.findMany({
       where: {
-        grantAttempts: { lt: MAX_GRANT_ATTEMPTS },
         donation: { playerId, orgId, serverInstanceId, status: 'completed' },
         OR: [
           { grantStatus: { in: ['pending', 'queued'] } },
@@ -514,17 +628,36 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       if (queued >= limit) break;
       const stale = !line.grantQueuedAt || line.grantQueuedAt < staleBefore;
       const colorDue = line.chatColorStatus === 'pending' || (line.chatColorStatus === 'queued' && stale);
-      const itemDue = online && (line.grantStatus === 'pending' || (line.grantStatus === 'queued' && stale));
-      if (colorDue && line.chatColor) {
+      if (colorDue && line.chatColor && line.grantAttempts < MAX_GRANT_ATTEMPTS) {
         const command = buildChatColorCommand(steamId, line.chatColor);
         if (command && await this.queueShopGrantJob(orgId, member.userId, serverInstanceId, line.id, 'chat_color', command, { chatColorStatus: 'queued' })) {
           queued += 1;
         }
       }
-      if (itemDue && line.grantItemName) {
-        const command = buildGivePlusCommand(steamId, line.grantItemName, line.grantQuantity, line.grantQuality);
-        if (command && await this.queueShopGrantJob(orgId, member.userId, serverInstanceId, line.id, 'item', command, { grantStatus: 'queued' })) {
+      if (!online) continue;
+      const grants = lineGrantItems(line.grantItems, line);
+      for (let index = 0; index < grants.length; index += 1) {
+        if (queued >= limit) break;
+        const grant = grants[index];
+        const due = grant.status === 'pending' || (grant.status === 'queued' && stale);
+        if (!due || grant.attempts >= MAX_GRANT_ATTEMPTS) continue;
+        const command = buildGivePlusCommand(steamId, grant.name, grant.quantity, grant.quality);
+        if (!command) {
+          grants[index] = { ...grant, status: 'failed', error: 'Invalid grant item' };
+          await this.prisma.donationLine.update({
+            where: { id: line.id },
+            data: { grantItems: grants as Prisma.InputJsonValue, grantStatus: aggregateGrantStatus(grants), grantError: 'Invalid grant item' },
+          });
+          continue;
+        }
+        grants[index] = { ...grant, status: 'queued', attempts: grant.attempts + 1, error: null };
+        if (await this.queueShopGrantJob(orgId, member.userId, serverInstanceId, line.id, 'item', command, {
+          grantStatus: aggregateGrantStatus(grants),
+          grantItems: grants as Prisma.InputJsonValue,
+        }, index)) {
           queued += 1;
+        } else {
+          grants[index] = { ...grant, status: 'pending' };
         }
       }
     }
@@ -537,18 +670,25 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     donationLineId: string,
     grantKind: 'item' | 'chat_color',
     command: string,
-    status: { grantStatus?: string; chatColorStatus?: string },
+    status: { grantStatus?: string; chatColorStatus?: string; grantItems?: Prisma.InputJsonValue },
+    grantItemIndex?: number,
   ) {
     try {
       await this.prisma.donationLine.update({
         where: { id: donationLineId },
-        data: { ...status, grantQueuedAt: new Date(), grantAttempts: { increment: 1 }, grantError: null },
+        data: {
+          ...status,
+          grantQueuedAt: new Date(),
+          grantError: null,
+          ...(grantKind === 'chat_color' ? { grantAttempts: { increment: 1 } } : {}),
+        },
       });
       await this.createJob(orgId, userId, serverInstanceId, 'RCON', {
         command,
         purpose: 'shop_grant',
         donationLineId,
         grantKind,
+        grantItemIndex,
       });
       return true;
     } catch {
@@ -566,11 +706,33 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     const outcome = classifyGrantOutput(output, runStatus);
     const next = outcome === 'delivered' ? 'delivered' : outcome === 'failed' ? 'failed' : 'pending';
     const error = next === 'delivered' ? null : String(output || 'Grant command failed').slice(0, 180);
-    await this.prisma.donationLine.updateMany({
+    if (payload.grantKind === 'chat_color') {
+      await this.prisma.donationLine.updateMany({
+        where: { id: lineId },
+        data: { chatColorStatus: next, grantError: error, grantedAt: next === 'delivered' ? new Date() : undefined },
+      });
+      return;
+    }
+    const line = await this.prisma.donationLine.findUnique({ where: { id: lineId } });
+    if (!line) return;
+    const grants = lineGrantItems(line.grantItems, line);
+    const index = Number(payload.grantItemIndex);
+    const target = Number.isInteger(index) && index >= 0 && index < grants.length
+      ? index
+      : grants.findIndex((item) => item.status === 'queued' || item.status === 'pending');
+    if (target >= 0) {
+      grants[target] = { ...grants[target], status: next, error };
+    }
+    const grantStatus = aggregateGrantStatus(grants);
+    const grantError = grants.map((item) => item.error).filter(Boolean).join('; ').slice(0, 180) || null;
+    await this.prisma.donationLine.update({
       where: { id: lineId },
-      data: payload.grantKind === 'chat_color'
-        ? { chatColorStatus: next, grantError: error, grantedAt: next === 'delivered' ? new Date() : undefined }
-        : { grantStatus: next, grantError: error, grantedAt: next === 'delivered' ? new Date() : undefined },
+      data: {
+        grantItems: grants as Prisma.InputJsonValue,
+        grantStatus,
+        grantError,
+        grantedAt: grantStatus === 'delivered' || grantStatus === 'partial' ? new Date() : undefined,
+      },
     });
   }
 

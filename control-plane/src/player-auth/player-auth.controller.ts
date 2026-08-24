@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Headers, Post, Req, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, Req, UnauthorizedException, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { PlayerAuthService } from './player-auth.service';
 import { AuthRateLimitService } from '../auth/auth-rate-limit.service';
 import { clientIp } from '../common/client-ip';
@@ -45,6 +46,17 @@ export class PlayerAuthController {
   me(@Headers('authorization') authorization?: string) {
     if (!authorization?.startsWith('Bearer ')) throw new UnauthorizedException('Player session required');
     return this.auth.profile(authorization.slice(7));
+  }
+
+  @Post('mod-request')
+  @UseInterceptors(FileInterceptor('file', { limits: { files: 1, fileSize: 256 * 1024 * 1024 } }))
+  requestMod(
+    @Headers('authorization') authorization?: string,
+    @Body('description') description?: string,
+    @UploadedFile() file?: { originalname: string; size: number; buffer: Buffer },
+  ) {
+    if (!authorization?.startsWith('Bearer ')) throw new UnauthorizedException('Player sign-in required');
+    return this.auth.requestMod(authorization.slice(7), file, description);
   }
 
   @Get('places')
