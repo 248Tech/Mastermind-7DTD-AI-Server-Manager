@@ -1,11 +1,10 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   MapContainer,
   TileLayer,
   Marker,
   Popup,
-  LayersControl,
   LayerGroup,
   Rectangle,
   Tooltip,
@@ -20,6 +19,7 @@ import { getStoredOrgId } from "../../../lib/auth";
 type Entity = {
   id: string | number;
   name: string;
+  steamId?: string;
   position: { x: number; y: number; z: number };
 };
 type Config = {
@@ -91,10 +91,70 @@ type VisitMapStatus = {
   estimatedSeconds?: number | null;
   at?: string;
 };
-const HISTORY_KEY = "mm_live_map_history_v1",
+const HISTORY_KEY = "mm_live_map_history_v2",
   HISTORY_RETENTION_MS = 72 * 60 * 60 * 1000,
   MAX_HISTORY = 25_920,
   MAX_TRAIL_POINTS = 2_000;
+
+function snapshotAtOrBefore(snapshots: Snapshot[], at: number): Snapshot | null {
+  let chosen: Snapshot | null = null;
+  for (const snapshot of snapshots) {
+    if (snapshot.at > at) continue;
+    if (!chosen || snapshot.at >= chosen.at) chosen = snapshot;
+  }
+  return chosen;
+}
+
+function compactSnapshots(snapshots: Snapshot[]): Snapshot[] {
+  const recentCutoff = Date.now() - 30 * 60_000;
+  const recent: Snapshot[] = [];
+  const kept: Snapshot[] = [];
+  let lastBucket = -1;
+  for (const snapshot of snapshots) {
+    if (snapshot.at >= recentCutoff) {
+      recent.push(snapshot);
+      continue;
+    }
+    const bucket = Math.floor(snapshot.at / 60_000);
+    if (bucket !== lastBucket) {
+      kept.push(snapshot);
+      lastBucket = bucket;
+    }
+  }
+  return [...kept, ...recent].slice(-MAX_HISTORY);
+}
+
+function serializeHistory(snapshots: Snapshot[]) {
+  return JSON.stringify(
+    snapshots.map((snapshot) => ({
+      at: snapshot.at,
+      players: snapshot.players.map((player: Entity) => ({
+        id: player.id,
+        name: player.name,
+        steamId: player.steamId,
+        position: {
+          x: player.position.x,
+          y: player.position.y,
+          z: player.position.z,
+        },
+      })),
+      animals: [],
+      hostiles: [],
+    })),
+  );
+}
+
+function persistPlayerHistory(snapshots: Snapshot[]) {
+  try {
+    localStorage.setItem(HISTORY_KEY, serializeHistory(snapshots));
+  } catch {
+    try {
+      localStorage.setItem(HISTORY_KEY, serializeHistory(compactSnapshots(snapshots)));
+    } catch {
+      /* Storage full: in-memory history still works for this session. */
+    }
+  }
+}
 
 function sampleTrail(points: [number, number][]) {
   if (points.length <= MAX_TRAIL_POINTS) return points;
@@ -103,8 +163,45 @@ function sampleTrail(points: [number, number][]) {
     points[Math.round((index * last) / (MAX_TRAIL_POINTS - 1))],
   );
 }
-function playerTrackKey(player: Entity) {
-  return String(player.id ?? player.name).trim() || player.name;
+function playerTrackKey(player: Pick<Entity, "id" | "name" | "steamId">) {
+  const candidates = [player.steamId, player.id].map((value) =>
+    String(value ?? "").replace(/^Steam_/i, "").trim(),
+  );
+  const steam = candidates.find((value) => /^[0-9]{15,20}$/.test(value));
+  if (steam) return `steam:${steam}`;
+  const name = String(player.name || "").trim().toLocaleLowerCase();
+  if (name) return `name:${name}`;
+  return `id:${String(player.id ?? "").trim()}`;
+}
+function playerIdentityScore(player: Pick<Entity, "id" | "name" | "steamId">) {
+  let score = 0;
+  if (player.steamId && /^[0-9]{15,20}$/.test(String(player.steamId).replace(/^Steam_/i, ""))) score += 4;
+  const id = String(player.id ?? "").replace(/^Steam_/i, "").trim();
+  if (/^[0-9]{15,20}$/.test(id)) score += 2;
+  if (String(player.name || "").trim()) score += 1;
+  return score;
+}
+function dedupePlayerChoices(entities: Entity[]) {
+  const merged = new Map<string, Entity>();
+  for (const player of entities) {
+    const nameKey = String(player.name || "").trim().toLocaleLowerCase();
+    const key = nameKey || playerTrackKey(player);
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, player);
+      continue;
+    }
+    const preferred = playerIdentityScore(player) >= playerIdentityScore(existing) ? player : existing;
+    const fallback = preferred === player ? existing : player;
+    merged.set(key, {
+      ...preferred,
+      name: preferred.name || fallback.name,
+      steamId: preferred.steamId || fallback.steamId,
+      id: preferred.id ?? fallback.id,
+      position: preferred.position ?? fallback.position,
+    });
+  }
+  return [...merged.values()];
 }
 function poiBounds(poi: PrismaPoi): [[number, number], [number, number]] {
   const halfX = Math.floor(Math.abs(poi.minx - poi.maxx) / 2);
@@ -145,7 +242,7 @@ function Coordinates() {
         position: "absolute",
         zIndex: 1000,
         left: 10,
-        bottom: 10,
+        bottom: 66,
         background: "rgba(15,23,42,.9)",
         color: "#e2e8f0",
         padding: "6px 9px",
@@ -157,6 +254,42 @@ function Coordinates() {
     </div>
   );
 }
+function FollowTracked({
+  active,
+  position,
+  recenterKey,
+}: {
+  active: boolean;
+  position: [number, number] | null;
+  recenterKey: string;
+}) {
+  const map = useMap();
+  const lastKey = useRef("");
+  useEffect(() => {
+    if (!active || !position) {
+      lastKey.current = "";
+      return;
+    }
+    const target = L.latLng(position[0], position[1]);
+    if (lastKey.current !== recenterKey) {
+      lastKey.current = recenterKey;
+      map.setView(target, Math.max(map.getZoom(), 2), { animate: true });
+      return;
+    }
+    if (!map.getBounds().pad(-0.25).contains(target)) {
+      map.panTo(target, { animate: true, duration: 0.4 });
+    }
+  }, [active, position, map, recenterKey]);
+  return null;
+}
+function trackedDot(color: string) {
+  return L.divIcon({
+    className: "",
+    html: `<span style="display:block;width:20px;height:20px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 0 0 4px ${color}66,0 1px 8px #000"></span>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  });
+}
 function MapViewportControls({ bounds }: { bounds: L.LatLngBounds }) {
   const map = useMap();
   return (
@@ -166,12 +299,13 @@ function MapViewportControls({ bounds }: { bounds: L.LatLngBounds }) {
     </div>
   );
 }
-function MapLegend({ prismaConfigured }: { prismaConfigured: boolean }) {
+function MapLegend({ prismaConfigured, showLogoutLocations, showClaims }: { prismaConfigured: boolean; showLogoutLocations: boolean; showClaims: boolean }) {
   const items = [
     ["#3b82f6", "Players"],
+    ...(showLogoutLocations ? [["#f59e0b", "Logout"]] : []),
+    ...(showClaims ? [["#a855f7", "Land claims"]] : []),
     ["#22c55e", "Animals"],
     ["#ef4444", "Hostiles"],
-    ["#a855f7", "Land claims"],
     ...(prismaConfigured ? [["#eab308", "POIs"], ["#38bdf8", "Vehicles"]] : []),
   ];
   return (
@@ -188,6 +322,254 @@ function formatAge(at: number | null) {
   const seconds = Math.max(0, Math.floor((Date.now() - at) / 1000));
   return seconds < 5 ? "Updated just now" : `Updated ${seconds}s ago`;
 }
+function MapFilterCheckbox({
+  checked,
+  disabled,
+  onChange,
+  color,
+  title,
+  children,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+  color: string;
+  title?: string;
+  children: ReactNode;
+}) {
+  return (
+    <label
+      title={title}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        color: disabled ? "#64748b" : color,
+        fontSize: 12,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.72 : 1,
+      }}
+    >
+      <input
+        type="checkbox"
+        disabled={disabled}
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        style={{ accentColor: color }}
+      />
+      {children}
+    </label>
+  );
+}
+function resetMapFilters(setters: {
+  setTrackedPlayer: (value: string) => void;
+  setShowAllPlayerTrails: (value: boolean) => void;
+  setShowTrailsLayer: (value: boolean) => void;
+  setShowPlayersLayer: (value: boolean) => void;
+  setShowAnimalsLayer: (value: boolean) => void;
+  setShowHostilesLayer: (value: boolean) => void;
+  setShowRegionGrid: (value: boolean) => void;
+  setShowPlayerNames: (value: boolean) => void;
+  setShowLogoutLocations: (value: boolean) => void;
+  setShowClaims: (value: boolean) => void;
+  setShowVehicles: (value: boolean) => void;
+  setShowDrones: (value: boolean) => void;
+  setShowBeds: (value: boolean) => void;
+  setShowTraders: (value: boolean) => void;
+  setShowQuestPois: (value: boolean) => void;
+  setShowResetRegions: (value: boolean) => void;
+  setShowAdvClaims: (value: boolean) => void;
+  setShowAllPois: (value: boolean) => void;
+  setEntitySearch: (value: string) => void;
+  setAdvClaimFilter: (value: string) => void;
+  setHistoryCursorAt: (value: number | null) => void;
+}) {
+  setters.setTrackedPlayer("");
+  setters.setShowAllPlayerTrails(false);
+  setters.setShowTrailsLayer(true);
+  setters.setShowPlayersLayer(true);
+  setters.setShowAnimalsLayer(false);
+  setters.setShowHostilesLayer(true);
+  setters.setShowRegionGrid(false);
+  setters.setShowPlayerNames(true);
+  setters.setShowLogoutLocations(true);
+  setters.setShowClaims(true);
+  setters.setShowVehicles(false);
+  setters.setShowDrones(false);
+  setters.setShowBeds(false);
+  setters.setShowTraders(false);
+  setters.setShowQuestPois(false);
+  setters.setShowResetRegions(false);
+  setters.setShowAdvClaims(false);
+  setters.setShowAllPois(false);
+  setters.setEntitySearch("");
+  setters.setAdvClaimFilter("all");
+  setters.setHistoryCursorAt(null);
+}
+
+type MapFilterPanelProps = {
+  prismaConfigured: boolean;
+  viewed: { players: Entity[]; animals: Entity[]; hostiles: Entity[] };
+  claims: Claim[];
+  logoutMarkers: Array<{ id: string }>;
+  vehicles: PrismaMarker[];
+  drones: PrismaMarker[];
+  homes: PrismaHome[];
+  traders: PrismaMarker[];
+  questPois: PrismaPoi[];
+  allPois: PrismaPoi[];
+  resetRegions: PrismaRect[];
+  advClaims: PrismaRect[];
+  showTrailsLayer: boolean;
+  setShowTrailsLayer: (value: boolean) => void;
+  showPlayersLayer: boolean;
+  setShowPlayersLayer: (value: boolean) => void;
+  showAnimalsLayer: boolean;
+  setShowAnimalsLayer: (value: boolean) => void;
+  showHostilesLayer: boolean;
+  setShowHostilesLayer: (value: boolean) => void;
+  showAllPlayerTrails: boolean;
+  setShowAllPlayerTrails: (value: boolean) => void;
+  showPlayerNames: boolean;
+  setShowPlayerNames: (value: boolean) => void;
+  showLogoutLocations: boolean;
+  setShowLogoutLocations: (value: boolean) => void;
+  showClaims: boolean;
+  setShowClaims: (value: boolean) => void;
+  showVehicles: boolean;
+  setShowVehicles: (value: boolean) => void;
+  showDrones: boolean;
+  setShowDrones: (value: boolean) => void;
+  showBeds: boolean;
+  setShowBeds: (value: boolean) => void;
+  showTraders: boolean;
+  setShowTraders: (value: boolean) => void;
+  showQuestPois: boolean;
+  setShowQuestPois: (value: boolean) => void;
+  showAllPois: boolean;
+  setShowAllPois: (value: boolean) => void;
+  showResetRegions: boolean;
+  setShowResetRegions: (value: boolean) => void;
+  showAdvClaims: boolean;
+  setShowAdvClaims: (value: boolean) => void;
+  showRegionGrid: boolean;
+  setShowRegionGrid: (value: boolean) => void;
+  advClaimFilter: string;
+  setAdvClaimFilter: (value: string) => void;
+  onReset?: () => void;
+};
+
+function MapFilterPanel({
+  prismaConfigured,
+  viewed,
+  claims,
+  logoutMarkers,
+  vehicles,
+  drones,
+  homes,
+  traders,
+  questPois,
+  allPois,
+  resetRegions,
+  advClaims,
+  showTrailsLayer,
+  setShowTrailsLayer,
+  showPlayersLayer,
+  setShowPlayersLayer,
+  showAnimalsLayer,
+  setShowAnimalsLayer,
+  showHostilesLayer,
+  setShowHostilesLayer,
+  showAllPlayerTrails,
+  setShowAllPlayerTrails,
+  showPlayerNames,
+  setShowPlayerNames,
+  showLogoutLocations,
+  setShowLogoutLocations,
+  showClaims,
+  setShowClaims,
+  showVehicles,
+  setShowVehicles,
+  showDrones,
+  setShowDrones,
+  showBeds,
+  setShowBeds,
+  showTraders,
+  setShowTraders,
+  showQuestPois,
+  setShowQuestPois,
+  showAllPois,
+  setShowAllPois,
+  showResetRegions,
+  setShowResetRegions,
+  showAdvClaims,
+  setShowAdvClaims,
+  showRegionGrid,
+  setShowRegionGrid,
+  advClaimFilter,
+  setAdvClaimFilter,
+  onReset,
+}: MapFilterPanelProps) {
+  return (
+    <>
+      <div className="map-filter-section">
+        <strong>Live entities</strong>
+        <div className="map-filter-grid">
+          <MapFilterCheckbox checked={showTrailsLayer} onChange={setShowTrailsLayer} color="#60a5fa">Player trails</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showPlayersLayer} onChange={setShowPlayersLayer} color="#60a5fa">Players ({viewed.players.length})</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showAnimalsLayer} onChange={setShowAnimalsLayer} color="#22c55e">Animals ({viewed.animals.length})</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showHostilesLayer} onChange={setShowHostilesLayer} color="#ef4444">Hostiles ({viewed.hostiles.length})</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showAllPlayerTrails} onChange={setShowAllPlayerTrails} color="#60a5fa">All player trails</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showPlayerNames} onChange={setShowPlayerNames} color="#60a5fa">Player names</MapFilterCheckbox>
+        </div>
+      </div>
+      <div className="map-filter-section">
+        <strong>World overlays</strong>
+        <div className="map-filter-grid">
+          <MapFilterCheckbox checked={showLogoutLocations} onChange={setShowLogoutLocations} color="#fbbf24">Logout locations ({logoutMarkers.length})</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showClaims} onChange={setShowClaims} color="#c084fc">Land claims ({claims.length})</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showVehicles} disabled={!prismaConfigured} onChange={setShowVehicles} color="#38bdf8" title={prismaConfigured ? undefined : "PrismaCore not configured"}>Vehicles ({vehicles.length})</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showDrones} disabled={!prismaConfigured} onChange={setShowDrones} color="#f472b6" title={prismaConfigured ? undefined : "PrismaCore not configured"}>Drones ({drones.length})</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showBeds} disabled={!prismaConfigured} onChange={setShowBeds} color="#4ade80" title={prismaConfigured ? undefined : "PrismaCore not configured"}>Beds ({homes.length})</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showTraders} disabled={!prismaConfigured} onChange={setShowTraders} color="#facc15" title={prismaConfigured ? undefined : "PrismaCore not configured"}>Traders ({traders.length})</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showQuestPois} disabled={!prismaConfigured} onChange={setShowQuestPois} color="#f87171" title={prismaConfigured ? undefined : "PrismaCore not configured"}>Quest POIs ({questPois.length})</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showAllPois} disabled={!prismaConfigured} onChange={setShowAllPois} color="#eab308" title={prismaConfigured ? undefined : "PrismaCore not configured"}>All POIs ({allPois.length})</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showResetRegions} disabled={!prismaConfigured} onChange={setShowResetRegions} color="#fca5a5" title={prismaConfigured ? undefined : "PrismaCore not configured"}>Reset regions ({resetRegions.length})</MapFilterCheckbox>
+          <MapFilterCheckbox checked={showAdvClaims} disabled={!prismaConfigured} onChange={setShowAdvClaims} color="#22d3ee" title={prismaConfigured ? undefined : "PrismaCore not configured"}>Adv. claims ({advClaims.length})</MapFilterCheckbox>
+        </div>
+        <select
+          aria-label="Advanced claim type"
+          disabled={!prismaConfigured}
+          value={advClaimFilter}
+          onChange={(event) => setAdvClaimFilter(event.target.value)}
+          title={prismaConfigured ? undefined : "PrismaCore not configured"}
+          style={{ background: "#0d0d14", color: prismaConfigured ? "#e2e8f0" : "#64748b", border: "1px solid #334155", borderRadius: 6, padding: "6px 9px", width: "100%", opacity: prismaConfigured ? 1 : 0.72 }}
+        >
+          <option value="all">Adv. claims (all types)</option>
+          {[...new Set(advClaims.map((claim) => claim.type))].sort().map((type) => (
+            <option key={type} value={type}>{type}</option>
+          ))}
+        </select>
+      </div>
+      <div className="map-filter-section">
+        <strong>Map</strong>
+        <div className="map-filter-grid">
+          <MapFilterCheckbox checked={showRegionGrid} onChange={setShowRegionGrid} color="#94a3b8">Region grid</MapFilterCheckbox>
+        </div>
+      </div>
+      {onReset && (
+        <button
+          type="button"
+          onClick={onReset}
+          style={{ background: "#334155", color: "#e2e8f0", border: 0, borderRadius: 6, padding: "7px 10px", cursor: "pointer", marginTop: 4 }}
+        >
+          Reset filters
+        </button>
+      )}
+    </>
+  );
+}
+
 export default function LiveMapClient() {
   const orgId = getStoredOrgId();
   const [ready, setReady] = useState(false),
@@ -208,9 +590,22 @@ export default function LiveMapClient() {
     [trackedPlayer, setTrackedPlayer] = useState(""),
     [trackingColor, setTrackingColor] = useState("#ff2bd6"),
     [showAllPlayerTrails, setShowAllPlayerTrails] = useState(false),
+    [showTrailsLayer, setShowTrailsLayer] = useState(true),
+    [showPlayersLayer, setShowPlayersLayer] = useState(true),
+    [showAnimalsLayer, setShowAnimalsLayer] = useState(false),
+    [showHostilesLayer, setShowHostilesLayer] = useState(true),
+    [showRegionGrid, setShowRegionGrid] = useState(false),
+    [filtersOpen, setFiltersOpen] = useState(false),
     [showClaims, setShowClaims] = useState(true),
     [showPlayerNames, setShowPlayerNames] = useState(true),
-    [showLogoutLocations, setShowLogoutLocations] = useState(false),
+    [showLogoutLocations, setShowLogoutLocations] = useState(true),
+    [showVehicles, setShowVehicles] = useState(false),
+    [showDrones, setShowDrones] = useState(false),
+    [showBeds, setShowBeds] = useState(false),
+    [showTraders, setShowTraders] = useState(false),
+    [showQuestPois, setShowQuestPois] = useState(false),
+    [showResetRegions, setShowResetRegions] = useState(false),
+    [showAdvClaims, setShowAdvClaims] = useState(false),
     [entitySearch, setEntitySearch] = useState(""),
     [prismaConfigured, setPrismaConfigured] = useState(false),
     [vehicles, setVehicles] = useState<PrismaMarker[]>([]),
@@ -230,13 +625,54 @@ export default function LiveMapClient() {
     [visitStatus, setVisitStatus] = useState<VisitMapStatus>({ state: "idle" }),
     [visitSection, setVisitSection] = useState(0);
   const prismaConfiguredRef = useRef(false);
+  const prismaClaimsActiveRef = useRef(false);
+  const filtersPanelRef = useRef<HTMLDivElement>(null);
+  const filterToggleRef = useRef<HTMLButtonElement>(null);
+  const [overlayPanelStyle, setOverlayPanelStyle] = useState<CSSProperties>({});
+  useEffect(() => {
+    if (!filtersOpen) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!filtersPanelRef.current?.contains(event.target as Node)) setFiltersOpen(false);
+    }
+    function positionOverlayPanel() {
+      const toggle = filterToggleRef.current;
+      if (!toggle) return;
+      const rect = toggle.getBoundingClientRect();
+      const width = Math.min(380, window.innerWidth - 24);
+      const right = Math.max(12, window.innerWidth - rect.right);
+      const spaceBelow = window.innerHeight - rect.bottom - 16;
+      const spaceAbove = rect.top - 16;
+      const maxHeight = Math.min(640, Math.max(spaceBelow, spaceAbove) - 8);
+      if (spaceBelow >= 240 || spaceBelow >= spaceAbove) {
+        setOverlayPanelStyle({ top: rect.bottom + 6, right, width, maxHeight });
+      } else {
+        setOverlayPanelStyle({ bottom: window.innerHeight - rect.top + 6, right, width, maxHeight });
+      }
+    }
+    positionOverlayPanel();
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("resize", positionOverlayPanel);
+    window.addEventListener("scroll", positionOverlayPanel, true);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("resize", positionOverlayPanel);
+      window.removeEventListener("scroll", positionOverlayPanel, true);
+    };
+  }, [filtersOpen]);
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      const raw = localStorage.getItem(HISTORY_KEY) || localStorage.getItem("mm_live_map_history_v1") || "[]";
+      const saved = JSON.parse(raw);
       if (Array.isArray(saved))
         setHistory(
           saved
-            .filter((x) => x?.at > Date.now() - HISTORY_RETENTION_MS)
+            .filter((x: { at?: number }) => Number(x?.at) > Date.now() - HISTORY_RETENTION_MS)
+            .map((snapshot: { at: number; players?: Entity[] }) => ({
+              at: snapshot.at,
+              players: Array.isArray(snapshot.players) ? snapshot.players : [],
+              animals: [],
+              hostiles: [],
+            }))
             .slice(-MAX_HISTORY),
         );
     } catch {
@@ -292,14 +728,10 @@ export default function LiveMapClient() {
           setHostiles(next.hostiles);
           setLastLiveUpdate(next.at);
           setHistory((old) => {
-            const updated = [...old, next]
+            const updated = [...old, { at: next.at, players: next.players, animals: [], hostiles: [] }]
               .filter((x) => x.at > Date.now() - HISTORY_RETENTION_MS)
               .slice(-MAX_HISTORY);
-            try {
-              localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
-            } catch {
-              /* Storage full: map stays functional. */
-            }
+            persistPlayerHistory(updated);
             return updated;
           });
           const errors = (e.errors || {}) as Record<string, string>;
@@ -312,10 +744,10 @@ export default function LiveMapClient() {
         .catch((e) => active && setFeedError(e.message));
       void get("claims-live")
         .then((c) => {
-          if (!active || prismaConfiguredRef.current) return;
+          if (!active || prismaClaimsActiveRef.current) return;
           setClaims(c.claims ?? []);
         })
-        .catch((e) => active && !prismaConfiguredRef.current && setFeedError(`Claims: ${e.message}`));
+        .catch((e) => active && !prismaClaimsActiveRef.current && setFeedError(`Claims: ${e.message}`));
       void get("regions-live")
         .then((r) => active && setRegionFiles(r.regions ?? []))
         .catch((e) => active && setFeedError(`Regions: ${e.message}`));
@@ -364,7 +796,10 @@ export default function LiveMapClient() {
         const configured = Boolean(status.configured);
         prismaConfiguredRef.current = configured;
         setPrismaConfigured(configured);
-        if (!configured) return;
+        if (!configured) {
+          prismaClaimsActiveRef.current = false;
+          return;
+        }
         const [land, vehicleRows, droneRows, traderRows, homeRows, questRows, resetRows, advRows, allPoiRows] =
           await Promise.all([
             api.get<{ reachable?: boolean; claims?: Claim[] }>(`/api/orgs/${orgId}/prismacore/landclaims`),
@@ -375,12 +810,15 @@ export default function LiveMapClient() {
             api.get<{ pois?: PrismaPoi[] }>(`/api/orgs/${orgId}/prismacore/questpois`),
             api.get<{ regions?: PrismaRect[] }>(`/api/orgs/${orgId}/prismacore/resetregions`),
             api.get<{ claims?: PrismaRect[] }>(`/api/orgs/${orgId}/prismacore/advclaims`),
-            showAllPois
-              ? api.get<{ pois?: PrismaPoi[] }>(`/api/orgs/${orgId}/prismacore/allpois`)
-              : Promise.resolve({ pois: [] as PrismaPoi[] }),
+            api.get<{ pois?: PrismaPoi[] }>(`/api/orgs/${orgId}/prismacore/allpois`),
           ]);
         if (!active) return;
-        if (land.reachable) setClaims(land.claims ?? []);
+        if (land.reachable) {
+          prismaClaimsActiveRef.current = true;
+          setClaims(land.claims ?? []);
+        } else {
+          prismaClaimsActiveRef.current = false;
+        }
         setVehicles(vehicleRows.markers ?? []);
         setDrones(droneRows.markers ?? []);
         setTraders(traderRows.markers ?? []);
@@ -388,10 +826,11 @@ export default function LiveMapClient() {
         setQuestPois(questRows.pois ?? []);
         setResetRegions(resetRows.regions ?? []);
         setAdvClaims(advRows.claims ?? []);
-        if (showAllPois) setAllPois(allPoiRows.pois ?? []);
+        setAllPois(allPoiRows.pois ?? []);
       } catch {
         if (!active) return;
         prismaConfiguredRef.current = false;
+        prismaClaimsActiveRef.current = false;
         setPrismaConfigured(false);
       }
     };
@@ -401,10 +840,10 @@ export default function LiveMapClient() {
       active = false;
       clearInterval(timer);
     };
-  }, [ready, orgId, showAllPois]);
+  }, [ready, orgId]);
   useEffect(() => {
-    if (!ready || !orgId || !server || !showLogoutLocations) {
-      if (!showLogoutLocations) setLogoutMarkers([]);
+    if (!ready || !orgId || !server) {
+      setLogoutMarkers([]);
       return;
     }
     let active = true;
@@ -433,7 +872,7 @@ export default function LiveMapClient() {
       active = false;
       clearInterval(timer);
     };
-  }, [ready, orgId, server, showLogoutLocations]);
+  }, [ready, orgId, server]);
   // Keep CRS identity stable across polling/history renders. Leaflet treats a
   // changed CRS as a viewport reset, which can look like random zooming.
   const divisor = 2 ** (config?.maxZoom ?? 4);
@@ -446,6 +885,26 @@ export default function LiveMapClient() {
     transformation: new L.Transformation(1, 0, -1, 0),
     scale: (zoom: number) => 2 ** zoom,
   }) as L.CRS, [divisor]);
+  const playerChoices = useMemo(
+    () =>
+      dedupePlayerChoices((() => {
+        const byKey = new Map<string, Entity>();
+        for (const snapshot of history) {
+          for (const player of snapshot.players) byKey.set(playerTrackKey(player), player);
+        }
+        for (const player of players) byKey.set(playerTrackKey(player), player);
+        return [...byKey.values()];
+      })()).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" })),
+    [history, players],
+  );
+  useEffect(() => {
+    if (!trackedPlayer) return;
+    if (playerChoices.some((player) => playerTrackKey(player) === trackedPlayer)) return;
+    const legacyName = trackedPlayer.startsWith("name:") ? trackedPlayer.slice(5) : null;
+    if (!legacyName) return;
+    const match = playerChoices.find((player) => String(player.name || "").trim().toLocaleLowerCase() === legacyName);
+    if (match) setTrackedPlayer(playerTrackKey(match));
+  }, [trackedPlayer, playerChoices]);
 
   async function sendVisitCommand(command: string, successMessage: string) {
     if (!orgId || !server || visitBusy) return;
@@ -554,31 +1013,44 @@ export default function LiveMapClient() {
         },
       );
   const mapBounds = L.latLngBounds([worldX1, worldZ1], [worldX2, worldZ2]);
-  const windowedHistory = history.filter(
-    (snapshot) => snapshot.at >= Date.now() - historyWindow * 60_000,
-  );
+  const windowedHistory = history
+    .filter((snapshot) => snapshot.at >= Date.now() - historyWindow * 60_000)
+    .slice()
+    .sort((a, b) => a.at - b.at);
   const historyStart = windowedHistory[0]?.at;
   const historyEnd = windowedHistory[windowedHistory.length - 1]?.at;
-  const viewed =
-    historyCursorAt === null
-      ? { at: Date.now(), players, animals, hostiles }
-      : windowedHistory.find((snapshot) => snapshot.at === historyCursorAt) ||
-        windowedHistory.filter((snapshot) => snapshot.at <= historyCursorAt).slice(-1)[0] ||
-        { at: Date.now(), players, animals, hostiles };
+  const replaying = historyCursorAt != null;
+  const replaySnapshot = replaying
+    ? snapshotAtOrBefore(windowedHistory, historyCursorAt) || snapshotAtOrBefore(history, historyCursorAt)
+    : null;
+  const viewed = replaySnapshot
+    ? replaySnapshot
+    : replaying
+      ? { at: historyCursorAt, players: [] as Entity[], animals: [] as Entity[], hostiles: [] as Entity[] }
+      : { at: Date.now(), players, animals, hostiles };
+  const replayLayerKey = replaying ? `replay-${viewed.at}` : "live";
+  const replayIndex = !replaying
+    ? windowedHistory.length
+    : Math.max(
+        0,
+        windowedHistory.findIndex((snapshot) => snapshot.at === viewed.at),
+      );
   const normalizedEntitySearch = entitySearch.trim().toLocaleLowerCase();
   const matchesEntity = (...values: unknown[]) => !normalizedEntitySearch || values.some((value) => String(value ?? "").toLocaleLowerCase().includes(normalizedEntitySearch));
-  const visibleAdvClaims = (advClaimFilter === "all" ? advClaims : advClaims.filter((claim) => claim.type === advClaimFilter)).filter((claim) => matchesEntity(claim.name, claim.type, claim.id));
-  const visiblePlayers = viewed.players.filter((entity) => matchesEntity(entity.name, entity.id));
-  const visibleAnimals = viewed.animals.filter((entity) => matchesEntity(entity.name, entity.id));
-  const visibleHostiles = viewed.hostiles.filter((entity) => matchesEntity(entity.name, entity.id));
-  const visibleClaims = claims.filter((claim) => matchesEntity(claim.owner, claim.steamId, claim.eosId, claim.id));
-  const visibleVehicles = vehicles.filter((marker) => matchesEntity(marker.name, marker.extra, marker.id));
-  const visibleDrones = drones.filter((marker) => matchesEntity(marker.name, marker.extra, marker.id));
-  const visibleTraders = traders.filter((marker) => matchesEntity(marker.name, marker.extra, marker.id));
-  const visibleHomes = homes.filter((home) => matchesEntity(home.owner, home.steamId, home.id));
-  const visibleRegions = regionDefinitions.filter((region) => matchesEntity(region.name, region.x, region.z));
-  const visibleQuestPois = questPois.filter((poi) => matchesEntity(poi.name, poi.id));
-  const visibleAllPois = allPois.filter((poi) => matchesEntity(poi.name, poi.id));
+  const tracking = Boolean(trackedPlayer);
+  const visibleAdvClaims = tracking || !showAdvClaims ? [] : (advClaimFilter === "all" ? advClaims : advClaims.filter((claim) => claim.type === advClaimFilter)).filter((claim) => matchesEntity(claim.name, claim.type, claim.id));
+  const visiblePlayers = viewed.players.filter((entity) => (!tracking || playerTrackKey(entity) === trackedPlayer) && (tracking || matchesEntity(entity.name, entity.id, entity.steamId)));
+  const visibleAnimals = tracking ? [] : viewed.animals.filter((entity) => matchesEntity(entity.name, entity.id));
+  const visibleHostiles = tracking ? [] : viewed.hostiles.filter((entity) => matchesEntity(entity.name, entity.id));
+  const visibleClaims = tracking || !showClaims ? [] : claims.filter((claim) => matchesEntity(claim.owner, claim.steamId, claim.eosId, claim.id));
+  const visibleVehicles = tracking || !showVehicles ? [] : vehicles.filter((marker) => matchesEntity(marker.name, marker.extra, marker.id));
+  const visibleDrones = tracking || !showDrones ? [] : drones.filter((marker) => matchesEntity(marker.name, marker.extra, marker.id));
+  const visibleTraders = tracking || !showTraders ? [] : traders.filter((marker) => matchesEntity(marker.name, marker.extra, marker.id));
+  const visibleHomes = tracking || !showBeds ? [] : homes.filter((home) => matchesEntity(home.owner, home.steamId, home.id));
+  const visibleRegions = tracking ? [] : regionDefinitions.filter((region) => matchesEntity(region.name, region.x, region.z));
+  const visibleQuestPois = tracking || !showQuestPois ? [] : questPois.filter((poi) => matchesEntity(poi.name, poi.id));
+  const visibleAllPois = tracking || !showAllPois ? [] : allPois.filter((poi) => matchesEntity(poi.name, poi.id));
+  const visibleResetRegions = tracking || !showResetRegions ? [] : resetRegions;
   const regions = visibleRegions.map((region) => {
     const x0 = region.x * 512,
       z0 = region.z * 512;
@@ -590,145 +1062,193 @@ export default function LiveMapClient() {
       </Rectangle>
     );
   });
-  const playerChoices = [
-    ...new Map(
-      history
-        .flatMap((s) => s.players)
-        .concat(players)
-        .map((p) => [playerTrackKey(p), p]),
-    ).values(),
-  ];
-  // Local history can be restored out of order. Include the newest live poll
-  // so trails do not lag one refresh behind the player marker.
-  const liveSnapshot: Snapshot = { at: Date.now(), players, animals, hostiles };
+  const liveSnapshot: Snapshot = { at: Date.now(), players, animals: [], hostiles: [] };
+  const trailSource = tracking
+    ? history.filter((snapshot) => historyCursorAt === null || snapshot.at <= historyCursorAt)
+    : windowedHistory;
   const trailHistory = [
-    ...(historyCursorAt === null ? windowedHistory : windowedHistory.filter((snapshot) => snapshot.at <= historyCursorAt)),
+    ...trailSource,
     ...(historyCursorAt === null && players.length ? [liveSnapshot] : []),
   ].sort((a, b) => a.at - b.at);
-  const visibleIds = showAllPlayerTrails
+  const visibleIds = showAllPlayerTrails && !tracking
     ? [...new Set(trailHistory.flatMap((s) => s.players.map(playerTrackKey)))]
-    : trackedPlayer
+    : tracking
       ? [trackedPlayer]
       : [...new Set(viewed.players.map(playerTrackKey))];
   const trails = visibleIds
-      .map((id) => {
-      const points = trailHistory
-        .flatMap((s) =>
-          s.players
-            .filter((p) => playerTrackKey(p) === id && matchesEntity(p.name, p.id))
-            .filter((p) => Number.isFinite(p.position?.x) && Number.isFinite(p.position?.z))
-            .map((p) => [p.position.x, p.position.z] as [number, number]),
-        );
+    .map((id) => {
+      const points = trailHistory.flatMap((s) =>
+        s.players
+          .filter((p) => playerTrackKey(p) === id)
+          .filter((p) => Number.isFinite(p.position?.x) && Number.isFinite(p.position?.z))
+          .map((p) => [p.position.x, p.position.z] as [number, number]),
+      );
       const distinct = points.filter((point, index) => index === 0 || point[0] !== points[index - 1][0] || point[1] !== points[index - 1][1]);
       return { id, points: sampleTrail(distinct) };
     })
     .filter((trail) => trail.points.length > 1);
+  const trackedOnline = viewed.players.find((player) => playerTrackKey(player) === trackedPlayer) || null;
+  const trackedTrail = trails.find((trail) => trail.id === trackedPlayer);
+  const followPosition = trackedOnline
+    ? [trackedOnline.position.x, trackedOnline.position.z] as [number, number]
+    : trackedTrail?.points[trackedTrail.points.length - 1] ?? null;
+  const filterPanelProps: MapFilterPanelProps = {
+    prismaConfigured,
+    viewed,
+    claims,
+    logoutMarkers,
+    vehicles,
+    drones,
+    homes,
+    traders,
+    questPois,
+    allPois,
+    resetRegions,
+    advClaims,
+    showTrailsLayer,
+    setShowTrailsLayer,
+    showPlayersLayer,
+    setShowPlayersLayer,
+    showAnimalsLayer,
+    setShowAnimalsLayer,
+    showHostilesLayer,
+    setShowHostilesLayer,
+    showAllPlayerTrails,
+    setShowAllPlayerTrails,
+    showPlayerNames,
+    setShowPlayerNames,
+    showLogoutLocations,
+    setShowLogoutLocations,
+    showClaims,
+    setShowClaims,
+    showVehicles,
+    setShowVehicles,
+    showDrones,
+    setShowDrones,
+    showBeds,
+    setShowBeds,
+    showTraders,
+    setShowTraders,
+    showQuestPois,
+    setShowQuestPois,
+    showAllPois,
+    setShowAllPois,
+    showResetRegions,
+    setShowResetRegions,
+    showAdvClaims,
+    setShowAdvClaims,
+    showRegionGrid,
+    setShowRegionGrid,
+    advClaimFilter,
+    setAdvClaimFilter,
+  };
+  const resetFilters = () => resetMapFilters({
+    setTrackedPlayer,
+    setShowAllPlayerTrails,
+    setShowTrailsLayer,
+    setShowPlayersLayer,
+    setShowAnimalsLayer,
+    setShowHostilesLayer,
+    setShowRegionGrid,
+    setShowPlayerNames,
+    setShowLogoutLocations,
+    setShowClaims,
+    setShowVehicles,
+    setShowDrones,
+    setShowBeds,
+    setShowTraders,
+    setShowQuestPois,
+    setShowResetRegions,
+    setShowAdvClaims,
+    setShowAllPois,
+    setEntitySearch,
+    setAdvClaimFilter,
+    setHistoryCursorAt,
+  });
   return (
     <div className="live-map-page">
       <style jsx global>{`
         .live-map-page { color: #e2e8f0; }
-        .map-heading { background: linear-gradient(135deg, rgba(30,41,59,.72), rgba(15,23,42,.42)); border: 1px solid #273449; border-radius: 12px; padding: 16px 18px; }
-        .map-stats { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
-        .map-global-search { display: flex; align-items: center; gap: 7px; max-width: 620px; margin-top: 12px; padding: 5px 7px; border: 1px solid #475569; border-radius: 8px; background: rgba(2,6,23,.72); }
-        .map-global-search > span { color: #38bdf8; font-size: 20px; line-height: 1; }
-        .map-global-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: #f8fafc; padding: 5px 2px; font-size: 13px; }
-        .map-global-search input::placeholder { color: #64748b; }
-        .map-global-search button { border: 0; border-radius: 5px; background: #334155; color: #e2e8f0; padding: 5px 8px; cursor: pointer; }
-        .map-stat { border: 1px solid #334155; border-radius: 999px; padding: 4px 9px; background: rgba(15,23,42,.7); font-size: 12px; }
-        .map-toolbar { margin: 10px 0; padding: 10px; background: #111118; border: 1px solid #252532; border-radius: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+        .map-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+        .map-heading h1 { margin: 0; font-size: 1.15rem; }
+        .map-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+        .map-stat { border: 1px solid #334155; border-radius: 999px; padding: 3px 8px; background: rgba(15,23,42,.7); font-size: 11px; }
+        .map-toolbar { margin: 0 0 8px; padding: 8px 10px; background: #111118; border: 1px solid #252532; border-radius: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
         .map-toolbar .toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-right: 8px; margin-right: 2px; border-right: 1px solid #293241; }
         .map-toolbar .toolbar-group:last-child { border-right: 0; }
-        .map-filter-details { border-right: 1px solid #293241; }
-        .map-filter-details summary { cursor: pointer; color: #cbd5e1; font-size: 12px; font-weight: 600; padding: 6px 8px; border: 1px solid #334155; border-radius: 6px; list-style-position: inside; white-space: nowrap; }
-        .map-filter-details[open] summary { border-radius: 6px 6px 0 0; }
-        .map-filter-details .filter-detail-content { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 8px 2px 0; }
+        .map-filter-details { position: relative; display: block; padding-right: 8px; margin-right: 2px; border-right: 1px solid #293241; }
+        .map-filter-details summary { cursor: pointer; color: #cbd5e1; font-size: 12px; font-weight: 600; padding: 6px 10px; border: 1px solid #334155; border-radius: 6px; list-style: none; white-space: nowrap; user-select: none; }
+        .map-filter-details summary::-webkit-details-marker { display: none; }
+        .map-filter-details summary::before { content: "☰ "; opacity: 0.85; }
+        .map-filter-details[open] summary { border-color: #38bdf8; background: rgba(30, 41, 59, 0.55); }
+        .map-filter-panel, .map-overlay-filters-panel {
+          padding: 12px 14px; border: 1px solid #475569; border-radius: 8px;
+          background: rgba(15, 23, 42, 0.98); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+          display: grid; gap: 10px; overflow-x: hidden; overflow-y: auto;
+          max-height: min(640px, calc(100vh - 160px)); min-height: 220px;
+          -webkit-overflow-scrolling: touch;
+        }
+        .map-filter-details .map-filter-panel {
+          position: absolute; top: calc(100% + 6px); left: 0; z-index: 1400;
+          width: min(380px, calc(100vw - 48px));
+        }
+        .map-filter-section, .map-overlay-filters-section { display: grid; gap: 8px; }
+        .map-filter-section + .map-filter-section, .map-overlay-filters-section + .map-overlay-filters-section { border-top: 1px solid #334155; padding-top: 10px; margin-top: 2px; }
+        .map-filter-section strong, .map-overlay-filters-section strong { color: #94a3b8; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+        .map-filter-grid, .map-overlay-filters-grid { display: grid; gap: 8px; }
+        .map-filter-grid label, .map-overlay-filters-grid label { min-height: 24px; align-items: center !important; }
+        .map-overlay-filters { position: absolute; top: 10px; right: 10px; z-index: 1200; }
+        .map-overlay-filters-toggle {
+          width: 40px; height: 40px; border: 1px solid #475569; border-radius: 7px;
+          background: rgba(15, 23, 42, 0.96); color: #e2e8f0; font-size: 18px; line-height: 1;
+          cursor: pointer; box-shadow: 0 3px 12px rgba(0, 0, 0, 0.3);
+        }
+        .map-overlay-filters-toggle[aria-expanded="true"] { border-color: #38bdf8; background: #1e293b; }
+        .map-overlay-filters-panel {
+          position: fixed; z-index: 2000; width: min(380px, calc(100vw - 24px));
+        }
         .map-toolbar select, .map-toolbar button { min-height: 32px; }
-        .map-toolbar button:focus-visible, .map-toolbar select:focus-visible, .map-toolbar input:focus-visible, .map-heading button:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
-        .map-global-search input:focus-visible, .map-global-search button:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
-        .map-maintenance { min-width: min(100%, 320px); }
-        .map-maintenance summary { cursor: pointer; color: #fbbf24; font-size: 12px; font-weight: 600; padding: 6px 8px; border: 1px solid #3f3f46; border-radius: 6px; background: rgba(120,53,15,.2); list-style-position: inside; }
-        .map-maintenance[open] summary { border-radius: 6px 6px 0 0; }
+        .map-toolbar button:focus-visible, .map-toolbar select:focus-visible, .map-toolbar input:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
+        .map-maintenance { min-width: min(100%, 280px); }
+        .map-maintenance summary { cursor: pointer; color: #94a3b8; font-size: 12px; font-weight: 600; padding: 6px 8px; border: 1px solid #3f3f46; border-radius: 6px; background: rgba(15,23,42,.45); list-style-position: inside; }
+        .map-maintenance[open] summary { border-radius: 6px 6px 0 0; color: #fbbf24; }
         .map-maintenance > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 8px; }
-        .leaflet-control-layers { border: 1px solid #475569 !important; border-radius: 8px !important; background: rgba(15,23,42,.94) !important; color: #e2e8f0 !important; box-shadow: 0 3px 12px rgba(0,0,0,.3) !important; }
-        .leaflet-control-layers-toggle { width: 40px !important; height: 40px !important; background-color: #0f172a !important; border-radius: 7px; }
-        .leaflet-control-layers-expanded { padding: 9px 10px !important; line-height: 1.8 !important; }
-        .leaflet-control-layers label { margin: 2px 0; }
-        .map-frame { position: relative; height: calc(100vh - 230px); min-height: 520px; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 14px 35px rgba(0,0,0,.22); }
+        .map-frame { position: relative; height: calc(100vh - 148px); min-height: 560px; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 14px 35px rgba(0,0,0,.22); }
         .map-empty-state { position: absolute; z-index: 900; top: 12px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 7px 11px; border: 1px solid #475569; border-radius: 7px; background: rgba(15,23,42,.9); color: #cbd5e1; font-size: 12px; text-align: center; pointer-events: none; }
         .map-viewport-controls { position: absolute; z-index: 1000; top: 10px; left: 10px; display: flex; gap: 5px; }
         .map-viewport-controls button { border: 1px solid #475569; border-radius: 6px; background: rgba(15,23,42,.92); color: #e2e8f0; padding: 6px 8px; font-size: 11px; cursor: pointer; }
         .map-viewport-controls button:hover { background: #1e293b; }
-        .map-search-overlay { position: absolute; z-index: 1000; top: 52px; left: 10px; display: flex; align-items: center; gap: 6px; width: min(360px, calc(100% - 20px)); padding: 6px 8px; border: 1px solid #475569; border-radius: 7px; background: rgba(15,23,42,.94); box-shadow: 0 3px 12px rgba(0,0,0,.3); }
-        .map-search-overlay label { color: #7dd3fc; font-size: 11px; font-weight: 700; white-space: nowrap; }
-        .map-search-overlay input { min-width: 0; flex: 1; border: 1px solid #334155; border-radius: 5px; background: #020617; color: #f8fafc; padding: 5px 7px; font-size: 12px; outline: none; }
-        .map-search-overlay input:focus { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,.22); }
-        .map-search-overlay button { border: 0; border-radius: 5px; background: #334155; color: #e2e8f0; padding: 5px 7px; cursor: pointer; }
-        .map-legend { position: absolute; z-index: 1000; right: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 7px 10px; max-width: min(420px, calc(100% - 20px)); padding: 7px 9px; border: 1px solid #475569; border-radius: 7px; background: rgba(15,23,42,.92); color: #cbd5e1; font-size: 11px; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+        .map-search-overlay { position: absolute; z-index: 1000; top: 10px; left: 168px; display: flex; align-items: center; gap: 6px; width: min(280px, calc(100% - 220px)); padding: 6px 8px; border: 1px solid #475569; border-radius: 7px; background: rgba(15,23,42,.94); box-shadow: 0 3px 12px rgba(0,0,0,.3); }
+        .map-search-overlay input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: #f8fafc; font-size: 12px; }
+        .map-search-overlay button { border: 0; border-radius: 5px; background: #334155; color: #e2e8f0; padding: 4px 7px; cursor: pointer; }
+        .map-legend { position: absolute; z-index: 1000; right: 10px; bottom: 66px; display: flex; flex-wrap: wrap; gap: 7px 10px; max-width: min(360px, calc(100% - 20px)); padding: 7px 9px; border: 1px solid #475569; border-radius: 7px; background: rgba(15,23,42,.92); color: #cbd5e1; font-size: 11px; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
         .map-legend strong { color: #f8fafc; margin-right: 2px; }
         .map-legend span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
         .map-legend i { width: 8px; height: 8px; display: inline-block; border-radius: 50%; border: 1px solid rgba(255,255,255,.7); }
+        .map-track-banner { position: absolute; z-index: 1000; top: 10px; right: 58px; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid ${trackingColor}; border-radius: 7px; background: rgba(15,23,42,.94); color: #f8fafc; font-size: 12px; max-width: calc(100% - 120px); }
+        .map-timeline { position: absolute; z-index: 1100; left: 10px; right: 10px; bottom: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid #475569; border-radius: 8px; background: rgba(15,23,42,.94); box-shadow: 0 3px 12px rgba(0,0,0,.3); }
+        .map-timeline input[type="range"] { flex: 1; min-width: 140px; accent-color: #f59e0b; }
+        .map-timeline select, .map-timeline button { min-height: 32px; }
+        .map-timeline button:focus-visible, .map-timeline select:focus-visible, .map-timeline input:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
         @media (max-width: 700px) {
-          .map-heading { padding: 12px; }
           .map-toolbar .toolbar-group { width: 100%; border-right: 0; border-bottom: 1px solid #293241; padding: 0 0 8px; }
           .map-toolbar .toolbar-group:last-child { border-bottom: 0; padding-bottom: 0; }
-          .map-frame { height: calc(100vh - 290px); min-height: 430px; }
-          .map-search-overlay { top: 56px; }
+          .map-frame { height: calc(100vh - 220px); min-height: 430px; }
+          .map-search-overlay { top: 52px; left: 10px; width: calc(100% - 20px); }
+          .map-legend { bottom: 108px; }
         }
       `}</style>
-      <div
-        className="map-heading"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "end",
-          marginBottom: 8,
-          flexWrap: "wrap",
-          gap: 8,
-        }}
-      >
+      <div className="map-heading">
         <div>
-          <h1 style={{ margin: 0, fontSize: "1.5rem" }}>Live Server Map</h1>
-          <p style={{ color: "#64748b", margin: ".25rem 0 0" }}>
-            Terrain and entities refresh every 10 seconds. Inspired by CSMM;
-            powered by live 7DTD data.
-          </p>
-          <div className="map-global-search">
-            <span aria-hidden="true">⌕</span>
-            <input
-              aria-label="Search all map entities"
-              placeholder="Search players, zombies, claims, POIs, vehicles…"
-              value={entitySearch}
-              onChange={(event) => setEntitySearch(event.target.value)}
-            />
-            {entitySearch && <button type="button" aria-label="Clear map search" onClick={() => setEntitySearch("")}>Clear</button>}
-          </div>
-          {worldInfo && (
-            <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 5 }}>
-              World size: <strong style={{ color: "#e2e8f0" }}>{worldInfo.width.toLocaleString()} × {worldInfo.height.toLocaleString()} blocks</strong>
-              <span style={{ color: "#64748b" }}> · read from {worldInfo.source}</span>
-            </div>
-          )}
+          <h1>Live Map</h1>
           <div className="map-stats">
-            <span className="map-stat" style={{ color: "#60a5fa" }}>
-              Players {viewed.players.length}
-            </span>
-            <span className="map-stat" style={{ color: "#4ade80" }}>
-              Animals {viewed.animals.length}
-            </span>
-            <span className="map-stat" style={{ color: "#f87171" }}>
-              Hostiles {viewed.hostiles.length}
-            </span>
+            <span className="map-stat" style={{ color: "#60a5fa" }}>Players {viewed.players.length}</span>
             <span className="map-stat" style={{ color: "#c084fc" }}>Claims {claims.length}</span>
-            {prismaConfigured && (
-              <>
-                <span className="map-stat" style={{ color: "#38bdf8" }}>Vehicles {vehicles.length}</span>
-                <span className="map-stat" style={{ color: "#f472b6" }}>Drones {drones.length}</span>
-                <span className="map-stat" style={{ color: "#facc15" }}>Traders {traders.length}</span>
-              </>
-            )}
-            {feedError && (
-              <span style={{ color: "#fbbf24" }}>Feed error: {feedError}</span>
-            )}
+            <span className="map-stat" style={{ color: "#fbbf24" }}>Logout {logoutMarkers.length}</span>
+            <span className="map-stat" style={{ color: "#4ade80" }}>Animals {viewed.animals.length}</span>
+            <span className="map-stat" style={{ color: "#f87171" }}>Hostiles {viewed.hostiles.length}</span>
+            {tracking && <span className="map-stat" style={{ color: trackingColor }}>Tracking {trackedOnline?.name || playerChoices.find((p) => playerTrackKey(p) === trackedPlayer)?.name || "player"}</span>}
+            {feedError && <span style={{ color: "#fbbf24", fontSize: 12 }}>Feed error: {feedError}</span>}
             {!feedError && <span className="map-stat" role="status" style={{ color: lastLiveUpdate ? "#4ade80" : "#fbbf24" }}>{formatAge(lastLiveUpdate)}</span>}
           </div>
         </div>
@@ -840,11 +1360,13 @@ export default function LiveMapClient() {
           </div>
         </details>
       </div>
+      {visitStatus.state !== "idle" && (
       <div style={{ color: visitStatus.state === "stalled" ? "#fca5a5" : visitStatus.state === "running" ? "#fbbf24" : "#94a3b8", fontSize: 12, marginBottom: 8 }}>
         visitmap: <strong>{visitStatus.state}</strong>
         {visitStatus.total ? ` · ${visitStatus.percent ?? 0}% · ${(visitStatus.done ?? 0).toLocaleString()} / ${visitStatus.total.toLocaleString()} chunks` : ""}
         {visitStatus.estimatedSeconds ? ` · about ${Math.ceil(visitStatus.estimatedSeconds / 60)} minutes remaining` : ""}
       </div>
+      )}
       {visitNotice && (
         <div style={{ color: /failed|could not|did not/i.test(visitNotice) ? "#fca5a5" : "#fbbf24", fontSize: 12, marginBottom: 8 }}>
           {visitNotice}
@@ -866,22 +1388,23 @@ export default function LiveMapClient() {
       >
           <div className="toolbar-group">
           <select
-          aria-label="Track player"
-          value={trackedPlayer}
-          onChange={(e) => setTrackedPlayer(e.target.value)}
-          style={{
-            background: "#0d0d14",
-            color: "#e2e8f0",
-            border: "1px solid #334155",
-            borderRadius: 6,
-            padding: "6px 9px",
-            maxWidth: 180,
-          }}
-        >
+            aria-label="Track player"
+            value={trackedPlayer}
+            onChange={(e) => setTrackedPlayer(e.target.value)}
+            style={{
+              background: "#0d0d14",
+              color: "#e2e8f0",
+              border: trackedPlayer ? `1px solid ${trackingColor}` : "1px solid #334155",
+              borderRadius: 6,
+              padding: "6px 9px",
+              minWidth: 180,
+              maxWidth: 240,
+            }}
+          >
           <option value="">All players</option>
           {playerChoices.map((p) => (
             <option key={playerTrackKey(p)} value={playerTrackKey(p)}>
-              Track: {p.name}
+              Track {p.name}
             </option>
           ))}
         </select>
@@ -898,196 +1421,16 @@ export default function LiveMapClient() {
           </label>
           )}
           </div>
-          <details className="toolbar-group map-filter-details">
-            <summary>Filters</summary>
-            <div className="filter-detail-content">
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            color: "#60a5fa",
-            fontSize: 12,
-            whiteSpace: "nowrap",
-            cursor: "pointer",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={showAllPlayerTrails}
-            onChange={(event) => setShowAllPlayerTrails(event.target.checked)}
-            style={{ accentColor: "#3b82f6" }}
-          />
-          Show all player trails
-        </label>
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            color: "#60a5fa",
-            fontSize: 12,
-            whiteSpace: "nowrap",
-            cursor: "pointer",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={showPlayerNames}
-            onChange={(event) => setShowPlayerNames(event.target.checked)}
-            style={{ accentColor: "#3b82f6" }}
-          />
-          Show player names
-        </label>
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            color: "#fbbf24",
-            fontSize: 12,
-            whiteSpace: "nowrap",
-            cursor: "pointer",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={showLogoutLocations}
-            onChange={(event) => setShowLogoutLocations(event.target.checked)}
-            style={{ accentColor: "#f59e0b" }}
-          />
-          Last reported logout locations ({logoutMarkers.length})
-        </label>
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            color: "#c084fc",
-            fontSize: 12,
-            whiteSpace: "nowrap",
-            cursor: "pointer",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={showClaims}
-            onChange={(event) => setShowClaims(event.target.checked)}
-            style={{ accentColor: "#a855f7" }}
-          />
-          Show land claims ({claims.length})
-        </label>
-        {prismaConfigured && (
-          <>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#38bdf8", fontSize: 12, whiteSpace: "nowrap" }}>
-              PrismaCore
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#e2e8f0", fontSize: 12, whiteSpace: "nowrap", cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={showAllPois}
-                onChange={(event) => setShowAllPois(event.target.checked)}
-                style={{ accentColor: "#eab308" }}
-              />
-              All POIs ({allPois.length})
-            </label>
-            <select
-              aria-label="Advanced claim type"
-              value={advClaimFilter}
-              onChange={(event) => setAdvClaimFilter(event.target.value)}
-              style={{ background: "#0d0d14", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 6, padding: "6px 9px" }}
-            >
-              <option value="all">Adv. claims (all)</option>
-              {[...new Set(advClaims.map((claim) => claim.type))].sort().map((type) => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
-          </>
-        )}
+          <details className="map-filter-details">
+            <summary>Filters · claims {claims.length} · logout {logoutMarkers.length}</summary>
+            <div className="map-filter-panel" role="dialog" aria-label="Map filters">
+              <MapFilterPanel {...filterPanelProps} onReset={resetFilters} />
             </div>
           </details>
-          <div className="toolbar-group" style={{ flex: 1, minWidth: 260 }}>
-        <select
-          aria-label="Player history timeframe"
-          value={historyWindow}
-          onChange={(event) => {
-            setHistoryWindow(Number(event.target.value));
-            setHistoryCursorAt(null);
-          }}
-          style={{
-            background: "#0d0d14",
-            color: "#e2e8f0",
-            border: "1px solid #334155",
-            borderRadius: 6,
-            padding: "6px 9px",
-          }}
-        >
-          <option value={5}>Last 5 minutes</option>
-          <option value={15}>Last 15 minutes</option>
-          <option value={30}>Last 30 minutes</option>
-          <option value={60}>Last 1 hour</option>
-          <option value={120}>Last 2 hours</option>
-          <option value={360}>Last 6 hours</option>
-          <option value={720}>Last 12 hours</option>
-          <option value={1440}>Last 24 hours</option>
-          <option value={2880}>Last 48 hours</option>
-          <option value={4320}>Last 72 hours</option>
-        </select>
-        <span
-          style={{
-            fontSize: 12,
-            color: historyCursorAt === null ? "#4ade80" : "#fbbf24",
-            minWidth: 110,
-          }}
-        >
-          {historyCursorAt === null
-            ? "● LIVE"
-            : new Date(viewed.at).toLocaleTimeString()}
-        </span>
-        <input
-          aria-label="Map history time"
-          type="range"
-          min={0}
-          max={windowedHistory.length}
-          value={historyCursorAt === null ? windowedHistory.length : Math.max(0, windowedHistory.findIndex((snapshot) => snapshot.at === historyCursorAt))}
-          onChange={(e) => {
-            const n = Number(e.target.value);
-            setHistoryCursorAt(n === windowedHistory.length ? null : windowedHistory[n]?.at ?? null);
-          }}
-          disabled={!windowedHistory.length}
-          aria-valuetext={historyCursorAt === null ? "Live" : new Date(viewed.at).toLocaleString()}
-          style={{ flex: 1, minWidth: 150, accentColor: "#f59e0b" }}
-        />
-        <button
-          onClick={() => setHistoryCursorAt(null)}
-          disabled={historyCursorAt === null}
-          style={{
-            background: "#2563eb",
-            color: "white",
-            border: 0,
-            borderRadius: 6,
-            padding: "6px 12px",
-            cursor: "pointer",
-          }}
-        >
-          Live
-        </button>
-        <span style={{ fontSize: 11, color: "#64748b" }}>
-          {windowedHistory.length} points{historyStart && historyEnd ? ` · ${new Date(historyStart).toLocaleTimeString()}–${new Date(historyEnd).toLocaleTimeString()}` : " · no collected data"}
-        </span>
+          <div className="toolbar-group">
         <button
           type="button"
-          onClick={() => {
-            setTrackedPlayer("");
-            setShowAllPlayerTrails(false);
-            setShowPlayerNames(true);
-            setShowLogoutLocations(false);
-            setShowClaims(true);
-            setShowAllPois(false);
-            setEntitySearch("");
-            setAdvClaimFilter("all");
-            setHistoryCursorAt(null);
-          }}
+          onClick={resetFilters}
           style={{ background: "#334155", color: "#e2e8f0", border: 0, borderRadius: 6, padding: "6px 10px", cursor: "pointer", whiteSpace: "nowrap" }}
         >
           Reset filters
@@ -1097,27 +1440,65 @@ export default function LiveMapClient() {
       <div
         className="map-frame"
         style={{
-          height: "calc(100vh - 230px)",
-          minHeight: 520,
+          height: "calc(100vh - 148px)",
+          minHeight: 560,
           border: "1px solid #252532",
           borderRadius: 9,
           overflow: "hidden",
         }}
       >
         <div className="map-search-overlay">
-          <label htmlFor="floating-map-search">Search map</label>
           <input
-            id="floating-map-search"
-            aria-label="Search all map entities"
-            placeholder="Player, zombie, claim, POI…"
+            aria-label="Search map"
+            placeholder="Search…"
             value={entitySearch}
             onChange={(event) => setEntitySearch(event.target.value)}
           />
           {entitySearch && <button type="button" aria-label="Clear map search" onClick={() => setEntitySearch("")}>×</button>}
         </div>
+        <div className="map-overlay-filters" ref={filtersPanelRef}>
+          <button
+            ref={filterToggleRef}
+            type="button"
+            className="map-overlay-filters-toggle"
+            aria-label="Map filters"
+            aria-expanded={filtersOpen}
+            title="Map filters"
+            onClick={() => setFiltersOpen((open) => !open)}
+          >
+            ☰
+          </button>
+          {filtersOpen && (
+            <div className="map-overlay-filters-panel" style={overlayPanelStyle} role="dialog" aria-label="Map filters">
+              <MapFilterPanel
+                {...filterPanelProps}
+                onReset={() => {
+                  resetFilters();
+                  setFiltersOpen(false);
+                }}
+              />
+            </div>
+          )}
+        </div>
+        {replaying && (
+          <div className="map-track-banner" style={{ borderColor: "#f59e0b", top: tracking ? 48 : 10 }}>
+            <strong style={{ color: "#fbbf24" }}>Replay</strong>
+            <span style={{ color: "#cbd5e1" }}>{new Date(viewed.at).toLocaleTimeString()} · {viewed.players.length} player{viewed.players.length === 1 ? "" : "s"} online then</span>
+            <button type="button" onClick={() => setHistoryCursorAt(null)} style={{ background: "#334155", color: "#e2e8f0", border: 0, borderRadius: 5, padding: "3px 7px", cursor: "pointer" }}>Live</button>
+          </div>
+        )}
+        {tracking && (
+          <div className="map-track-banner">
+            <strong style={{ color: trackingColor }}>{trackedOnline?.name || "Selected player"}</strong>
+            <span style={{ color: "#94a3b8" }}>{replaying ? "at this time" : trackedOnline ? "live" : "last trail"} · other overlays hidden</span>
+            <button type="button" onClick={() => setTrackedPlayer("")} style={{ background: "#334155", color: "#e2e8f0", border: 0, borderRadius: 5, padding: "3px 7px", cursor: "pointer" }}>Clear</button>
+          </div>
+        )}
         {!feedError && viewed.players.length === 0 && viewed.animals.length === 0 && viewed.hostiles.length === 0 && (
           <div className="map-empty-state" role="status">
-            No live entities reported. Other overlays remain available from the layer menu.
+            {replaying
+              ? "No players were online at this time in the collected history."
+              : "No live entities reported. Use ☰ Filters in the toolbar or on the map for claims, logout, and other overlays."}
           </div>
         )}
         <MapContainer
@@ -1145,54 +1526,59 @@ export default function LiveMapClient() {
             updateWhenIdle={false}
             updateWhenZooming
           />
-          <LayersControl position="topright">
-            <LayersControl.Overlay name="Players" checked>
-              <LayerGroup>
-                {trails.map((trail) => {
-                  const selected = Boolean(trackedPlayer) && trail.id === trackedPlayer;
-                  return (
+          {showTrailsLayer && (
+            <LayerGroup key={`trails-${replayLayerKey}`}>
+              {trails.map((trail) => {
+                const selected = Boolean(trackedPlayer) && trail.id === trackedPlayer;
+                return (
                   <LayerGroup key={`trail-${trail.id}`}>
-                    {selected && <Polyline positions={trail.points} pathOptions={{ color: "#020617", weight: 8, opacity: 0.8 }} />}
+                    {selected && <Polyline positions={trail.points} pathOptions={{ color: "#020617", weight: 9, opacity: 0.85 }} />}
                     <Polyline
                       positions={trail.points}
                       pathOptions={{
-                        color: selected ? trackingColor : "#60a5fa",
-                        weight: selected ? 5 : 2,
-                        opacity: selected ? 1 : 0.55,
+                        color: selected || tracking ? trackingColor : "#60a5fa",
+                        weight: selected || tracking ? 6 : 3,
+                        opacity: selected || tracking ? 1 : 0.7,
                       }}
                     />
                   </LayerGroup>
-                  );
-                })}
-                {visiblePlayers.map((e) => (
+                );
+              })}
+            </LayerGroup>
+          )}
+          {showPlayersLayer && (
+            <LayerGroup key={`players-${replayLayerKey}`}>
+              {visiblePlayers.map((e) => {
+                const selected = playerTrackKey(e) === trackedPlayer;
+                return (
                   <Marker
-                    key={e.id}
+                    key={playerTrackKey(e)}
                     position={[e.position.x, e.position.z]}
-                    opacity={
-                      !trackedPlayer || playerTrackKey(e) === trackedPlayer
-                        ? 1
-                        : 0.35
-                    }
-                    icon={dot(
-                      playerTrackKey(e) === trackedPlayer ? trackingColor : "#3b82f6",
-                    )}
+                    zIndexOffset={selected ? 1000 : 0}
+                    icon={selected ? trackedDot(trackingColor) : dot(replaying ? "#38bdf8" : "#3b82f6")}
                   >
                     <Popup>
-                      {e.name}
+                      <strong>{e.name}</strong>
                       <br />
                       {Math.round(e.position.x)}, {Math.round(e.position.z)}
-                      {playerTrackKey(e) === trackedPlayer && (
+                      {replaying && (
                         <>
                           <br />
-                          <strong>Tracking</strong>
+                          Online at {new Date(viewed.at).toLocaleTimeString()}
+                        </>
+                      )}
+                      {selected && (
+                        <>
+                          <br />
+                          Tracking
                         </>
                       )}
                     </Popup>
-                    {showPlayerNames && (
+                    {(showPlayerNames || selected) && (
                       <Tooltip
                         permanent
                         direction="top"
-                        offset={[0, -8]}
+                        offset={[0, -10]}
                         opacity={1}
                         className="player-map-name"
                       >
@@ -1200,199 +1586,239 @@ export default function LiveMapClient() {
                       </Tooltip>
                     )}
                   </Marker>
-                ))}
-              </LayerGroup>
-            </LayersControl.Overlay>
-            <LayersControl.Overlay name={`Logout locations (${logoutMarkers.length})`} checked>
-              <LayerGroup>
-                {showLogoutLocations && logoutMarkers.map((marker) => (
-                  <Marker
-                    key={`logout-${marker.id}`}
-                    position={[marker.x, marker.z]}
-                    icon={L.divIcon({
-                      className: "",
-                      html: `<span style="display:block;width:12px;height:12px;border-radius:50%;background:#0f172a;border:2px solid #f59e0b;box-shadow:0 1px 4px #000"></span>`,
-                      iconSize: [16, 16],
-                      iconAnchor: [8, 8],
-                    })}
-                  >
-                    <Popup>
-                      <strong>{marker.name}</strong>
-                      <br />
-                      Last logout
-                      <br />
-                      {Math.round(marker.x)}, {Math.round(marker.y ?? 0)}, {Math.round(marker.z)}
-                      {marker.lastLogoutAt && (
-                        <>
-                          <br />
-                          {new Date(marker.lastLogoutAt).toLocaleString()}
-                        </>
-                      )}
-                    </Popup>
-                    {showPlayerNames && (
-                      <Tooltip permanent direction="top" offset={[0, -8]} opacity={1} className="player-map-name">
-                        {marker.name} (logout)
+                );
+              })}
+              {tracking && !trackedOnline && followPosition && (
+                <Marker position={followPosition} zIndexOffset={900} icon={trackedDot(trackingColor)}>
+                  <Popup>Last known position</Popup>
+                  <Tooltip permanent direction="top" offset={[0, -10]} opacity={1}>Last seen</Tooltip>
+                </Marker>
+              )}
+            </LayerGroup>
+          )}
+          {showAnimalsLayer && (
+            <LayerGroup key={`animals-${replayLayerKey}`}>
+              {!tracking && visibleAnimals.map((e) => (
+                <Marker
+                  key={e.id}
+                  position={[e.position.x, e.position.z]}
+                  icon={dot("#22c55e")}
+                >
+                  <Popup>{e.name}</Popup>
+                </Marker>
+              ))}
+            </LayerGroup>
+          )}
+          {showHostilesLayer && (
+            <LayerGroup key={`hostiles-${replayLayerKey}`}>
+              {!tracking && visibleHostiles.map((e) => (
+                <Marker
+                  key={e.id}
+                  position={[e.position.x, e.position.z]}
+                  icon={dot("#ef4444")}
+                >
+                  <Popup>{e.name}</Popup>
+                </Marker>
+              ))}
+            </LayerGroup>
+          )}
+          {showRegionGrid && <LayerGroup key={`regions-${replayLayerKey}`}>{regions}</LayerGroup>}
+          {!tracking && showClaims && visibleClaims.length > 0 && (
+            <LayerGroup>
+              {visibleClaims.map((claim) => {
+                const half = claim.size / 2;
+                return (
+                  <LayerGroup key={claim.id}>
+                    <Rectangle
+                      bounds={[
+                        [claim.position.x - half, claim.position.z - half],
+                        [claim.position.x + half, claim.position.z + half],
+                      ]}
+                      pathOptions={{ color: "#a855f7", weight: 2, fill: true, fillColor: "#7e22ce", fillOpacity: 0.16 }}
+                    >
+                      <Tooltip sticky>
+                        <strong>{claim.owner}</strong><br />Protected {claim.size}×{claim.size}<br />
+                        Block: {claim.position.x}, {claim.position.y}, {claim.position.z}<br />
+                        Steam: {claim.steamId || "Unavailable"}<br />EOS: {claim.eosId}
                       </Tooltip>
+                    </Rectangle>
+                    <Marker position={[claim.position.x, claim.position.z]} icon={dot("#a855f7")}>
+                      <Popup>
+                        <strong>{claim.owner}</strong><br />Land Claim Block<br />
+                        {claim.position.x}, {claim.position.y}, {claim.position.z}<br />
+                        Protection: {claim.size}×{claim.size}<br />Steam: {claim.steamId || "Unavailable"}<br />EOS: {claim.eosId}
+                      </Popup>
+                    </Marker>
+                  </LayerGroup>
+                );
+              })}
+            </LayerGroup>
+          )}
+          {!tracking && showVehicles && visibleVehicles.map((marker) => (
+            <Marker key={marker.id} position={[marker.position.x, marker.position.z]} icon={dot("#38bdf8")}>
+              <Popup>Vehicle: {marker.name}<br />{Math.round(marker.position.x)}, {Math.round(marker.position.y)}, {Math.round(marker.position.z)}</Popup>
+            </Marker>
+          ))}
+          {!tracking && showDrones && visibleDrones.map((marker) => (
+            <Marker key={marker.id} position={[marker.position.x, marker.position.z]} icon={dot("#f472b6")}>
+              <Popup>Drone: {marker.name}<br />{Math.round(marker.position.x)}, {Math.round(marker.position.y)}, {Math.round(marker.position.z)}</Popup>
+            </Marker>
+          ))}
+          {!tracking && showBeds && visibleHomes.map((home) => {
+            const bedSize = 15;
+            return (
+              <LayerGroup key={home.id}>
+                <Rectangle
+                  bounds={[
+                    [home.position.x - bedSize, home.position.z - bedSize],
+                    [home.position.x + bedSize, home.position.z + bedSize],
+                  ]}
+                  pathOptions={{ color: home.active ? "#4ade80" : "#f87171", weight: 1, fillOpacity: 0.12 }}
+                >
+                  <Tooltip sticky>{home.owner || home.steamId}<br />Bed {home.active ? "active" : "inactive"}</Tooltip>
+                </Rectangle>
+                <Marker position={[home.position.x, home.position.z]} icon={dot(home.active ? "#4ade80" : "#f87171")}>
+                  <Popup>{home.owner || home.steamId}<br />Bedroll {home.active ? "active" : "inactive"}<br />{home.position.x}, {home.position.y}, {home.position.z}</Popup>
+                </Marker>
+              </LayerGroup>
+            );
+          })}
+          {!tracking && showTraders && visibleTraders.map((marker) => (
+            <Marker key={marker.id} position={[marker.position.x, marker.position.z]} icon={dot("#facc15")}>
+              <Popup>Trader: {marker.name}<br />{Math.round(marker.position.x)}, {Math.round(marker.position.z)}</Popup>
+            </Marker>
+          ))}
+          {!tracking && showQuestPois && visibleQuestPois.map((poi) => (
+            <Rectangle key={poi.id} bounds={poiBounds(poi)} pathOptions={{ color: "#ef4444", weight: 1, fillOpacity: 0.12 }}>
+              <Tooltip sticky>{poi.name}<br />{poi.x}, {poi.z}{poi.containsBed ? " · bed/lcb" : ""}</Tooltip>
+            </Rectangle>
+          ))}
+          {!tracking && showAllPois && visibleAllPois.map((poi) => (
+            <Rectangle key={poi.id} bounds={poiBounds(poi)} pathOptions={{ color: "#eab308", weight: 1, fillOpacity: 0.08 }}>
+              <Tooltip sticky>{poi.name}<br />{poi.x}, {poi.z}</Tooltip>
+            </Rectangle>
+          ))}
+          {!tracking && showResetRegions && visibleResetRegions.map((rect) => (
+            <Polygon key={rect.id} positions={rectPolygon(rect)} pathOptions={{ color: "#ef4444", weight: 1, fillOpacity: 0.12 }}>
+              <Popup>Reset region. Do not build here.</Popup>
+            </Polygon>
+          ))}
+          {!tracking && showAdvClaims && visibleAdvClaims.map((rect) => (
+            <Polygon key={rect.id} positions={rectPolygon(rect)} pathOptions={{ color: "#22d3ee", weight: 1, fillOpacity: 0.12 }}>
+              <Popup>{rect.name}<br />Type: {rect.type}</Popup>
+            </Polygon>
+          ))}
+          <FollowTracked active={tracking} position={followPosition} recenterKey={trackedPlayer} />
+          {!tracking && showLogoutLocations && logoutMarkers.length > 0 && (
+            <LayerGroup>
+              {logoutMarkers.map((marker) => (
+                <Marker
+                  key={`logout-${marker.id}`}
+                  position={[marker.x, marker.z]}
+                  icon={L.divIcon({
+                    className: "",
+                    html: `<span style="display:block;width:12px;height:12px;border-radius:50%;background:#0f172a;border:2px solid #f59e0b;box-shadow:0 1px 4px #000"></span>`,
+                    iconSize: [16, 16],
+                    iconAnchor: [8, 8],
+                  })}
+                >
+                  <Popup>
+                    <strong>{marker.name}</strong>
+                    <br />
+                    Last logout
+                    <br />
+                    {Math.round(marker.x)}, {Math.round(marker.y ?? 0)}, {Math.round(marker.z)}
+                    {marker.lastLogoutAt && (
+                      <>
+                        <br />
+                        {new Date(marker.lastLogoutAt).toLocaleString()}
+                      </>
                     )}
-                  </Marker>
-                ))}
-              </LayerGroup>
-            </LayersControl.Overlay>
-            <LayersControl.Overlay name="Animals" checked>
-              <LayerGroup>
-                {visibleAnimals.map((e) => (
-                  <Marker
-                    key={e.id}
-                    position={[e.position.x, e.position.z]}
-                    icon={dot("#22c55e")}
-                  >
-                    <Popup>{e.name}</Popup>
-                  </Marker>
-                ))}
-              </LayerGroup>
-            </LayersControl.Overlay>
-            <LayersControl.Overlay name="Hostiles" checked>
-              <LayerGroup>
-                {visibleHostiles.map((e) => (
-                  <Marker
-                    key={e.id}
-                    position={[e.position.x, e.position.z]}
-                    icon={dot("#ef4444")}
-                  >
-                    <Popup>{e.name}</Popup>
-                  </Marker>
-                ))}
-              </LayerGroup>
-            </LayersControl.Overlay>
-            <LayersControl.Overlay name={`Land claims (${claims.length})`} checked>
-              <LayerGroup>
-                {showClaims && visibleClaims.map((claim) => {
-                  const half = claim.size / 2;
-                  return (
-                    <LayerGroup key={claim.id}>
-                      <Rectangle
-                        bounds={[
-                          [claim.position.x - half, claim.position.z - half],
-                          [claim.position.x + half, claim.position.z + half],
-                        ]}
-                        pathOptions={{ color: "#a855f7", weight: 2, fill: true, fillColor: "#7e22ce", fillOpacity: 0.16 }}
-                      >
-                        <Tooltip sticky>
-                          <strong>{claim.owner}</strong><br />Protected {claim.size}×{claim.size}<br />
-                          Block: {claim.position.x}, {claim.position.y}, {claim.position.z}<br />
-                          Steam: {claim.steamId || "Unavailable"}<br />EOS: {claim.eosId}
-                        </Tooltip>
-                      </Rectangle>
-                      <Marker position={[claim.position.x, claim.position.z]} icon={dot("#a855f7")}>
-                        <Popup>
-                          <strong>{claim.owner}</strong><br />Land Claim Block<br />
-                          {claim.position.x}, {claim.position.y}, {claim.position.z}<br />
-                          Protection: {claim.size}×{claim.size}<br />Steam: {claim.steamId || "Unavailable"}<br />EOS: {claim.eosId}
-                        </Popup>
-                      </Marker>
-                    </LayerGroup>
-                  );
-                })}
-              </LayerGroup>
-            </LayersControl.Overlay>
-            {prismaConfigured && (
-              <>
-                <LayersControl.Overlay name={`Vehicles (${vehicles.length})`}>
-                  <LayerGroup>
-                    {visibleVehicles.map((marker) => (
-                      <Marker key={marker.id} position={[marker.position.x, marker.position.z]} icon={dot("#38bdf8")}>
-                        <Popup>Vehicle: {marker.name}<br />{Math.round(marker.position.x)}, {Math.round(marker.position.y)}, {Math.round(marker.position.z)}</Popup>
-                      </Marker>
-                    ))}
-                  </LayerGroup>
-                </LayersControl.Overlay>
-                <LayersControl.Overlay name={`Drones (${drones.length})`}>
-                  <LayerGroup>
-                    {visibleDrones.map((marker) => (
-                      <Marker key={marker.id} position={[marker.position.x, marker.position.z]} icon={dot("#f472b6")}>
-                        <Popup>Drone: {marker.name}<br />{Math.round(marker.position.x)}, {Math.round(marker.position.y)}, {Math.round(marker.position.z)}</Popup>
-                      </Marker>
-                    ))}
-                  </LayerGroup>
-                </LayersControl.Overlay>
-                <LayersControl.Overlay name={`Beds (${homes.length})`}>
-                  <LayerGroup>
-                    {visibleHomes.map((home) => {
-                      const size = 15;
-                      return (
-                        <LayerGroup key={home.id}>
-                          <Rectangle
-                            bounds={[
-                              [home.position.x - size, home.position.z - size],
-                              [home.position.x + size, home.position.z + size],
-                            ]}
-                            pathOptions={{ color: home.active ? "#4ade80" : "#f87171", weight: 1, fillOpacity: 0.12 }}
-                          >
-                            <Tooltip sticky>{home.owner || home.steamId}<br />Bed {home.active ? "active" : "inactive"}</Tooltip>
-                          </Rectangle>
-                          <Marker position={[home.position.x, home.position.z]} icon={dot(home.active ? "#4ade80" : "#f87171")}>
-                            <Popup>{home.owner || home.steamId}<br />Bedroll {home.active ? "active" : "inactive"}<br />{home.position.x}, {home.position.y}, {home.position.z}</Popup>
-                          </Marker>
-                        </LayerGroup>
-                      );
-                    })}
-                  </LayerGroup>
-                </LayersControl.Overlay>
-                <LayersControl.Overlay name={`Traders (${traders.length})`}>
-                  <LayerGroup>
-                    {visibleTraders.map((marker) => (
-                      <Marker key={marker.id} position={[marker.position.x, marker.position.z]} icon={dot("#facc15")}>
-                        <Popup>Trader: {marker.name}<br />{Math.round(marker.position.x)}, {Math.round(marker.position.z)}</Popup>
-                      </Marker>
-                    ))}
-                  </LayerGroup>
-                </LayersControl.Overlay>
-                <LayersControl.Overlay name={`Quest POIs (${visibleQuestPois.length}${normalizedEntitySearch ? `/${questPois.length}` : ""})`}>
-                  <LayerGroup>
-                    {visibleQuestPois.map((poi) => (
-                      <Rectangle key={poi.id} bounds={poiBounds(poi)} pathOptions={{ color: "#ef4444", weight: 1, fillOpacity: 0.12 }}>
-                        <Tooltip sticky>{poi.name}<br />{poi.x}, {poi.z}{poi.containsBed ? " · bed/lcb" : ""}</Tooltip>
-                      </Rectangle>
-                    ))}
-                  </LayerGroup>
-                </LayersControl.Overlay>
-                <LayersControl.Overlay name={`All POIs (${visibleAllPois.length}${normalizedEntitySearch ? `/${allPois.length}` : ""})`}>
-                  <LayerGroup>
-                    {showAllPois && visibleAllPois.map((poi) => (
-                      <Rectangle key={poi.id} bounds={poiBounds(poi)} pathOptions={{ color: "#eab308", weight: 1, fillOpacity: 0.08 }}>
-                        <Tooltip sticky>{poi.name}<br />{poi.x}, {poi.z}</Tooltip>
-                      </Rectangle>
-                    ))}
-                  </LayerGroup>
-                </LayersControl.Overlay>
-                <LayersControl.Overlay name={`Reset regions (${resetRegions.length})`}>
-                  <LayerGroup>
-                    {resetRegions.map((rect) => (
-                      <Polygon key={rect.id} positions={rectPolygon(rect)} pathOptions={{ color: "#ef4444", weight: 1, fillOpacity: 0.12 }}>
-                        <Popup>Reset region. Do not build here.</Popup>
-                      </Polygon>
-                    ))}
-                  </LayerGroup>
-                </LayersControl.Overlay>
-                <LayersControl.Overlay name={`Adv. claims (${visibleAdvClaims.length})`}>
-                  <LayerGroup>
-                    {visibleAdvClaims.map((rect) => (
-                      <Polygon key={rect.id} positions={rectPolygon(rect)} pathOptions={{ color: "#22d3ee", weight: 1, fillOpacity: 0.12 }}>
-                        <Popup>{rect.name}<br />Type: {rect.type}</Popup>
-                      </Polygon>
-                    ))}
-                  </LayerGroup>
-                </LayersControl.Overlay>
-              </>
-            )}
-            <LayersControl.Overlay name="Region grid">
-                      <LayerGroup>{regions}</LayerGroup>
-            </LayersControl.Overlay>
-          </LayersControl>
+                  </Popup>
+                  {showPlayerNames && (
+                    <Tooltip permanent direction="top" offset={[0, -8]} opacity={1} className="player-map-name">
+                      {marker.name} (logout)
+                    </Tooltip>
+                  )}
+                </Marker>
+              ))}
+            </LayerGroup>
+          )}
           <MapViewportControls bounds={mapBounds} />
-          <MapLegend prismaConfigured={prismaConfigured} />
+          <MapLegend prismaConfigured={prismaConfigured} showLogoutLocations={showLogoutLocations} showClaims={showClaims} />
           <Coordinates />
         </MapContainer>
+        <div className="map-timeline">
+          <select
+            aria-label="Player history timeframe"
+            value={historyWindow}
+            onChange={(event) => {
+              setHistoryWindow(Number(event.target.value));
+              setHistoryCursorAt(null);
+            }}
+            style={{
+              background: "#0d0d14",
+              color: "#e2e8f0",
+              border: "1px solid #334155",
+              borderRadius: 6,
+              padding: "6px 9px",
+            }}
+          >
+            <option value={5}>Last 5 minutes</option>
+            <option value={15}>Last 15 minutes</option>
+            <option value={30}>Last 30 minutes</option>
+            <option value={60}>Last 1 hour</option>
+            <option value={120}>Last 2 hours</option>
+            <option value={360}>Last 6 hours</option>
+            <option value={720}>Last 12 hours</option>
+            <option value={1440}>Last 24 hours</option>
+            <option value={2880}>Last 48 hours</option>
+            <option value={4320}>Last 72 hours</option>
+          </select>
+          <span
+            style={{
+              fontSize: 12,
+              color: historyCursorAt === null ? "#4ade80" : "#fbbf24",
+              minWidth: 92,
+              fontWeight: 700,
+            }}
+          >
+            {historyCursorAt === null
+              ? "● LIVE"
+              : new Date(viewed.at).toLocaleTimeString()}
+          </span>
+          <input
+            aria-label="Map history time"
+            type="range"
+            min={0}
+            max={windowedHistory.length}
+            value={replayIndex}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              setHistoryCursorAt(n === windowedHistory.length ? null : windowedHistory[n]?.at ?? null);
+            }}
+            disabled={!windowedHistory.length}
+            aria-valuetext={historyCursorAt === null ? "Live" : new Date(viewed.at).toLocaleString()}
+          />
+          <button
+            type="button"
+            onClick={() => setHistoryCursorAt(null)}
+            disabled={historyCursorAt === null}
+            style={{
+              background: historyCursorAt === null ? "#334155" : "#2563eb",
+              color: "white",
+              border: 0,
+              borderRadius: 6,
+              padding: "6px 12px",
+              cursor: historyCursorAt === null ? "default" : "pointer",
+            }}
+          >
+            Live
+          </button>
+          <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
+            {windowedHistory.length} points{historyStart && historyEnd ? ` · ${new Date(historyStart).toLocaleTimeString()}–${new Date(historyEnd).toLocaleTimeString()}` : " · no collected data"}
+          </span>
+        </div>
       </div>
     </div>
   );

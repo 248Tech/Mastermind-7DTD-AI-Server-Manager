@@ -13,7 +13,7 @@ import {
 import { constructStripeEventWithSecrets, createCheckoutSession } from './donations.stripe';
 import { stripeCredentialsForOrg, stripeWebhookSecrets } from './donations.credentials';
 import { parseShopItemId, parseShopItemIds } from './donations.shop';
-import { parseChatColor, parseGrantItemName, parseGrantQuality, parseGrantQuantity } from './shop-grants';
+import { parseChatColor, parseGrantItemList, snapshotLineGrants, aggregateGrantStatus } from './shop-grants';
 import { JobsService } from '../jobs/jobs.service';
 
 @Injectable()
@@ -41,7 +41,7 @@ export class DonationsService {
         shopItem: { select: { name: true } },
         lines: {
           orderBy: { itemName: 'asc' },
-          select: { id: true, shopItemId: true, itemName: true, amountCents: true, quantity: true, grantStatus: true, chatColorStatus: true, grantError: true },
+          select: { id: true, shopItemId: true, itemName: true, amountCents: true, quantity: true, grantStatus: true, chatColorStatus: true, grantError: true, grantItems: true, grantItemName: true, grantQuantity: true, grantQuality: true },
         },
       },
     });
@@ -69,7 +69,7 @@ export class DonationsService {
     shopItemIds?: string[],
   ) {
     if (!player.steamId) {
-      throw new BadRequestException('This in-game name is not tied to a Steam ID yet. Sign in through Steam to purchase.');
+      throw new BadRequestException('This in-game name is not tied to a Steam ID yet. Sign in through Steam to donate.');
     }
     const credentials = await stripeCredentialsForOrg(this.prisma, player.orgId);
     if (!credentials) throw new ServiceUnavailableException('Donations are not configured');
@@ -248,25 +248,30 @@ export class DonationsService {
     if (!paid.shopItemIds.length) return [];
     const items = await this.prisma.shopItem.findMany({
       where: { orgId: paid.orgId, id: { in: paid.shopItemIds } },
-      select: { id: true, name: true, priceCents: true, grantItemName: true, grantQuantity: true, grantQuality: true, chatColor: true },
+      select: { id: true, name: true, priceCents: true, grantItemName: true, grantQuantity: true, grantQuality: true, grantItems: true, chatColor: true },
     });
     return paid.shopItemIds.map((id, index) => {
       const item = items.find((row) => row.id === id);
       const amountCents = paid.lineAmounts[index] ?? item?.priceCents ?? 0;
-      const grantItemName = parseGrantItemName(item?.grantItemName);
-      const grantQuantity = parseGrantQuantity(item?.grantQuantity, 1) ?? 1;
-      const grantQuality = parseGrantQuality(item?.grantQuality);
+      const parsed = parseGrantItemList(item?.grantItems);
+      const grantItems = snapshotLineGrants(
+        parsed !== false && parsed.length
+          ? parsed
+          : (parseGrantItemList(item?.grantItemName ? [{ name: item.grantItemName, quantity: item.grantQuantity, quality: item.grantQuality }] : []) || []),
+      );
+      const first = grantItems[0];
       const chatColor = parseChatColor(item?.chatColor);
       return {
         shopItemId: item?.id ?? null,
         itemName: item?.name ?? 'Shop item',
         amountCents,
         quantity: 1,
-        grantItemName,
-        grantQuantity: grantItemName ? grantQuantity : null,
-        grantQuality: grantQuality === false ? null : grantQuality,
+        grantItems: grantItems as Prisma.InputJsonValue,
+        grantItemName: first?.name ?? null,
+        grantQuantity: first ? first.quantity : null,
+        grantQuality: first?.quality ?? null,
         chatColor: chatColor || null,
-        grantStatus: grantItemName ? 'pending' : 'none',
+        grantStatus: aggregateGrantStatus(grantItems),
         chatColorStatus: chatColor ? 'pending' : 'none',
       };
     }).filter((line) => line.amountCents > 0);

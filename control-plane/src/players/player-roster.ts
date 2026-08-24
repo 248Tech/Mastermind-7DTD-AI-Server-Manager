@@ -6,7 +6,7 @@ export type PlayerRosterRow = {
   eosId: string | null;
   ipAddress: string | null;
   ping: number | null;
-  level: number;
+  level: number | null;
   zombieKills: number;
   playerKills: number;
   deaths: number;
@@ -76,6 +76,35 @@ function positionFromRecord(row: Record<string, unknown>) {
   if (![x, y, z].every(Number.isFinite)) return null;
   if (Math.abs(x) > 1_000_000 || Math.abs(y) > 10_000 || Math.abs(z) > 1_000_000) return null;
   return { x, y, z };
+}
+
+export function mergeRosterPositions(
+  rows: PlayerRosterRow[],
+  locations: Array<{ id: string | number; name: string; steamId?: string; position: { x: number; y: number; z: number } }>,
+): PlayerRosterRow[] {
+  if (!locations.length) return rows;
+  const bySteam = new Map<string, { x: number; y: number; z: number }>();
+  const byEntity = new Map<number, { x: number; y: number; z: number }>();
+  const byName = new Map<string, { x: number; y: number; z: number }>();
+  for (const loc of locations) {
+    const pos = loc.position;
+    if (!pos) continue;
+    const steam = text(loc.steamId).replace(/^Steam_/i, '');
+    if (steam) bySteam.set(steam, pos);
+    const entityId = int(loc.id);
+    if (Number.isInteger(entityId) && entityId > 0) byEntity.set(entityId, pos);
+    const name = loc.name.trim().toLocaleLowerCase();
+    if (name) byName.set(name, pos);
+  }
+  return rows.map((row) => {
+    if (row.position) return row;
+    const position =
+      (row.steamId ? bySteam.get(row.steamId) : undefined)
+      ?? byEntity.get(row.entityId)
+      ?? byName.get(row.name.trim().toLocaleLowerCase())
+      ?? null;
+    return position ? { ...row, position } : row;
+  });
 }
 
 export function parseLpRoster(output: string): PlayerRosterRow[] | null {
@@ -172,7 +201,7 @@ export function parseAllocsPlayersOnline(json: unknown): PlayerRosterRow[] | nul
       zombieKills: Number.isInteger(zombieKills) ? zombieKills : 0,
       playerKills: Number.isInteger(playerKills) ? playerKills : 0,
       deaths: Number.isInteger(deaths) ? deaths : 0,
-      level: Number.isInteger(level) ? Math.max(1, level) : 1,
+      level: Number.isInteger(level) ? Math.max(1, level) : null,
       position: positionFromRecord(item),
     });
   }

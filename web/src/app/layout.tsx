@@ -13,15 +13,15 @@ const NAV_GROUPS = [
   { label: 'Server', items: [
     { href: '/tools', label: 'Tools', icon: '⚒', title: 'Connection protection and server utilities' },
     { href: '/players', label: 'Players', icon: '♟', title: 'Player identities, playtime, kick, and ban controls' },
-    { href: '/mods', label: 'Mods', icon: '◇', title: 'Installed server mods and removal controls' },
+    { href: '/mods', label: 'Mods', icon: '◇', title: 'Installed mods, quarantine, and member recommendations awaiting approval' },
     { href: '/saves', label: 'Saves', icon: '▣', title: 'Back up, restore, and manage world saves' },
     { href: '/logs', label: 'Logs', icon: '≡', title: 'Live and recorded server logs' },
     { href: '/chat', label: 'Chat', icon: '💬', title: 'Player-only chat history and Discord relay' },
     { href: '/region-healer', label: 'Region Healer', icon: '✚', title: 'Automatic corrupt-region recovery' },
     { href: '/profile-editor', label: 'Profile Editor', icon: '✎', title: 'Inspect and edit downloaded 7DTD player profile files' },
     { href: '/live-map', label: 'Live Map', icon: '⌖', title: 'Live terrain, players, entities, and region coordinates' },
-    { href: '/donator-shop', label: 'Donator Shop', icon: '♡', title: 'Create priced supporter items for the player portal shop' },
-    { href: '/purchases', label: 'Purchases', icon: '$', title: 'Completed player donations and shop checkouts' },
+    { href: '/donator-shop', label: 'Donator Shop', icon: '♡', title: 'Create supporter packages and optional In-Game Gifts for the player portal' },
+    { href: '/purchases', label: 'Donations', icon: '$', title: 'Completed player donations and In-Game Gift delivery' },
   ]},
   { label: 'Automation', items: [
     { href: '/jobs', label: 'Jobs', icon: '⚡', title: 'Send one-off commands to your servers' },

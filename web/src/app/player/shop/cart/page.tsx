@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { PortalFrame } from '../../PortalFrame';
-import { ShopThumb } from '../../../../lib/shop-copy';
+import { ShopThumb, ShopGrantList } from '../../../../lib/shop-copy';
 import { useShopCart } from '../../../../lib/shop-cart';
 import { ShopAuthGate } from '../../../../lib/shop-auth';
 import {
@@ -106,10 +106,10 @@ function PlayerShopCartContent() {
         <h1 style={{ margin: '0 0 6px', fontSize: '1.5rem' }}>{items.length} item{items.length === 1 ? '' : 's'}</h1>
         <p style={{ color: '#94a3b8', margin: 0 }}>
           {signedIn && profile?.auth === 'name'
-            ? `Checkout once for everything in your cart. Gifts stay tied to ${profile.name}.`
+            ? `Donate once for everything in your cart. In-Game Gifts stay tied to ${profile.name}.`
             : signedIn && steamLast4
-              ? `Checkout once for everything in your cart. Gifts stay tied to Steam ending ${steamLast4}.`
-              : 'Review your cart. Sign in through Steam or with your in-game name to check out.'}
+              ? `Donate once for everything in your cart. In-Game Gifts stay tied to Steam ending ${steamLast4}.`
+              : 'Review your cart. Sign in through Steam or with your in-game name to donate.'}
         </p>
       </section>
 
@@ -120,7 +120,7 @@ function PlayerShopCartContent() {
       {items.length === 0 ? (
         <article className="shop-item">
           <div className="shop-item-body">
-            <p style={{ color: '#94a3b8', margin: 0 }}>Your cart is empty. Browse the shop and add items you want to support.</p>
+            <p style={{ color: '#94a3b8', margin: 0 }}>Your cart is empty. Browse the shop and add packages you want to support.</p>
             <a href="/player/shop" style={{ ...shopPrimary, display: 'inline-block', marginTop: 14, textDecoration: 'none' }}>Browse shop</a>
           </div>
         </article>
@@ -150,6 +150,7 @@ function PlayerShopCartContent() {
                 <div className="shop-cart-row-body">
                   <a href={`/player/shop/${item.id}`} style={{ color: '#f8fafc', textDecoration: 'none', fontWeight: 700 }}>{item.name}</a>
                   <span className="shop-price" style={{ fontSize: '1.1rem' }}>{money(item.priceCents)}</span>
+                  <ShopGrantList item={item} compact />
                 </div>
                 <button type="button" onClick={() => remove(item.id)} style={secondary}>Remove</button>
               </article>
@@ -166,11 +167,11 @@ function PlayerShopCartContent() {
                 onClick={() => void checkout()}
                 style={{ ...shopPrimary, width: '100%', opacity: !checkoutReady || busy ? 0.7 : 1, cursor: !checkoutReady || busy ? 'not-allowed' : 'pointer' }}
               >
-                {busy ? 'Opening checkout…' : `Checkout ${money(totalCents)}`}
+                {busy ? 'Opening checkout…' : `Donate ${money(totalCents)}`}
               </button>
             ) : (
               <div style={{ marginBottom: 10 }}>
-                <ShopAuthGate next="/player/shop/cart" title="Sign in to check out" />
+                <ShopAuthGate next="/player/shop/cart" title="Sign in to donate" />
               </div>
             )}
             <button type="button" onClick={clear} style={{ ...secondary, width: '100%', marginTop: 10 }}>Clear cart</button>

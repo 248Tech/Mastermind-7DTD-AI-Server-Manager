@@ -16,36 +16,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Post-0.0.11 work (2026-08-17 and 2026-08-18) is included in `0.0.12`.
+Post-0.0.11 portal/shop/Allocs/PrismaCore work shipped in `0.0.12` (2026-08-18). The items below are **already live in production** as of 2026-08-20; see [docs/live-features-2026-08-20.md](docs/live-features-2026-08-20.md). They are not a pending deploy checklist.
 
 ### Added
 
-- Steam-signed-in player portal profile (`/player/profile`) with own stats, last `lp` position, last logout time, last inventory snapshot, and supporter summary.
-- Steam-tied Stripe Checkout donations with a signed webhook, org-stored encrypted keys, and Settings → Stripe Donations. Custom gifts are $5–$500; supporter status is granted only from signed Stripe events.
-- Donator shop: public catalog at `/player/shop`, item pages, localStorage cart, multi-item checkout, admin `/donator-shop` and `/purchases`. JPEG/PNG/WebP uploads are magic-byte validated and resized to WebP (master 1920px / thumb 400px).
-- In-game-name password accounts for shop checkout (`auth: name`). Name sessions cannot read profile inventory/location, land claims, or unlock live-map player markers.
-- PrismaCore ClaimCreator WebAPI client (control-plane only) for staff map overlays (claims, vehicles, drones, homes, traders, POIs, reset regions, advanced claims) and shop live status (`serverReachable`, `playersOnline` count only).
-- Allocs WebAPI client (control-plane only) for hostiles, animals, player inventory JSON (`getplayerinventories` batch snapshots plus one-player `getplayerinventory`), allowlisted `visitmap`, and `getplayersonline` roster polling.
-- Steam-signed-in player portal can list and map the player's own land claims, bed, vehicles, and drones from PrismaCore (`GET /api/player-auth/places`). Name sessions receive empty lists.
-- Paid donator-shop lines can grant a 7DTD item via PrismaCore `giveplus` and set donor chat color via `playerchatcolor` after the signed Stripe webhook.
+- Donator-shop optional In-Game Gifts (item/qty/quality) and donor chat color; donation snapshots and delivery status; sanitized telnet `giveplus` / `playerchatcolor` with offline retry. Copy frames gifts as thank-you gifts after donation — not item purchases.
+- Player shop pages show In-Game Gifts with `/item-icon/{name}` icons; admin gift autocomplete from ItemIcons + agent `ITEM_CATALOG` (items and blocks, including `keystoneBlock`).
+- Staff **Set deaths** (`PLAYER_SET_DEATHS` → ServerTools `st-SetDeaths`) with a short control-plane pin after success.
+- Server controls **Save world** (`SERVER_SAVEWORLD` → telnet `saveworld`) and **Save-stop** (`SERVER_SAVE_STOP`: saveworld, full-world backup, then shutdown).
+- Verified members can recommend mods from the Mods page. Uploads land in **Pending Approval** until staff approve them into Mods or reject them.
+- Manager **Status** button shows Online / Offline / Maintenance. Staff can enter or leave maintenance: the password from Settings is written to `serverconfig.xml` `ServerPassword`, then the server does a safe restart.
 
 ### Changed
 
-- Staff and player live maps read entities from Allocs + PrismaCore instead of telnet `le`. Allocs Webinterface 52 authenticates with `X-SDTD-API-TOKENNAME` / `X-SDTD-API-SECRET` headers. Allocs failures return empty arrays and a feed error; there is no telnet fallback.
-- Staff inventory and background snapshots use Allocs `getplayerinventory` JSON instead of `st-pil` RCON jobs.
-- Background inventory snapshots use Allocs `getplayerinventories` (one call for all online players) after roster apply. Per-player `getplayerinventory` remains the staff GET and the HTTP-failure fallback (two players per poll).
-- Shop item admin forms accept optional in-game grant item/quantity/quality and a 6-character chat color. Purchases show grant delivery status.
-- Live-map `visitmap` start/stop is sent through Allocs `executeconsolecommand` (numeric bounds or `stop` only). Progress still comes from the server log file.
-- Player roster polling prefers Allocs `getplayersonline` (ping, IP, kills, deaths, level). Telnet `lp` / `PLAYER_LIST_SYNC` remains the fallback when Allocs is unconfigured, HTTP fails, or the JSON is unusable. An empty Allocs array is a valid empty roster, not a fallback.
+- Players page uses a responsive card layout (no wide horizontal table scroll).
+- Live-map client keeps player-track hooks above early returns (fixes a React hooks crash).
+- Agent item catalog scans vanilla/mod `items.xml` and `blocks.xml` plus ItemIcons; shop open can force a fresh catalog load.
+- Mod config writes use direct writable-file fallbacks and safer replacement; pending-restart markers remain on the live agent.
 
 ### Security
 
-- PrismaCore `apiuser` password and Allocs webtoken stay in control-plane env. They never appear in Next public env, shop JSON, or map JSON.
-- Shop status public keys are only `serverName`, `checkoutEnabled`, `serverReachable`, `playersOnline`.
-- Allocs `executeconsolecommand` rejects `kick`, `give`, `st-pil`, `visitmap full`, and command chaining.
-- Shop kit grants are server-built `giveplus` / `playerchatcolor` only. Item names are charset-limited; `giveplus all` is never sent.
-- Player `/me` omits IP addresses, Stripe identifiers, and other players’ data.
-- Player `/places` is Steam-only, owner-filtered, and omits other players’ identities and IPs.
+- Shop In-Game Gifts remain server-built `giveplus` / `playerchatcolor` only. Item names are charset-limited; `giveplus all` is never sent.
 
 ## [0.0.11] - 2026-08-14
 
@@ -302,3 +293,9 @@ Post-0.0.11 work (2026-08-17 and 2026-08-18) is included in `0.0.12`.
 ### Fixed
 
 - (none)
+## 0.0.13 — 2026-08-24
+
+- Added verified player-facing Mod Request uploads at `/player`.
+- Added short request descriptions and backend attribution to the authenticated in-game/Steam player.
+- Added pending approval staging, normalized ZIP extraction, staff approve/reject workflow, and agent-side recommendation metadata.
+- Rebuilt and deployed the control plane, web portal, and host agent without restarting the game server.

@@ -29,6 +29,7 @@ const players = normalizePlayers({
   ],
 });
 assert(players.length === 1 && players[0].name === 'Wolfie' && players[0].position.x === 10, 'normalizes getplayersonline');
+assert(players[0].steamId === '76561198000000000', 'keeps player steam id');
 
 const vehicles = normalizeMarkers({ Vehicles: [{ name: 'EntityMotorcycle', posX: 8, posY: 40, posZ: 12, steamid: 'Steam_76561198000000000' }] }, ['Vehicles', 'vehicles'], 'vehicle');
 assert(vehicles[0].position.x === 8 && vehicles[0].position.z === 12, 'normalizes getvehicles');

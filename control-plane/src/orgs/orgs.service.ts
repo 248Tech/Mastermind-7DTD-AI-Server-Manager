@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, ConflictException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { makePasswordHash } from '../auth/auth.service';
 import {decryptOpenAiKey,encryptOpenAiKey} from './openai-crypto';
@@ -10,6 +10,17 @@ import { parseStripeSecretKey, parseStripeWebhookSecret } from '../donations/don
 function publicStripeWebhookUrl() {
   const origin = (process.env.PUBLIC_WEB_URL || '').replace(/\/$/, '');
   return origin ? `${origin}/api/donations/stripe/webhook` : '/api/donations/stripe/webhook';
+}
+
+export function normalizeMaintenancePassword(password: string): string {
+  const value = password.trim();
+  if (value.length < 4 || value.length > 32) {
+    throw new BadRequestException('Maintenance password must be 4 to 32 characters');
+  }
+  if (!/^[\x21-\x7e]+$/.test(value) || /[<>&"']/.test(value)) {
+    throw new BadRequestException('Maintenance password cannot contain spaces or XML characters < > & " \'');
+  }
+  return value;
 }
 
 @Injectable()
@@ -235,7 +246,7 @@ export class OrgsService {
       discordWebhookConfigured: Boolean(userOrg.org.discordWebhookUrl),
       frigateConfigured: Boolean(userOrg.org.frigateUrl),
       avoidBloodMoonRestart: userOrg.org.avoidBloodMoonRestart,
-      openaiConfigured:Boolean(userOrg.org.openaiApiKeyEncrypted),openaiModel:userOrg.org.openaiModel,modAiProvider:userOrg.org.modAiProvider,kimiConfigured:Boolean(userOrg.org.kimiApiKeyEncrypted),kimiModel:userOrg.org.kimiModel,cloudflareConfigured:Boolean(userOrg.org.cloudflareApiTokenEncrypted),digitalOceanConfigured:Boolean(userOrg.org.digitalOceanApiTokenEncrypted),mailgunConfigured:Boolean(userOrg.org.mailgunApiKeyEncrypted&&userOrg.org.mailgunDomain&&userOrg.org.mailgunFromEmail),mailgunDomain:userOrg.org.mailgunDomain,mailgunFromEmail:userOrg.org.mailgunFromEmail,mailgunRegion:userOrg.org.mailgunRegion,stripeConfigured:Boolean(userOrg.org.stripeSecretKeyEncrypted),stripeWebhookConfigured:Boolean(userOrg.org.stripeWebhookSecretEncrypted),stripeWebhookUrl:publicStripeWebhookUrl(),
+      openaiConfigured:Boolean(userOrg.org.openaiApiKeyEncrypted),openaiModel:userOrg.org.openaiModel,modAiProvider:userOrg.org.modAiProvider,kimiConfigured:Boolean(userOrg.org.kimiApiKeyEncrypted),kimiModel:userOrg.org.kimiModel,cloudflareConfigured:Boolean(userOrg.org.cloudflareApiTokenEncrypted),digitalOceanConfigured:Boolean(userOrg.org.digitalOceanApiTokenEncrypted),mailgunConfigured:Boolean(userOrg.org.mailgunApiKeyEncrypted&&userOrg.org.mailgunDomain&&userOrg.org.mailgunFromEmail),mailgunDomain:userOrg.org.mailgunDomain,mailgunFromEmail:userOrg.org.mailgunFromEmail,mailgunRegion:userOrg.org.mailgunRegion,stripeConfigured:Boolean(userOrg.org.stripeSecretKeyEncrypted),stripeWebhookConfigured:Boolean(userOrg.org.stripeWebhookSecretEncrypted),stripeWebhookUrl:publicStripeWebhookUrl(),maintenancePasswordConfigured:Boolean(userOrg.org.maintenancePasswordEncrypted),
       createdAt: userOrg.org.createdAt,
       updatedAt: userOrg.org.updatedAt,
       memberCount: userOrg.org._count.userOrgs,
@@ -266,7 +277,7 @@ export class OrgsService {
       discordWebhookConfigured: Boolean(m.org.discordWebhookUrl),
       frigateConfigured: Boolean(m.org.frigateUrl),
       avoidBloodMoonRestart: m.org.avoidBloodMoonRestart,
-      openaiConfigured:Boolean(m.org.openaiApiKeyEncrypted),openaiModel:m.org.openaiModel,modAiProvider:m.org.modAiProvider,kimiConfigured:Boolean(m.org.kimiApiKeyEncrypted),kimiModel:m.org.kimiModel,cloudflareConfigured:Boolean(m.org.cloudflareApiTokenEncrypted),digitalOceanConfigured:Boolean(m.org.digitalOceanApiTokenEncrypted),mailgunConfigured:Boolean(m.org.mailgunApiKeyEncrypted&&m.org.mailgunDomain&&m.org.mailgunFromEmail),mailgunDomain:m.org.mailgunDomain,mailgunFromEmail:m.org.mailgunFromEmail,mailgunRegion:m.org.mailgunRegion,stripeConfigured:Boolean(m.org.stripeSecretKeyEncrypted),stripeWebhookConfigured:Boolean(m.org.stripeWebhookSecretEncrypted),stripeWebhookUrl:publicStripeWebhookUrl(),
+      openaiConfigured:Boolean(m.org.openaiApiKeyEncrypted),openaiModel:m.org.openaiModel,modAiProvider:m.org.modAiProvider,kimiConfigured:Boolean(m.org.kimiApiKeyEncrypted),kimiModel:m.org.kimiModel,cloudflareConfigured:Boolean(m.org.cloudflareApiTokenEncrypted),digitalOceanConfigured:Boolean(m.org.digitalOceanApiTokenEncrypted),mailgunConfigured:Boolean(m.org.mailgunApiKeyEncrypted&&m.org.mailgunDomain&&m.org.mailgunFromEmail),mailgunDomain:m.org.mailgunDomain,mailgunFromEmail:m.org.mailgunFromEmail,mailgunRegion:m.org.mailgunRegion,stripeConfigured:Boolean(m.org.stripeSecretKeyEncrypted),stripeWebhookConfigured:Boolean(m.org.stripeWebhookSecretEncrypted),stripeWebhookUrl:publicStripeWebhookUrl(),maintenancePasswordConfigured:Boolean(m.org.maintenancePasswordEncrypted),
       createdAt: m.org.createdAt,
       updatedAt: m.org.updatedAt,
       memberCount: m.org._count.userOrgs,
@@ -449,6 +460,23 @@ export class OrgsService {
     await this.prisma.$transaction([
       this.prisma.org.update({where:{id:orgId},data:{stripeSecretKeyEncrypted:null,stripeWebhookSecretEncrypted:null}}),
       this.prisma.auditLog.create({data:{orgId,actorId:userId,action:'stripe_settings_cleared',resourceType:'org',resourceId:orgId}}),
+    ]);
+    return{ok:true,configured:false};
+  }
+
+  async saveMaintenancePassword(orgId:string,userId:string,password:string){
+    const value=normalizeMaintenancePassword(password);
+    await this.prisma.$transaction([
+      this.prisma.org.update({where:{id:orgId},data:{maintenancePasswordEncrypted:encryptIntegrationSecret(value)}}),
+      this.prisma.auditLog.create({data:{orgId,actorId:userId,action:'maintenance_password_updated',resourceType:'org',resourceId:orgId}}),
+    ]);
+    return{ok:true,configured:true};
+  }
+
+  async clearMaintenancePassword(orgId:string,userId:string){
+    await this.prisma.$transaction([
+      this.prisma.org.update({where:{id:orgId},data:{maintenancePasswordEncrypted:null}}),
+      this.prisma.auditLog.create({data:{orgId,actorId:userId,action:'maintenance_password_cleared',resourceType:'org',resourceId:orgId}}),
     ]);
     return{ok:true,configured:false};
   }

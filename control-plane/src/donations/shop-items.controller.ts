@@ -30,6 +30,17 @@ export class ShopItemsController {
     return this.shop.listAdmin(orgId);
   }
 
+  @Get('game-items')
+  @UseGuards(RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  gameItems(
+    @Param('orgId') orgId: string,
+    @Req() req: RequestWithUser,
+    @Query('refresh') refresh?: string,
+  ) {
+    return this.shop.gameItemCatalog(orgId, req.user!.id, refresh === '1' || refresh === 'true');
+  }
+
   @Get(':itemId/image')
   @Header('Cache-Control', 'private, max-age=300')
   @Header('X-Content-Type-Options', 'nosniff')

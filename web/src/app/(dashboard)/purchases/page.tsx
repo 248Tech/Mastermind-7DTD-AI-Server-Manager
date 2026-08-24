@@ -14,7 +14,7 @@ function when(iso: string | null) {
   return new Date(iso).toLocaleString();
 }
 
-type DonationLine = { id: string; shopItemId: string | null; itemName: string; amountCents: number; quantity: number; grantStatus?: string; chatColorStatus?: string; grantError?: string | null };
+type DonationLine = { id: string; shopItemId: string | null; itemName: string; amountCents: number; quantity: number; grantStatus?: string; chatColorStatus?: string; grantError?: string | null; grantItems?: { name: string; quantity: number; quality?: number | null; status?: string }[] };
 type DonationRecord = {
   id: string;
   playerName: string;
@@ -37,7 +37,7 @@ export default function PurchasesPage() {
     if (!orgId) return;
     api.get<DonationRecord[]>(`/api/orgs/${orgId}/donations?limit=100`)
       .then(setRows)
-      .catch((e) => setError(e instanceof Error ? e.message : 'Could not load purchases'))
+      .catch((e) => setError(e instanceof Error ? e.message : 'Could not load donations'))
       .finally(() => setLoading(false));
   }, [orgId]);
 
@@ -46,14 +46,14 @@ export default function PurchasesPage() {
   return (
     <div>
       <div style={{ marginBottom: '1.5rem' }}>
-        <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: '#f1f5f9' }}>Purchases</h1>
+        <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: '#f1f5f9' }}>Donations</h1>
         <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>
-          Completed Stripe donations and shop checkouts, including multi-item carts.
+          Completed Stripe donations (including multi-package carts). Optional In-Game Gifts are thank-you deliveries after a donation — not item purchases.
         </p>
       </div>
       {error && <p style={{ color: '#f87171', fontSize: '.875rem' }}>{error}</p>}
-      {loading && <p style={{ color: '#64748b' }}>Loading purchases…</p>}
-      {!loading && completed.length === 0 && <p style={{ color: '#64748b' }}>No completed purchases yet.</p>}
+      {loading && <p style={{ color: '#64748b' }}>Loading donations…</p>}
+      {!loading && completed.length === 0 && <p style={{ color: '#64748b' }}>No completed donations yet.</p>}
       {completed.map((row) => (
         <div key={row.id} style={card}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
@@ -70,9 +70,10 @@ export default function PurchasesPage() {
             {row.lines.map((line) => (
               <li key={line.id}>
                 {line.itemName} · {money(line.amountCents)}
-                {(line.grantStatus && line.grantStatus !== 'none') || (line.chatColorStatus && line.chatColorStatus !== 'none')
-                  ? ` · item ${line.grantStatus || 'none'} · color ${line.chatColorStatus || 'none'}`
-                  : ''}
+                {line.grantItems?.length
+                  ? ` · In-Game Gifts: ${line.grantItems.map((grant) => `${grant.quantity}× ${grant.name}${grant.status ? ` (${grant.status})` : ''}`).join(', ')}`
+                  : (line.grantStatus && line.grantStatus !== 'none' ? ` · gift ${line.grantStatus}` : '')}
+                {line.chatColorStatus && line.chatColorStatus !== 'none' ? ` · color ${line.chatColorStatus}` : ''}
                 {line.grantError ? ` (${line.grantError})` : ''}
               </li>
             ))}

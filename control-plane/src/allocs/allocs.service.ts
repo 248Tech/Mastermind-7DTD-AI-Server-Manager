@@ -43,7 +43,14 @@ export class AllocsService {
   async playerMapEntities(includePlayers: boolean) {
     const payload = await this.staffEntities();
     return publicMapEntities({
-      players: includePlayers ? payload.players : [],
+      players: includePlayers
+        ? payload.players.map((player) => ({
+            id: player.id,
+            name: player.name,
+            type: player.type,
+            position: player.position,
+          }))
+        : [],
       animals: payload.animals,
       hostiles: payload.hostiles,
       playerVisibility: includePlayers ? 'verified' : 'hidden',
@@ -74,6 +81,13 @@ export class AllocsService {
     return result.json;
   }
 
+  async playerLocations() {
+    if (!this.tokenConfigured()) return [];
+    const result = await allocsGet('getplayerslocation');
+    if (!result.ok) return [];
+    return normalizeAllocsPlayers(result.json);
+  }
+
   async executeAllowed(command: unknown) {
     const allowed = allowedAllocsConsoleCommand(command);
     if (!allowed) throw new BadRequestException('Only visitmap start/stop is allowed');
@@ -91,15 +105,20 @@ export class AllocsService {
 
   private async playersForMap(): Promise<{ players: MapEntity[]; error?: string }> {
     if (this.prismaCore.configured()) {
-      const layer = await this.prismaCore.layer('playersonline') as { reachable?: boolean; players?: Array<{ id: string; name: string; position: { x: number; y: number; z: number } }> };
+      const layer = await this.prismaCore.layer('playersonline') as { reachable?: boolean; players?: Array<{ id: string; name: string; steamId?: string; position: { x: number; y: number; z: number } }> };
       if (layer.reachable && Array.isArray(layer.players)) {
         return {
-          players: layer.players.map((player) => ({
-            id: player.id,
-            name: player.name,
-            type: 'EntityPlayer',
-            position: player.position,
-          })),
+          players: layer.players.map((player) => {
+            const steamId = String(player.steamId || '').replace(/^Steam_/i, '').trim();
+            const steam = /^[0-9]{15,20}$/.test(steamId) ? steamId : '';
+            return {
+              id: steam || player.id,
+              name: player.name,
+              type: 'EntityPlayer',
+              position: player.position,
+              ...(steam ? { steamId: steam } : {}),
+            };
+          }),
         };
       }
     }

@@ -1,4 +1,4 @@
-import { cleanRosterIp, parseAllocsPlayersOnline, parseLpRoster, rosterIdentityKey } from './player-roster.ts';
+import { cleanRosterIp, mergeRosterPositions, parseAllocsPlayersOnline, parseLpRoster, rosterIdentityKey } from './player-roster.ts';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -42,6 +42,7 @@ assert(allocs && allocs[0].steamId === '76561198000000000', 'strips Steam_ prefi
 assert(allocs[0].eosId === 'aabbccddeeff00112233445566778899aabbccdd', 'strips EOS_ prefix');
 assert(allocs[0].identityKey === 'steam:76561198000000000', 'allocs identity prefers steam');
 assert(allocs[0].ping === 37 && allocs[0].level === 18 && allocs[0].zombieKills === 44, 'copies combat counters');
+assert(parseAllocsPlayersOnline([{ entityid: 5, name: 'NoLevel', online: true, steamid: '76561198000000003', ping: 4 }])?.[0].level === null, 'missing allocs level stays null');
 assert(allocs[0].ipAddress === '198.51.100.20', 'strips allocs ip port');
 assert(allocs[0].position && allocs[0].position.z === 7, 'copies nested position');
 assert(!JSON.stringify(allocs).includes('Steam_'), 'stored steam id has no Steam_ prefix');
@@ -57,5 +58,11 @@ const nested = parseAllocsPlayersOnline({
   data: { result: [{ entityid: 4, name: 'Nested', online: true, steamid: '76561198000000002', ping: 9, position: { x: 1, y: 2, z: 3 } }] },
 });
 assert(nested && nested[0].name === 'Nested' && nested[0].ping === 9, 'unwraps nested data.result');
+
+const merged = mergeRosterPositions(
+  [{ entityId: 12, name: 'Wolfie', identityKey: 'steam:76561198000000000', steamId: '76561198000000000', eosId: null, ipAddress: null, ping: null, level: 1, zombieKills: 0, playerKills: 0, deaths: 0, position: null }],
+  [{ id: 12, name: 'Wolfie', steamId: '76561198000000000', type: 'EntityPlayer', position: { x: 10, y: 20, z: 30 } }],
+);
+assert(merged[0].position && merged[0].position.z === 30, 'merges allocs locations into roster rows');
 
 console.log('player roster tests passed');

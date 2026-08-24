@@ -1,6 +1,21 @@
 import type { CSSProperties } from 'react';
 
-export type ShopItem = { id: string; name: string; description: string; priceCents: number; hasImage: boolean; createdAt?: string; sortOrder?: number; active?: boolean };
+export type ShopGrantItem = { name: string; quantity: number; quality?: number | null };
+export type ShopItem = {
+  id: string;
+  name: string;
+  description: string;
+  priceCents: number;
+  hasImage: boolean;
+  createdAt?: string;
+  sortOrder?: number;
+  active?: boolean;
+  grantItemName?: string | null;
+  grantQuantity?: number;
+  grantQuality?: number | null;
+  grantItems?: ShopGrantItem[];
+  chatColor?: string | null;
+};
 export type ShopProfile = {
   name: string;
   steamId?: string | null;
@@ -49,6 +64,35 @@ export function money(cents: number) {
 export function shopItemImageUrl(itemId: string, size: 'thumb' | 'full' = 'full') {
   const base = `/api/player-auth/shop/items/${encodeURIComponent(itemId)}/image`;
   return size === 'thumb' ? `${base}?size=thumb` : base;
+}
+
+export function shopItemIconUrl(itemName: string) {
+  return `/item-icon/${encodeURIComponent(itemName)}`;
+}
+
+export function shopGrantItems(item: Pick<ShopItem, 'grantItems' | 'grantItemName' | 'grantQuantity' | 'grantQuality'>): ShopGrantItem[] {
+  if (Array.isArray(item.grantItems) && item.grantItems.length) {
+    return item.grantItems
+      .filter((row) => typeof row?.name === 'string' && row.name.trim())
+      .map((row) => ({
+        name: row.name.trim(),
+        quantity: Number.isInteger(row.quantity) && row.quantity > 0 ? row.quantity : 1,
+        quality: row.quality ?? null,
+      }));
+  }
+  if (item.grantItemName?.trim()) {
+    return [{
+      name: item.grantItemName.trim(),
+      quantity: Number.isInteger(item.grantQuantity) && (item.grantQuantity as number) > 0 ? (item.grantQuantity as number) : 1,
+      quality: item.grantQuality ?? null,
+    }];
+  }
+  return [];
+}
+
+export function formatShopGrantLabel(grant: ShopGrantItem) {
+  const quality = grant.quality ? ` · Q${grant.quality}` : '';
+  return `${grant.quantity}× ${grant.name}${quality}`;
 }
 
 export function shopTeaser(text: string, max = 110) {

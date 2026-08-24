@@ -31,7 +31,7 @@ Mastermind is a control panel for a 7 Days to Die server. It lets an owner see w
 
 ### Quick navigation
 
-[Quickstart](#quickstart-copy-paste) · [Features](#current-features-v0012) · [Security](#security-notes) · [Deployment](docs/DIGITALOCEAN_DEPLOYMENT.md) · [Human guide](human/user-guide.md) · [Release context](docs/release-0.0.12-context.md)
+[Quickstart](#quickstart-copy-paste) · [Features](#current-features-v0013) · [Security](#security-notes) · [Deployment](docs/DIGITALOCEAN_DEPLOYMENT.md) · [Human guide](human/user-guide.md) · [Release context](docs/release-0.0.13-context.md)
 
 ---
 
@@ -98,7 +98,7 @@ This separation is why the public website does not need direct access to telnet,
 
 ---
 
-## Release 0.0.12 (August 18, 2026)
+## Release 0.0.13 (August 24, 2026)
 
 ### Highlights
 
@@ -112,12 +112,14 @@ This separation is why the public website does not need direct access to telnet,
 - Steam-aware account status and administrator dashboard links connect the player portal with staff workflows without exposing credentials.
 - The mod editor now provides IDE-style tabs, line numbers, search, wrapping, syntax coloring, dirty-state feedback, and keyboard save.
 - ServerTools and Allocs inventory parsers preserve real stack quantities instead of displaying every item as one.
+- Verified players can recommend ZIP mods from `/player` with a short description; requests are staged in Pending Approval and attributed to the authenticated in-game/Steam identity.
+- Pending mod requests are normalized by the host agent, displayed to staff with recommendation metadata, and can be approved or rejected without exposing upload paths.
 
 ---
 
-## Current features (v0.0.12)
+## Current features (v0.0.13)
 
-The complete release handoff is documented in [docs/release-0.0.12-context.md](docs/release-0.0.12-context.md). Package versions and release metadata are `0.0.12`.
+The complete release handoff is documented in [docs/release-0.0.13-context.md](docs/release-0.0.13-context.md). Package versions and release metadata are `0.0.13`.
 
 ### Implemented end-to-end
 
@@ -130,7 +132,7 @@ The complete release handoff is documented in [docs/release-0.0.12-context.md](d
 - **Logs and console:** persistent open-file log following with rotation/truncation recovery, ordered 64 KiB/350 ms batches, retry-safe delivery, database persistence, incremental live viewing, optional auto-scroll, selectable retention, keyword alert definitions, match history, and an audited telnet command box.
 - **Chat:** player and server-authored chat extraction, stored history, player-only per-server Discord webhook relay with mention suppression, operator replies automatically sent as server `say` messages, and native bad-word/flood moderation with editable log/warn/kick actions plus mute/unmute controls.
 - **Health:** host-scoped CPU, RAM, disk, agent latency, and real 7DTD reachability samples with current values, historical averages, and configurable polling intervals.
-- **Players:** authoritative `lp` polling every 60 seconds by default, reconciled Steam/EOS identity capture, last-known IP address, online state, current/lifetime playtime, last seen, level, zombie/player kills, deaths, Allocs JSON inventory inspection, search/filter/sort controls, responsive mobile cards, kick/ban/kick-all actions, post-kick verification, and XML-backed administrator status with promote/demote controls.
+- **Players:** authoritative roster polling (Allocs `getplayersonline`, telnet `lp` fallback), reconciled Steam/EOS identity capture, last-known IP address, online state, current/lifetime playtime, last seen, level, zombie/player kills, deaths, staff **Set deaths** via ServerTools, Allocs JSON inventory inspection, search/filter/sort controls, responsive card layout (desktop and mobile), kick/ban/kick-all actions, post-kick verification, and XML-backed administrator status with promote/demote controls.
 - **Mods:** fast active/quarantined inventories, `ModInfo.xml` name/version/author/website parsing, activation timestamps, sortable columns, single/bulk selection, quarantine, permission-safe restore, constrained permanent deletion, IDE-style configuration editing with tabs/line numbers/search/syntax colors/wrapping/Ctrl+S, normalized ZIP upload directly to quarantine, and selectable Codex/Kimi Code proposals with mandatory diff review and approval before an atomic save.
 - **Connection protection tools:** per-server high-ping kicker with consecutive-sample threshold and cooldown, plus country-based kick/ban policies when the game exposes a real public player IP. Relay-masked/private IPs are deliberately skipped.
 - **RegionHealer:** status information plus start/stop jobs for a separately installed RegionHealer-v2 service.
@@ -138,7 +140,7 @@ The complete release handoff is documented in [docs/release-0.0.12-context.md](d
 - **Live server map:** authenticated official terrain map with `map_info.xml` world bounds, live players from PrismaCore (Allocs fallback), hostiles/animals from Allocs (not telnet `le`), PrismaCore overlays (vehicles, drones, homes, traders, POIs, reset regions, advanced claims), optional player name tags, coordinates, game time, region grid, owned land-claim blocks/protection areas, selectable tracking/trail colors, stable extended zoom, 5-minute through 72-hour browser-local history, and guarded section/full-world `visitmap` generation via Allocs. The dashboard and telnet ports remain private.
 - **Live-data fallbacks:** player roster polling prefers Allocs `getplayersonline` for ping, IP, kills, deaths, level, and position, then falls back to telnet `lp` when the API is unavailable or unusable. An authoritative empty API roster is treated as empty rather than replaced with stale data. Map entity feeds fail closed with a visible feed error.
 - **Steam-verified player portal:** `/player` map (terrain, zombies, and animals are public; player locations stay hidden until Steam OpenID verifies a SteamID already on that server), `/player/profile` for Steam sessions with inventory quantities, stats, supporter status, and an administrator dashboard link when recognized, and `/player/shop` for the donator catalog. Staff controls, claims, raw telnet, and management APIs are excluded from the player portal.
-- **Donator shop and Stripe:** public shop browse and WebP images; checkout requires Steam or an in-game-name password account. Admins manage items on `/donator-shop` and completed purchases on `/purchases`. Custom $5–$500 gifts remain available. Supporter status is granted only from a signed Stripe webhook.
+- **Donator shop and Stripe:** public shop browse and WebP images; checkout requires Steam or an in-game-name password account. Admins manage packages on `/donator-shop` (optional In-Game Gifts, quality, chat color, ItemIcons/catalog autocomplete) and completed donations on `/purchases` (gift delivery status). Player item pages list In-Game Gifts as thank-you gifts after a donation — not a purchase of in-game items. Custom $5–$500 gifts remain available. Supporter status and In-Game Gifts come only from a signed Stripe webhook (`giveplus` / `playerchatcolor`, offline retry for items).
 - **Saves:** combined full-world and RegionHealer snapshot inventory, timestamp/game-day metadata, manual full backup, confirmed server-off restore/delete, full-backup retention, and scheduled backups from every 15 minutes through daily.
 - **Schedules:** safe scheduled restarts, a simple day/hour/minute builder, advanced five-field cron entry, automatic full-world backup intervals, and overlap prevention that skips a recurrence while its previous job is still pending/running.
 - **Alerts and integrations:** Discord alerts, per-rule pipeline testing, deduplicated player connection/disconnection events with session duration, durable player-chat delivery/retries, log-keyword alerts, server/agent events, encrypted Cloudflare and DigitalOcean API-token storage, and encrypted Mailgun configuration with email-confirmation, resend, and test-delivery flows.
@@ -165,6 +167,7 @@ Frigate integration is currently deprecated and hidden from the Settings and new
 - [Allocs integration](docs/allocs.md) — live entities, inventory, roster data, and private API requirements.
 - [PrismaCore integration](docs/prismacore.md) — claims and staff map overlays.
 - [Release context](docs/release-0.0.12-context.md) — maintainer handoff, validation, and deployment checklist.
+- [Live features (2026-08-20)](docs/live-features-2026-08-20.md) — post-0.0.12 capabilities already running in production.
 
 ### A few terms you will see
 

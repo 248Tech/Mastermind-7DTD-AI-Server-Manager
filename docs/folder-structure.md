@@ -1,6 +1,6 @@
 # Folder Structure
 
-As of 2026-08-18. Older design docs may still mention Tailwind/shadcn; the live web UI uses Next.js App Router and inline styles.
+As of 2026-08-20. Older design docs may still mention Tailwind/shadcn; the live web UI uses Next.js App Router and inline styles.
 
 ```
 Mastermind-7DTD-AI-Server-Manager/
@@ -14,10 +14,10 @@ Mastermind-7DTD-AI-Server-Manager/
 │       ├── scheduler/
 │       ├── alerts/
 │       ├── player-auth/
-│       ├── donations/
+│       ├── donations/             # Stripe, shop catalog, kit grants
 │       ├── prismacore/
 │       ├── allocs/
-│       ├── players/
+│       ├── players/               # roster, inventory, Set deaths
 │       ├── logs/
 │       ├── health-monitor/
 │       ├── websocket/
@@ -30,10 +30,10 @@ Mastermind-7DTD-AI-Server-Manager/
 │       │   ├── (auth)/login/
 │       │   ├── (dashboard)/       # staff: live-map, players, donator-shop, purchases, …
 │       │   ├── player/            # portal: map, profile, shop, cart
-│       │   └── api/               # BFFs: live-map, player-map, player-auth, donations
+│       │   └── api/               # BFFs: live-map, player-map, player-auth, donations, item-icons
 │       ├── components/
 │       └── lib/
-├── agent/                         # Go host agent
+├── agent/                         # Go host agent (7DTD adapter, ITEM_CATALOG items+blocks)
 ├── discord-bot/
 ├── infra/
 │   ├── docker-compose.yml
@@ -44,6 +44,7 @@ Mastermind-7DTD-AI-Server-Manager/
 │   ├── allocs.md
 │   ├── prismacore.md
 │   ├── DIGITALOCEAN_DEPLOYMENT.md
-│   └── release-unreleased-2026-08-18-context.md
+│   ├── release-0.0.12-context.md
+│   └── live-features-2026-08-20.md
 └── human/user-guide.md
 ```

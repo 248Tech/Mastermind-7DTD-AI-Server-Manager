@@ -4,117 +4,180 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { isLoggedIn } from '../lib/auth';
 
-const CONTROL_PLANE_URL = process.env.NEXT_PUBLIC_CONTROL_PLANE_URL || 'http://localhost:3001';
+type LandingServer = {
+  id: string;
+  name: string;
+  hostName: string;
+  playersOnline: number;
+  shopPath: string;
+  mapPath: string;
+};
 
-const SETUP_STEPS = [
-  { step: '1', title: 'Start infrastructure', cmd: 'make up', desc: 'Starts PostgreSQL and Redis via Docker' },
-  { step: '2', title: 'Initialize database', cmd: 'make migrate', desc: 'Runs schema migration and seeds default data' },
-  { step: '3', title: 'Start services', cmd: 'pnpm dev  (in control-plane/ and web/)', desc: 'Runs the API and this web UI' },
-];
+type LandingPayload = {
+  ok?: boolean;
+  orgName?: string | null;
+  headline?: string;
+  servers?: LandingServer[];
+  message?: string;
+};
 
 export default function Home() {
   const router = useRouter();
-  const [health, setHealth] = useState<{ status?: string; error?: string } | null>(null);
+  const [landing, setLanding] = useState<LandingPayload | null>(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (isLoggedIn()) {
       router.replace('/dashboard');
       return;
     }
-    fetch(`${CONTROL_PLANE_URL}/api/health`)
-      .then((res) => res.json())
-      .then((data) => setHealth(data))
-      .catch(() => setHealth({ error: 'unreachable' }));
+    fetch('/api/public/landing', { cache: 'no-store' })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({})) as LandingPayload;
+        if (!res.ok) throw new Error(data.message || 'Could not load hosting status');
+        setLanding(data);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load hosting status'));
   }, [router]);
 
-  const isHealthy = health?.status === 'ok';
-  const isUnhealthy = !!health?.error;
+  const servers = landing?.servers ?? [];
+  const orgName = landing?.orgName || 'Mastermind';
+  const headline = landing?.headline || (landing ? `${orgName} — no servers online` : 'Checking hosting status…');
+  const ready = Boolean(landing) && !error;
+  const multi = servers.length > 1;
 
   return (
     <div style={{
       display: 'flex', minHeight: '100vh', alignItems: 'center', justifyContent: 'center',
-      background: 'radial-gradient(ellipse at 30% 20%, rgba(99,102,241,0.08) 0%, #0a0a0f 60%)',
+      background: 'radial-gradient(ellipse at 30% 20%, rgba(249,115,22,0.10) 0%, #0a0a0f 60%)',
       flexDirection: 'column', gap: '1.5rem', padding: '2rem',
     }}>
       <div style={{
         background: '#111118', border: '1px solid #1e1e2a', borderRadius: 16,
-        padding: '2.5rem 3rem', maxWidth: 520, width: '100%', textAlign: 'center',
+        padding: '2.5rem 3rem', maxWidth: 560, width: '100%', textAlign: 'center',
       }}>
-        <img src="/mastermind-logo.png" alt="Mastermind" style={{width:88,height:88,objectFit:'cover',objectPosition:'center 42%',borderRadius:14,display:'block',margin:'0 auto 1.25rem',boxShadow:'0 0 32px rgba(249,115,22,.4)'}} />
+        <img src="/mastermind-logo.png" alt="Mastermind" style={{ width: 88, height: 88, objectFit: 'cover', objectPosition: 'center 42%', borderRadius: 14, display: 'block', margin: '0 auto 1.25rem', boxShadow: '0 0 32px rgba(249,115,22,.4)' }} />
         <h1 style={{ margin: '0 0 0.375rem', fontSize: '1.5rem', fontWeight: 700, color: '#f1f5f9' }}>
-          Mastermind
+          {orgName}
         </h1>
-        <p style={{ margin: '0 0 2rem', fontSize: '0.875rem', color: '#64748b' }}>
-          7 Days to Die — AI Server Manager
+        <p style={{ margin: '0 0 1.5rem', fontSize: '0.875rem', color: '#64748b' }}>
+          7 Days to Die community portal
         </p>
 
-        {/* Health indicator */}
         <div style={{
-          display: 'flex', alignItems: 'center', gap: '0.75rem',
+          display: 'flex', alignItems: 'flex-start', gap: '0.75rem', textAlign: 'left',
           padding: '0.875rem 1rem', borderRadius: 8,
-          background: health === null ? 'rgba(100,116,139,0.06)' :
-            isHealthy ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)',
-          border: `1px solid ${health === null ? '#1e1e2a' : isHealthy ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+          background: error ? 'rgba(239,68,68,0.06)' : ready ? 'rgba(34,197,94,0.06)' : 'rgba(100,116,139,0.06)',
+          border: `1px solid ${error ? 'rgba(239,68,68,0.2)' : ready ? 'rgba(34,197,94,0.2)' : '#1e1e2a'}`,
         }}>
           <div style={{
-            width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-            background: health === null ? '#64748b' : isHealthy ? '#4ade80' : '#f87171',
-            boxShadow: isHealthy ? '0 0 8px #4ade80' : undefined,
+            width: 8, height: 8, borderRadius: '50%', flexShrink: 0, marginTop: 6,
+            background: error ? '#f87171' : ready && servers.length ? '#4ade80' : '#64748b',
+            boxShadow: ready && servers.length ? '0 0 8px #4ade80' : undefined,
           }} />
-          <span style={{ fontSize: '0.875rem', color: health === null ? '#64748b' : isHealthy ? '#4ade80' : '#f87171' }}>
-            {health === null && 'Checking control plane…'}
-            {isHealthy && 'Control plane is running'}
-            {isUnhealthy && 'Control plane not reachable'}
-          </span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '0.9rem', fontWeight: 600, color: error ? '#f87171' : ready ? '#e2e8f0' : '#94a3b8', lineHeight: 1.4 }}>
+              {error || headline}
+            </div>
+            {!error && ready && servers.length === 0 && (
+              <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: 4 }}>Check back soon — game hosts come online with the agent heartbeat.</div>
+            )}
+          </div>
         </div>
 
-        {/* Setup guide shown when CP is unreachable */}
-        {isUnhealthy && (
-          <div style={{ marginTop: '1.5rem', textAlign: 'left' }}>
-            <p style={{ margin: '0 0 1rem', fontSize: '0.82rem', color: '#94a3b8' }}>
-              Run these commands from the project root to get started:
+        {servers.length === 1 && (
+          <div style={{ marginTop: '1.25rem' }}>
+            <p style={{ margin: '0 0 0.75rem', fontSize: '0.8rem', color: '#94a3b8' }}>
+              {servers[0].playersOnline} player{servers[0].playersOnline === 1 ? '' : 's'} online
             </p>
-            {SETUP_STEPS.map((s) => (
-              <div key={s.step} style={{
-                display: 'flex', gap: '0.875rem', alignItems: 'flex-start',
-                padding: '0.75rem', background: '#0d0d14', borderRadius: 8,
-                border: '1px solid #1e1e2a', marginBottom: '0.5rem',
-              }}>
-                <div style={{
-                  width: 22, height: 22, borderRadius: '50%', background: 'rgba(99,102,241,0.15)',
-                  border: '1px solid rgba(99,102,241,0.3)', display: 'flex', alignItems: 'center',
-                  justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#818cf8', flexShrink: 0,
-                }}>{s.step}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#e2e8f0' }}>{s.title}</div>
-                  <code style={{ display: 'block', fontSize: '0.78rem', color: '#818cf8', marginTop: '0.2rem', wordBreak: 'break-all' }}>{s.cmd}</code>
-                  <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.2rem' }}>{s.desc}</div>
-                </div>
-              </div>
-            ))}
-            <p style={{ margin: '0.75rem 0 0', fontSize: '0.75rem', color: '#3f3f52', textAlign: 'center' }}>
-              First time? Run <code style={{ color: '#64748b' }}>make bootstrap</code> first to install dependencies.
-            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.65rem', justifyContent: 'center' }}>
+              <a href={servers[0].shopPath} style={secondaryCta}>View Shop</a>
+              <a href={servers[0].mapPath} style={secondaryCta}>View Map</a>
+              <a href="/login" style={primaryCta}>Sign In →</a>
+            </div>
           </div>
         )}
 
-        {/* CTA */}
-        {(isHealthy || health === null) && (
-          <a href="/login" style={{
-            display: 'inline-block', marginTop: '1.5rem',
-            padding: '0.65rem 2rem',
-            background: isHealthy
-              ? 'linear-gradient(135deg, #6366f1 0%, #818cf8 100%)'
-              : 'rgba(99,102,241,0.15)',
-            color: '#fff', textDecoration: 'none', borderRadius: 8,
-            fontSize: '0.875rem', fontWeight: 600,
-            boxShadow: isHealthy ? '0 4px 16px rgba(99,102,241,0.3)' : 'none',
-            border: isHealthy ? 'none' : '1px solid rgba(99,102,241,0.3)',
-          }}>
-            {health === null ? 'Open Dashboard' : 'Sign In →'}
-          </a>
+        {multi && (
+          <div style={{ marginTop: '1.25rem', display: 'grid', gap: '0.75rem', textAlign: 'left' }}>
+            {servers.map((server) => (
+              <div key={server.id} style={serverCard}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ color: '#f1f5f9', fontWeight: 700 }}>{server.name}</div>
+                  <div style={{ color: '#64748b', fontSize: '0.78rem', marginTop: 2 }}>
+                    {server.playersOnline} online · host {server.hostName}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  <a href={server.shopPath} style={smallCta}>View Shop</a>
+                  <a href={server.mapPath} style={smallCta}>View Map</a>
+                </div>
+              </div>
+            ))}
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: 4 }}>
+              <a href="/login" style={primaryCta}>Sign In →</a>
+            </div>
+          </div>
+        )}
+
+        {!error && servers.length === 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.65rem', justifyContent: 'center', marginTop: '1.5rem' }}>
+            <a href="/player/shop" style={secondaryCta}>View Shop</a>
+            <a href="/player/map" style={secondaryCta}>View Map</a>
+            <a href="/login" style={primaryCta}>Sign In →</a>
+          </div>
+        )}
+
+        {error && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.65rem', justifyContent: 'center', marginTop: '1.5rem' }}>
+            <a href="/player/shop" style={secondaryCta}>View Shop</a>
+            <a href="/player/map" style={secondaryCta}>View Map</a>
+            <a href="/login" style={primaryCta}>Sign In →</a>
+          </div>
         )}
       </div>
     </div>
   );
 }
+
+const secondaryCta: React.CSSProperties = {
+  display: 'inline-block',
+  padding: '0.65rem 1.35rem',
+  background: '#16161f',
+  color: '#e2e8f0',
+  textDecoration: 'none',
+  borderRadius: 8,
+  fontSize: '0.875rem',
+  fontWeight: 600,
+  border: '1px solid #2a2a38',
+};
+
+const primaryCta: React.CSSProperties = {
+  display: 'inline-block',
+  padding: '0.65rem 1.35rem',
+  background: 'linear-gradient(135deg, #ea580c 0%, #f97316 100%)',
+  color: '#fff',
+  textDecoration: 'none',
+  borderRadius: 8,
+  fontSize: '0.875rem',
+  fontWeight: 600,
+  boxShadow: '0 4px 16px rgba(249,115,22,0.3)',
+};
+
+const smallCta: React.CSSProperties = {
+  ...secondaryCta,
+  padding: '0.45rem 0.85rem',
+  fontSize: '0.8rem',
+};
+
+const serverCard: React.CSSProperties = {
+  display: 'flex',
+  gap: 12,
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  flexWrap: 'wrap',
+  padding: '0.85rem 1rem',
+  borderRadius: 10,
+  background: '#0d0d14',
+  border: '1px solid #252532',
+};

@@ -70,7 +70,8 @@ async function main() {
   console.log('Seeding default org...');
   const org = await prisma.org.upsert({
     where: { slug: DEFAULT_ORG.slug },
-    update: { name: DEFAULT_ORG.name },
+    // Preserve renamed orgs (e.g. Mercenary Gaming). Only create when missing.
+    update: {},
     create: { name: DEFAULT_ORG.name, slug: DEFAULT_ORG.slug },
   });
   console.log(`  ✓ Org: ${org.slug} (${org.id})`);

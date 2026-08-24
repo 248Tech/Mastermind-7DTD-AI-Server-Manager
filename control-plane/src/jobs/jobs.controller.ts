@@ -19,6 +19,19 @@ export class JobsController {
     private readonly jobsService: JobsService,
   ) {}
 
+  @Post('mod-recommend')
+  @UseGuards(RequireOrgRoleGuard)
+  @RequireOrgRoles('admin', 'operator', 'viewer')
+  @UseInterceptors(FileInterceptor('file', { limits: { files: 1, fileSize: 256 * 1024 * 1024 } }))
+  async recommendMod(
+    @Param('orgId') orgId: string,
+    @Req() req: RequestWithUser,
+    @Body('serverInstanceId') serverInstanceId: string,
+    @UploadedFile() file?: { originalname: string; size: number; buffer: Buffer },
+  ) {
+    return this.stageModUpload(orgId, req.user!.id, serverInstanceId, file, 'MOD_UPLOAD_PENDING');
+  }
+
   @Post('mod-upload')
   @UseGuards(RequireOrgRoleGuard)
   @RequireOrgRoles('admin', 'operator')
@@ -28,6 +41,16 @@ export class JobsController {
     @Req() req: RequestWithUser,
     @Body('serverInstanceId') serverInstanceId: string,
     @UploadedFile() file?: { originalname: string; size: number; buffer: Buffer },
+  ) {
+    return this.stageModUpload(orgId, req.user!.id, serverInstanceId, file, 'MOD_UPLOAD_QUARANTINE');
+  }
+
+  private async stageModUpload(
+    orgId: string,
+    userId: string,
+    serverInstanceId: string,
+    file: { originalname: string; size: number; buffer: Buffer } | undefined,
+    jobType: 'MOD_UPLOAD_QUARANTINE' | 'MOD_UPLOAD_PENDING',
   ) {
     if (!serverInstanceId) throw new BadRequestException('Server instance is required');
     if (!file?.buffer?.length) throw new BadRequestException('Choose a non-empty ZIP archive');
@@ -44,9 +67,9 @@ export class JobsController {
     try {
       return await this.jobsService.createJob(
         orgId,
-        req.user!.id,
+        userId,
         serverInstanceId,
-        'MOD_UPLOAD_QUARANTINE',
+        jobType,
         { uploadId, originalName: file.originalname, sizeBytes: file.size },
       );
     } catch (error) {
@@ -65,7 +88,7 @@ export class JobsController {
   /** Create and enqueue a new job for a server instance. */
   @Post()
   @UseGuards(RequireOrgRoleGuard)
-  @RequireOrgRoles('admin', 'operator')
+  @RequireOrgRoles('admin', 'operator', 'viewer')
   async create(
     @Param('orgId') orgId: string,
     @Req() req: RequestWithUser,
@@ -90,7 +113,7 @@ export class JobsController {
   ) {
     const take = limit ? Math.min(100, parseInt(limit, 10) || 20) : 20;
     const jobs = await this.prisma.job.findMany({
-      where: { orgId, NOT: { OR: [{ type: 'PLAYER_LIST_SYNC' }, { type: 'RCON', payload: { path: ['purpose'], equals: 'inventory_snapshot' } }, { type: 'RCON', payload: { path: ['purpose'], equals: 'shop_grant' } }] }, ...(serverInstanceId ? { serverInstanceId } : {}) },
+      where: { orgId, NOT: { OR: [{ type: 'PLAYER_LIST_SYNC' }, { type: 'ITEM_CATALOG' }, { type: 'RCON', payload: { path: ['purpose'], equals: 'inventory_snapshot' } }, { type: 'RCON', payload: { path: ['purpose'], equals: 'shop_grant' } }] }, ...(serverInstanceId ? { serverInstanceId } : {}) },
       orderBy: { createdAt: 'desc' },
       take,
       include: {

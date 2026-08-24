@@ -1,9 +1,10 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createReadStream } from 'fs';
 import { access, mkdir, readFile, unlink, writeFile } from 'fs/promises';
 import { dirname } from 'path';
 import { PrismaService } from '../prisma.service';
+import { JobsService } from '../jobs/jobs.service';
 import {
   MAX_SHOP_IMAGE_BYTES,
   MAX_SHOP_ITEMS,
@@ -15,7 +16,8 @@ import {
   shopImagePath,
   type ShopImageSize,
 } from './donations.shop';
-import { parseChatColor, parseGrantItemName, parseGrantQuality, parseGrantQuantity } from './shop-grants';
+import { catalogFromAgentResult, ITEM_CATALOG_CACHE_MS, type ItemCatalogView } from './item-catalog';
+import { parseChatColor, parseGrantItemList, type GrantItemSpec } from './shop-grants';
 import { buildShopThumbFromMaster, normalizeShopImage } from './shop-image-process';
 
 export type ShopItemView = {
@@ -30,12 +32,16 @@ export type ShopItemView = {
   grantItemName: string | null;
   grantQuantity: number;
   grantQuality: number | null;
+  grantItems: GrantItemSpec[];
   chatColor: string | null;
 };
 
 @Injectable()
 export class ShopItemsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jobs: JobsService,
+  ) {}
 
   async listAdmin(orgId: string): Promise<ShopItemView[]> {
     const rows = await this.prisma.shopItem.findMany({
@@ -43,6 +49,48 @@ export class ShopItemsService {
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
     });
     return rows.map(toView);
+  }
+
+  async gameItemCatalog(orgId: string, userId: string, refresh = false): Promise<ItemCatalogView & { cached: boolean; scannedAt?: string; jobRunId?: string }> {
+    const server = await this.grantCatalogServer(orgId);
+    if (!refresh) {
+      const cached = await this.cachedItemCatalog(server.id);
+      if (cached) return cached;
+    }
+    const queued = await this.jobs.createJob(orgId, userId, server.id, 'ITEM_CATALOG', {});
+    return { items: [], count: 0, cached: false, jobRunId: queued.jobRunId };
+  }
+
+  private async grantCatalogServer(orgId: string): Promise<{ id: string }> {
+    const configured = (process.env.PLAYER_PORTAL_SERVER_ID || '').trim();
+    if (/^c[a-z0-9]{10,40}$/i.test(configured)) {
+      const server = await this.prisma.serverInstance.findFirst({
+        where: { id: configured, orgId },
+        select: { id: true },
+      });
+      if (server) return server;
+    }
+    const server = await this.prisma.serverInstance.findFirst({
+      where: { orgId, gameType: { slug: '7dtd' } },
+      select: { id: true },
+    });
+    if (!server) throw new ServiceUnavailableException('No 7DTD server is available for the item catalog');
+    return server;
+  }
+
+  private async cachedItemCatalog(serverInstanceId: string): Promise<(ItemCatalogView & { cached: boolean; scannedAt: string }) | null> {
+    const run = await this.prisma.jobRun.findFirst({
+      where: { status: 'success', job: { type: 'ITEM_CATALOG', serverInstanceId } },
+      orderBy: { finishedAt: 'desc' },
+      select: { finishedAt: true, result: true },
+    });
+    if (!run?.finishedAt || Date.now() - run.finishedAt.getTime() > ITEM_CATALOG_CACHE_MS) return null;
+    const payload = (run.result ?? {}) as { data?: Record<string, unknown> };
+    const catalog = Array.isArray(payload.data?.items)
+      ? catalogFromAgentResult({ items: payload.data.items as unknown[], files: payload.data.files, truncated: payload.data.truncated })
+      : catalogFromAgentResult(payload.data);
+    if (!catalog.items.length) return null;
+    return { ...catalog, cached: true, scannedAt: run.finishedAt.toISOString() };
   }
 
   async listCatalog(orgId: string): Promise<ShopItemView[]> {
@@ -64,7 +112,7 @@ export class ShopItemsService {
   async create(
     orgId: string,
     userId: string,
-    input: { name?: unknown; description?: unknown; price?: unknown; active?: unknown; grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; chatColor?: unknown },
+    input: { name?: unknown; description?: unknown; price?: unknown; active?: unknown; grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; grantItems?: unknown; chatColor?: unknown },
     file?: { buffer?: Buffer },
   ) {
     const count = await this.prisma.shopItem.count({ where: { orgId } });
@@ -97,7 +145,7 @@ export class ShopItemsService {
     orgId: string,
     userId: string,
     itemId: string,
-    input: { name?: unknown; description?: unknown; price?: unknown; active?: unknown; grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; chatColor?: unknown },
+    input: { name?: unknown; description?: unknown; price?: unknown; active?: unknown; grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; grantItems?: unknown; chatColor?: unknown },
     file?: { buffer?: Buffer },
   ) {
     const existing = await this.prisma.shopItem.findFirst({ where: { id: itemId, orgId } });
@@ -237,32 +285,39 @@ async function requireProcessedImage(file?: { buffer?: Buffer }) {
 }
 
 function parseShopGrantFields(
-  input: { grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; chatColor?: unknown },
-  existing?: { grantItemName: string | null; grantQuantity: number; grantQuality: number | null; chatColor: string | null },
+  input: { grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; grantItems?: unknown; chatColor?: unknown },
+  existing?: { grantItemName: string | null; grantQuantity: number; grantQuality: number | null; grantItems?: unknown; chatColor: string | null },
 ) {
-  const grantItemName = input.grantItemName == null
-    ? existing?.grantItemName ?? null
-    : String(input.grantItemName).trim()
-      ? parseGrantItemName(input.grantItemName)
-      : null;
-  if (input.grantItemName != null && String(input.grantItemName).trim() && !grantItemName) {
-    throw new ConflictException('Grant item must be a 7DTD item name such as resourceWood');
+  let grantItems: GrantItemSpec[] | false = false;
+  if (input.grantItems != null && input.grantItems !== '') {
+    grantItems = parseGrantItemList(input.grantItems);
+  } else if (input.grantItemName != null) {
+    grantItems = parseGrantItemList(String(input.grantItemName).trim()
+      ? [{ name: input.grantItemName, quantity: input.grantQuantity, quality: input.grantQuality }]
+      : []);
+  } else {
+    grantItems = parseGrantItemList(existing?.grantItems) === false
+      ? parseGrantItemList(existing?.grantItemName ? [{ name: existing.grantItemName, quantity: existing.grantQuantity, quality: existing.grantQuality }] : [])
+      : parseGrantItemList(existing?.grantItems);
+    if ((grantItems === false || grantItems.length === 0) && existing?.grantItemName) {
+      grantItems = parseGrantItemList([{ name: existing.grantItemName, quantity: existing.grantQuantity, quality: existing.grantQuality }]);
+    }
   }
-  const grantQuantity = input.grantQuantity == null || input.grantQuantity === ''
-    ? existing?.grantQuantity ?? 1
-    : parseGrantQuantity(input.grantQuantity, 1);
-  if (grantQuantity == null) throw new ConflictException('Grant quantity must be between 1 and 9999');
-  const grantQuality = input.grantQuality == null
-    ? existing?.grantQuality ?? null
-    : parseGrantQuality(input.grantQuality);
-  if (grantQuality === false) throw new ConflictException('Grant quality must be 1–6 or blank');
+  if (grantItems === false) throw new ConflictException('Each grant must be a 7DTD item name, quantity 1–9999, and optional quality 1–6. Maximum 8 items.');
+  const first = grantItems[0] ?? null;
   const chatColor = input.chatColor == null
     ? existing?.chatColor ?? null
     : String(input.chatColor).trim()
       ? parseChatColor(input.chatColor)
       : null;
   if (chatColor === false) throw new ConflictException('Chat color must be 6 hex characters such as FF00FF');
-  return { grantItemName, grantQuantity, grantQuality, chatColor };
+  return {
+    grantItems: grantItems as Prisma.InputJsonValue,
+    grantItemName: first?.name ?? null,
+    grantQuantity: first?.quantity ?? 1,
+    grantQuality: first?.quality ?? null,
+    chatColor,
+  };
 }
 
 function toView(item: {
@@ -277,8 +332,11 @@ function toView(item: {
   grantItemName?: string | null;
   grantQuantity?: number;
   grantQuality?: number | null;
+  grantItems?: unknown;
   chatColor?: string | null;
 }): ShopItemView {
+  const grantItems = viewGrantItems(item);
+  const first = grantItems[0];
   return {
     id: item.id,
     name: item.name,
@@ -288,9 +346,17 @@ function toView(item: {
     hasImage: Boolean(item.imageExt),
     sortOrder: item.sortOrder,
     createdAt: item.createdAt.toISOString(),
-    grantItemName: item.grantItemName ?? null,
-    grantQuantity: item.grantQuantity ?? 1,
-    grantQuality: item.grantQuality ?? null,
+    grantItemName: first?.name ?? null,
+    grantQuantity: first?.quantity ?? 1,
+    grantQuality: first?.quality ?? null,
+    grantItems,
     chatColor: item.chatColor ?? null,
   };
+}
+
+function viewGrantItems(item: { grantItems?: unknown; grantItemName?: string | null; grantQuantity?: number; grantQuality?: number | null }): GrantItemSpec[] {
+  const parsed = parseGrantItemList(item.grantItems);
+  if (parsed !== false && parsed.length) return parsed;
+  const fallback = parseGrantItemList(item.grantItemName ? [{ name: item.grantItemName, quantity: item.grantQuantity, quality: item.grantQuality }] : []);
+  return fallback === false ? [] : fallback;
 }

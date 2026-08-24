@@ -35,10 +35,10 @@ export function ShopAuthGate({ next, title }: { next: string; title?: string }) 
 
   return (
     <aside className="shop-auth-gate">
-      <p style={{ color: '#f97316', fontSize: 11, letterSpacing: '.14em', fontWeight: 800, margin: '0 0 6px' }}>CONTINUE TO PURCHASE</p>
-      <h2 style={{ margin: '0 0 8px', fontSize: '1.05rem' }}>{title || 'Sign in to check out'}</h2>
+      <p style={{ color: '#f97316', fontSize: 11, letterSpacing: '.14em', fontWeight: 800, margin: '0 0 6px' }}>CONTINUE TO DONATE</p>
+      <h2 style={{ margin: '0 0 8px', fontSize: '1.05rem' }}>{title || 'Sign in to donate'}</h2>
       <p style={{ color: '#94a3b8', margin: '0 0 14px', fontSize: 13, lineHeight: 1.5 }}>
-        You can browse without an account. To buy, sign in through Steam or create a shop account that matches your in-game name.
+        You can browse without an account. To donate (and receive any In-Game Gifts), sign in through Steam or create a shop account that matches your in-game name.
       </p>
       {error && <div style={{ ...shopAlert, marginBottom: 12 }}>{error}</div>}
       {mode === 'choose' && (
@@ -70,7 +70,7 @@ export function ShopAuthGate({ next, title }: { next: string; title?: string }) 
           <button type="button" className="shop-card-btn shop-card-btn-muted" onClick={() => { setMode('choose'); setError(''); }}>Back</button>
           <p style={{ color: '#64748b', fontSize: 12, margin: 0, lineHeight: 1.45 }}>
             {mode === 'register'
-              ? 'The name must already exist on this server. Play once first. This account is for shop purchases only — profile and live player markers still need Steam.'
+              ? 'The name must already exist on this server. Play once first. This account is for donator-shop donations only — profile and live player markers still need Steam.'
               : 'Use the password you created for this in-game name.'}
           </p>
         </form>

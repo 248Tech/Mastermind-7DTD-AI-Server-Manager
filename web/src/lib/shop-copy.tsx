@@ -1,6 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import {
+  formatShopGrantLabel,
+  shopGrantItems,
+  shopItemIconUrl,
+  type ShopGrantItem,
+  type ShopItem,
+} from './shop-player';
 import './shop-ui.css';
 
 function Inline({ text }: { text: string }) {
@@ -97,5 +104,70 @@ export function ShopImage({ src, alt, compact }: { src: string; alt: string; com
         </div>
       )}
     </>
+  );
+}
+
+function GrantIcon({ name }: { name: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <span className="shop-grant-icon shop-grant-icon-fallback" aria-hidden />;
+  return (
+    <img
+      className="shop-grant-icon"
+      src={shopItemIconUrl(name)}
+      alt=""
+      width={40}
+      height={40}
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+export function ShopGrantList({
+  item,
+  grants,
+  compact,
+  title = 'In-Game Gifts',
+  note = 'Thank-you gifts after your donation — not a purchase of in-game items.',
+}: {
+  item?: Pick<ShopItem, 'grantItems' | 'grantItemName' | 'grantQuantity' | 'grantQuality' | 'chatColor'>;
+  grants?: ShopGrantItem[];
+  compact?: boolean;
+  title?: string;
+  note?: string;
+}) {
+  const rows = grants ?? (item ? shopGrantItems(item) : []);
+  const chatColor = item?.chatColor?.trim() || '';
+  if (!rows.length && !chatColor) return null;
+
+  return (
+    <div className={compact ? 'shop-grants shop-grants-compact' : 'shop-grants'}>
+      {!compact && (
+        <>
+          <p className="shop-grants-title">{title}</p>
+          {note ? <p className="shop-grants-note">{note}</p> : null}
+        </>
+      )}
+      {rows.length > 0 && (
+        <ul className="shop-grants-list">
+          {rows.map((grant) => (
+            <li key={`${grant.name}:${grant.quantity}:${grant.quality ?? ''}`} className="shop-grant-row" title={formatShopGrantLabel(grant)}>
+              <GrantIcon name={grant.name} />
+              <span className="shop-grant-copy">
+                <strong>{grant.quantity}×</strong> {grant.name}
+                {grant.quality ? <span className="shop-grant-quality">Q{grant.quality}</span> : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {chatColor && (
+        <p className="shop-grant-chat">
+          <span className="shop-grant-swatch" style={{ background: `#${chatColor}` }} aria-hidden />
+          Chat color #{chatColor}
+        </p>
+      )}
+    </div>
   );
 }

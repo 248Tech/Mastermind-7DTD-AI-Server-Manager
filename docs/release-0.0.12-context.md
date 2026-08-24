@@ -9,7 +9,8 @@ Release `0.0.12` packages the current Mastermind 7DTD management platform after 
 - Added Allocs and PrismaCore integrations for live entities, inventory, location data, claims, and map overlays while keeping webtokens and credentials server-side.
 - Added Mailgun email confirmation, first-account administrator bootstrap, pending-account approval, escalating login lockouts, registration IP quotas, math challenges, optional reCAPTCHA, and a Security settings page.
 - Added Cloudflare and DigitalOcean credential storage for future infrastructure automation, with encrypted secrets and connection tests.
-- Added donator shop, Stripe checkout/webhooks, supporter status, cart flows, and player portal purchase identity handling.
+- Added donator shop, Stripe checkout/webhooks, supporter status, cart flows, player portal donation identity handling, and optional In-Game Gifts after donation (`giveplus` / `playerchatcolor`) with delivery status.
+- Added staff Set deaths (ServerTools), agent item/block catalog for In-Game Gift pickers, and player-facing In-Game Gift icons on shop pages.
 - Added account Steam-link indicators and administrator-aware links from the player portal back to the dashboard.
 - Improved player inventory quantity parsing for ServerTools `Slot N: quantity * item` snapshots and additional Allocs quantity field variants.
 - Reworked the mod configuration editor as an IDE-style workspace with file tabs, line numbers, syntax coloring, search, wrapping, keyboard save, dirty-state indicators, AI edit proposals, and mandatory diff approval.
@@ -39,3 +40,7 @@ Release `0.0.12` packages the current Mastermind 7DTD management platform after 
 4. Build and deploy control-plane/web and restart only the affected services; do not restart the game server solely for an application release.
 5. Verify `/api/health`, dashboard login, player Steam login, map layers, inventory quantities, account Steam status, and admin dashboard link behavior.
 6. Tag `v0.0.12`, push the branch/tag, and publish release notes from this context.
+
+## Post-release live snapshot
+
+Production already includes additional shop-grant, Set deaths, players UI, live-map, and catalog behavior documented in [live-features-2026-08-20.md](live-features-2026-08-20.md). That document is not a deploy queue.

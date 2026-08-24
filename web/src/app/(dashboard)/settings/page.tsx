@@ -63,6 +63,10 @@ export default function SettingsPage() {
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const [avoidBloodMoonRestart, setAvoidBloodMoonRestart] = useState(false);
+  const [maintenancePassword, setMaintenancePassword] = useState('');
+  const [maintenancePasswordConfigured, setMaintenancePasswordConfigured] = useState(false);
+  const [maintenanceBusy, setMaintenanceBusy] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState('');
   const [restartGuardSaving, setRestartGuardSaving] = useState(false);
   const [restartGuardMessage, setRestartGuardMessage] = useState('');
   const [discordBotCopied, setDiscordBotCopied] = useState(false);
@@ -106,7 +110,7 @@ JOB_TIMEOUT_SECONDS=600`;
       api.get<User>('/api/auth/me'),
       api.get<Org[]>('/api/orgs').then(orgs => orgs.find(o => o.id === orgId) || null).catch(() => null),
     ])
-      .then(([u, o]) => { setUser(u); setOrg(o); setWebhookUrl(o?.discordWebhookUrl||''); setAvoidBloodMoonRestart(Boolean(o?.avoidBloodMoonRestart));setOpenaiConfigured(Boolean(o?.openaiConfigured));setOpenaiModel(o?.openaiModel||'gpt-5.3-codex');setModAiProvider(o?.modAiProvider||'codex');setKimiConfigured(Boolean(o?.kimiConfigured));setKimiModel(o?.kimiModel||'kimi-for-coding');setCloudflareConfigured(Boolean(o?.cloudflareConfigured));setDigitalOceanConfigured(Boolean(o?.digitalOceanConfigured));setMailgunConfigured(Boolean(o?.mailgunConfigured));setMailgunDomain(o?.mailgunDomain||'');setMailgunFrom(o?.mailgunFromEmail||'');setMailgunRegion(o?.mailgunRegion||'us');setStripeConfigured(Boolean(o?.stripeConfigured));setStripeWebhookConfigured(Boolean(o?.stripeWebhookConfigured));setStripeWebhookUrl(o?.stripeWebhookUrl||''); setLoading(false); })
+      .then(([u, o]) => { setUser(u); setOrg(o); setWebhookUrl(o?.discordWebhookUrl||''); setAvoidBloodMoonRestart(Boolean(o?.avoidBloodMoonRestart));setMaintenancePasswordConfigured(Boolean(o?.maintenancePasswordConfigured));setOpenaiConfigured(Boolean(o?.openaiConfigured));setOpenaiModel(o?.openaiModel||'gpt-5.3-codex');setModAiProvider(o?.modAiProvider||'codex');setKimiConfigured(Boolean(o?.kimiConfigured));setKimiModel(o?.kimiModel||'kimi-for-coding');setCloudflareConfigured(Boolean(o?.cloudflareConfigured));setDigitalOceanConfigured(Boolean(o?.digitalOceanConfigured));setMailgunConfigured(Boolean(o?.mailgunConfigured));setMailgunDomain(o?.mailgunDomain||'');setMailgunFrom(o?.mailgunFromEmail||'');setMailgunRegion(o?.mailgunRegion||'us');setStripeConfigured(Boolean(o?.stripeConfigured));setStripeWebhookConfigured(Boolean(o?.stripeWebhookConfigured));setStripeWebhookUrl(o?.stripeWebhookUrl||''); setLoading(false); })
       .catch((err) => { setError(err.message); setLoading(false); });
   }, [orgId]);
 
@@ -222,6 +226,25 @@ JOB_TIMEOUT_SECONDS=600`;
           Do not restart during Blood Moon days <strong style={{color:avoidBloodMoonRestart?'#4ade80':'#64748b'}}>({avoidBloodMoonRestart?'Enabled':'Disabled'})</strong>
         </label>
         {restartGuardMessage&&<p style={{color:restartGuardMessage.includes('enabled')||restartGuardMessage.includes('disabled')?'#4ade80':'#f87171',fontSize:'.8rem',marginBottom:0}}>{restartGuardMessage}</p>}
+      </div>
+
+      <div style={card}>
+        <h2 style={{ margin: '0 0 0.375rem', fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>Maintenance mode</h2>
+        <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748b' }}>
+          This password is written to <code>serverconfig.xml</code> as <code>ServerPassword</code> when you put a server in maintenance from the manager page. The live server then safely restarts. The password is encrypted here and never shown again.
+        </p>
+        <form onSubmit={async e=>{e.preventDefault();if(!orgId)return;setMaintenanceBusy(true);setMaintenanceMessage('');try{const saved=await api.post<{ok:boolean;configured:boolean}>(`/api/orgs/${orgId}/integrations/maintenance-password`,{password:maintenancePassword});setMaintenancePasswordConfigured(saved.configured);setMaintenancePassword('');setMaintenanceMessage('Maintenance password saved.');}catch(err){setMaintenanceMessage(err instanceof Error?err.message:'Could not save maintenance password');}finally{setMaintenanceBusy(false);}}} style={{display:'grid',gap:'.75rem',maxWidth:420}}>
+          <div>
+            <label style={labelStyle}>Maintenance password</label>
+            <input type="password" autoComplete="new-password" value={maintenancePassword} onChange={e=>setMaintenancePassword(e.target.value)} placeholder={maintenancePasswordConfigured?'Leave blank to keep the stored password':'4–32 characters'} style={inputStyle}/>
+          </div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+            <button disabled={maintenanceBusy||!maintenancePassword.trim()} style={btnPrimary}>{maintenanceBusy?'Saving…':'Save password'}</button>
+            {maintenancePasswordConfigured&&<button type="button" disabled={maintenanceBusy} onClick={async()=>{if(!orgId||!confirm('Remove the stored maintenance password? Servers already in maintenance keep their current password until you exit maintenance.'))return;setMaintenanceBusy(true);setMaintenanceMessage('');try{await api.delete(`/api/orgs/${orgId}/integrations/maintenance-password`);setMaintenancePasswordConfigured(false);setMaintenanceMessage('Maintenance password removed.');}catch(err){setMaintenanceMessage(err instanceof Error?err.message:'Could not remove password');}finally{setMaintenanceBusy(false);}}} style={{...btnPrimary,background:'#991b1b'}}>Remove</button>}
+            <span style={{fontSize:'.8rem',color:maintenancePasswordConfigured?'#4ade80':'#94a3b8'}}>{maintenancePasswordConfigured?'Configured':'Not configured'}</span>
+          </div>
+          {maintenanceMessage&&<p style={{margin:0,color:/saved|removed/i.test(maintenanceMessage)?'#4ade80':'#f87171',fontSize:'.8rem'}}>{maintenanceMessage}</p>}
+        </form>
       </div>
 
       {/* AI Mod Editor */}

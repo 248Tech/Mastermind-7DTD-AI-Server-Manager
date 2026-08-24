@@ -416,6 +416,8 @@ A **job** is a command sent to a specific game server instance. The control plan
 |------|-------------|
 | `start` | Starts the game server process using `startCommand` |
 | `stop` | Stops the game server (graceful via RCON/Telnet, then process kill) |
+| `saveworld` | Sends telnet `saveworld` to flush the live world (server must be online) |
+| `save-stop` | Sends `saveworld`, copies a full-world backup, then shuts the server down |
 | `restart` | Stop then start |
 | `rcon` | Send a raw RCON/Telnet command; result returned in job output |
 | `custom` | Custom payload; adapter handles based on type string |
@@ -430,6 +432,10 @@ A **job** is a command sent to a specific game server instance. The control plan
 6. Click **Submit**.
 
 The job appears in the list with status **Pending**. The page auto-refreshes every 5 seconds. Status changes to **Running** when the agent picks it up, then **Success** or **Failed** when done.
+
+### Recommending mods
+
+Verified organization members (including viewers) can open **Mods → Pending Approval** and upload a ZIP. Mastermind validates `ModInfo.xml` the same way as a staff quarantine upload, then holds the files off the live Mods folder. Administrators and operators can **Approve** (installs into Mods, loads after restart) or **Reject** (deletes the recommendation). Staff can still upload directly to quarantine.
 
 ### From the API
 
@@ -985,12 +991,14 @@ The player portal is separate:
 | Path | Who |
 |------|-----|
 | `/player/map` | Terrain, zombies, and animals are public. Other players appear only after Steam OpenID. |
-| `/player/shop` | Public catalog. Checkout needs Steam or an in-game-name password account. |
+| `/player/shop` | Public catalog. Donate with Steam or an in-game-name password account. Item pages list any In-Game Gifts (thank-you gifts after donation — not item purchases). |
 | `/player/profile` | Steam sessions only. |
+
+Staff **Players** uses a card layout and can set an online player's death count (ServerTools). Donator-shop admins can attach optional In-Game Gifts and chat color; delivery status appears under **Donations**.
 
 Do not expose Allocs `:8080`, PrismaCore `:11111`, or telnet on the public internet. Shop status may show an online-player count, not names or positions.
 
 ---
 
-*Guide updated 2026-08-18 (player portal, shop, Allocs/PrismaCore live data).*
+*Guide updated 2026-08-20 (shop grants display, Set deaths, players cards).*
 

@@ -9,6 +9,7 @@ go build -trimpath -ldflags='-s -w' -o /tmp/mastermind-agent .
 sudo install -o root -g root -m 0755 /tmp/mastermind-agent /usr/local/bin/mastermind-agent
 sudo install -o root -g root -m 0755 /opt/mastermind/wipe-7dtd-save.py /usr/local/sbin/mastermind-wipe-7dtd-save
 sudo install -o root -g root -m 0755 /opt/mastermind/fix-7dtd-save-permissions.py /usr/local/sbin/mastermind-fix-7dtd-save-permissions
+sudo install -o root -g root -m 0755 /opt/mastermind/infra/agent/mastermind-ensure-mod-config-writable.sh /usr/local/sbin/mastermind-ensure-mod-config-writable
 rm -f /tmp/mastermind-agent
 
 : "${MASTERMIND_ADMIN_EMAIL:?Set MASTERMIND_ADMIN_EMAIL}"
@@ -74,7 +75,7 @@ EOF
 sudo install -o root -g mastermind-agent -m 0640 "$temp_config" /etc/mastermind-agent/config.yaml
 rm -f "$temp_config"
 
-printf '%s\n' 'mastermind-agent ALL=(root) NOPASSWD: /usr/bin/systemctl start 7dtd.service, /usr/bin/systemctl stop 7dtd.service, /usr/bin/systemctl restart 7dtd.service, /usr/bin/systemctl kill --kill-who=main --signal=SIGKILL 7dtd.service, /usr/bin/systemctl reset-failed 7dtd.service, /usr/local/sbin/mastermind-wipe-7dtd-save /opt/7dtd/serverconfig.xml /opt/7dtd/userdata/Saves/Rotterdam/Builder, /usr/local/sbin/mastermind-wipe-7dtd-save /opt/7dtd/serverconfig.xml /opt/7dtd/userdata/Saves/Rotterdam/Builder.mastermind-restore-old, /usr/local/sbin/mastermind-fix-7dtd-save-permissions /opt/7dtd/serverconfig.xml /opt/7dtd/userdata/Saves/Rotterdam/Builder' |
+printf '%s\n' 'mastermind-agent ALL=(root) NOPASSWD: /usr/bin/systemctl start 7dtd.service, /usr/bin/systemctl stop 7dtd.service, /usr/bin/systemctl restart 7dtd.service, /usr/bin/systemctl kill --kill-who=main --signal=SIGKILL 7dtd.service, /usr/bin/systemctl reset-failed 7dtd.service, /usr/local/sbin/mastermind-wipe-7dtd-save /opt/7dtd/serverconfig.xml /opt/7dtd/userdata/Saves/Rotterdam/Builder, /usr/local/sbin/mastermind-wipe-7dtd-save /opt/7dtd/serverconfig.xml /opt/7dtd/userdata/Saves/Rotterdam/Builder.mastermind-restore-old, /usr/local/sbin/mastermind-fix-7dtd-save-permissions /opt/7dtd/serverconfig.xml /opt/7dtd/userdata/Saves/Rotterdam/Builder, /usr/local/sbin/mastermind-ensure-mod-config-writable /opt/7dtd/server/Mods/*' |
   sudo tee /etc/sudoers.d/mastermind-agent-7dtd >/dev/null
 sudo chmod 0440 /etc/sudoers.d/mastermind-agent-7dtd
 sudo visudo -cf /etc/sudoers.d/mastermind-agent-7dtd >/dev/null

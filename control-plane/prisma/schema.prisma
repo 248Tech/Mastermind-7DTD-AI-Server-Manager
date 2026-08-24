@@ -37,6 +37,7 @@ model Org {
   recaptchaSecretEncrypted String? @map("recaptcha_secret_encrypted") @db.Text
   stripeSecretKeyEncrypted String? @map("stripe_secret_key_encrypted") @db.Text
   stripeWebhookSecretEncrypted String? @map("stripe_webhook_secret_encrypted") @db.Text
+  maintenancePasswordEncrypted String? @map("maintenance_password_encrypted") @db.Text
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
@@ -212,6 +213,7 @@ model ServerInstance {
   telnetHost      String?  @map("telnet_host")
   telnetPort      Int?     @map("telnet_port")
   telnetPassword  String?  @map("telnet_password")
+  maintenanceMode Boolean  @default(false) @map("maintenance_mode")
   config          Json?    // game-adapter-specific config
   port            Int?
   createdAt       DateTime @default(now()) @map("created_at")
@@ -380,6 +382,7 @@ model ShopItem {
   grantItemName String? @map("grant_item_name")
   grantQuantity Int     @default(1) @map("grant_quantity")
   grantQuality  Int?    @map("grant_quality")
+  grantItems    Json    @default("[]") @map("grant_items")
   chatColor     String? @map("chat_color")
   active      Boolean  @default(true)
   sortOrder   Int      @default(0) @map("sort_order")
@@ -403,6 +406,7 @@ model DonationLine {
   grantItemName String?  @map("grant_item_name")
   grantQuantity Int?     @map("grant_quantity")
   grantQuality  Int?     @map("grant_quality")
+  grantItems    Json     @default("[]") @map("grant_items")
   chatColor     String?  @map("chat_color")
   grantStatus   String   @default("none") @map("grant_status")
   chatColorStatus String @default("none") @map("chat_color_status")

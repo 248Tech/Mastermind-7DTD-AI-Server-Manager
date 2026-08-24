@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { PortalFrame } from '../PortalFrame';
-import { ShopThumb } from '../../../lib/shop-copy';
+import { ShopThumb, ShopGrantList } from '../../../lib/shop-copy';
 import { useShopCart } from '../../../lib/shop-cart';
 import { ShopAuthGate } from '../../../lib/shop-auth';
 import {
@@ -37,6 +37,7 @@ function ShopCatalogCard({ item }: { item: ShopItem }) {
         <div className="shop-card-body">
           <h2 className="shop-card-title">{item.name}</h2>
           {item.description && <p className="shop-card-teaser">{shopTeaser(item.description)}</p>}
+          <ShopGrantList item={item} compact />
           <div className="shop-card-footer">
             <span className="shop-price">{money(item.priceCents)}</span>
             <span className="shop-card-cta">View details →</span>
@@ -143,7 +144,7 @@ function PlayerShopContent() {
             ? `Signed in as ${profile.name}. Gifts apply to that in-game name.`
             : signedIn && steamLast4
               ? `Gifts are tied to Steam ending ${steamLast4}.`
-              : 'Browse freely. Sign in through Steam or with your in-game name to check out.'}
+              : 'Browse freely. Sign in through Steam or with your in-game name to donate.'}
           {` · ${serverReachable ? 'Server online' : 'Server status unknown'} · ${playersOnline} player${playersOnline === 1 ? '' : 's'}`}
           {count > 0 && <> · <a href="/player/shop/cart" style={{ color: '#fb923c' }}>View cart ({count})</a></>}
         </p>

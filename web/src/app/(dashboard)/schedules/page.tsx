@@ -83,7 +83,7 @@ function formatDateTime(dateStr: string | null): string {
   return new Date(dateStr).toLocaleString();
 }
 
-const JOB_TYPES = ['SERVER_START', 'SERVER_STOP', 'SERVER_RESTART'];
+const JOB_TYPES = ['SERVER_START', 'SERVER_STOP', 'SERVER_SAVEWORLD', 'SERVER_SAVE_STOP', 'SERVER_RESTART'];
 
 type SimpleSchedule = { days: number; hour: number; minute: number };
 

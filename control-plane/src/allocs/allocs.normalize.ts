@@ -3,6 +3,7 @@ export type MapEntity = {
   name: string;
   type: string;
   position: { x: number; y: number; z: number };
+  steamId?: string;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -78,13 +79,15 @@ export function normalizeAllocsPlayers(json: unknown): MapEntity[] {
     const position = positionOf(item);
     if (!position) return [];
     const name = text(item.name, item.playername, item.playerName) || 'Player';
-    const id = text(item.entityid, item.entityId, item.id) || `player:${index}`;
+    const steamId = text(item.steamid, item.steamId, item.SteamID, item.nativeuserid).replace(/^Steam_/i, '');
+    const id = steamId || text(item.entityid, item.entityId, item.id) || `player:${index}`;
     const numeric = Number(id);
     return [{
-      id: Number.isInteger(numeric) ? numeric : id,
+      id: steamId || (Number.isInteger(numeric) ? numeric : id),
       name,
       type: 'EntityPlayer',
       position,
+      ...(steamId ? { steamId } : {}),
     }];
   }).slice(0, 128);
 }

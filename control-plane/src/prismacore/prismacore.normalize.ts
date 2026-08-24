@@ -92,7 +92,7 @@ export function normalizePlayers(json: unknown): PrismaCorePlayer[] {
   return asArray(json, ['Players', 'players', 'PlayerList', 'data']).map((row, index) => {
     const item = asRecord(row) || {};
     const name = text(item.name, item.playername, item.playerName, item.Name) || 'Player';
-    const steamId = text(item.steamid, item.steamId, item.PlatformId, item.platformId, item.nativeuserid);
+    const steamId = steamIdOf(text(item.steamid, item.steamId, item.PlatformId, item.platformId, item.nativeuserid));
     const eosId = text(item.eossid, item.eosId, item.crossid, item.userid);
     const id = text(item.entityid, item.entityId, item.id) || `${steamId || eosId || name}:${index}`;
     return { id, name, steamId, eosId, position: positionOf(item, index) };

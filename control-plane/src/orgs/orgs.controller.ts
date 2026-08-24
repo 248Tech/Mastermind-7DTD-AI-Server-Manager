@@ -75,6 +75,7 @@ class DigitalOceanSettingsDto{@IsString()@MinLength(20)@MaxLength(2048) apiToken
 class MailgunSettingsDto{@IsOptional()@IsString()@MinLength(10)@MaxLength(512) apiKey?:string;@IsString()@MinLength(3)@MaxLength(255) domain!:string;@IsEmail() fromEmail!:string;@IsIn(['us','eu']) region!:'us'|'eu';}
 class StripeSettingsDto{@IsOptional()@IsString()@MinLength(20)@MaxLength(256) secretKey?:string;@IsOptional()@IsString()@MinLength(20)@MaxLength(256) webhookSecret?:string;}
 class RecaptchaSettingsDto{@IsString()@MinLength(20)@MaxLength(256) siteKey!:string;@IsOptional()@IsString()@MinLength(10)@MaxLength(512) secretKey?:string;}
+class MaintenancePasswordDto{@IsString()@MinLength(4)@MaxLength(32) password!:string;}
 
 @Controller('api/orgs')
 @UseGuards(JwtAuthGuard)
@@ -267,6 +268,20 @@ export class OrgsController {
   @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
   @RequireOrgRoles('admin')
   clearStripe(@Param('orgId')orgId:string,@Req()req:RequestWithUser){return this.orgsService.clearStripeSettings(orgId,req.user!.id);}
+
+  @Post(':orgId/integrations/maintenance-password')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  saveMaintenancePassword(@Param('orgId')orgId:string,@Req()req:RequestWithUser,@Body()dto:MaintenancePasswordDto){
+    return this.orgsService.saveMaintenancePassword(orgId,req.user!.id,dto.password);
+  }
+
+  @Delete(':orgId/integrations/maintenance-password')
+  @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)
+  @RequireOrgRoles('admin')
+  clearMaintenancePassword(@Param('orgId')orgId:string,@Req()req:RequestWithUser){
+    return this.orgsService.clearMaintenancePassword(orgId,req.user!.id);
+  }
 
   @Post(':orgId/detection/frigate/test')
   @UseGuards(OrgMemberGuard,RequireOrgRoleGuard)

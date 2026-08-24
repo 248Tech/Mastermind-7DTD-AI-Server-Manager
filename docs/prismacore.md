@@ -21,7 +21,7 @@ PRISMACORE_API_PASSWORD=...
 
 - Staff: `GET /api/orgs/:orgId/prismacore/:layer` (dashboard JWT). Layers: `status`, `playersonline`, `landclaims`, `playerhomes`, `vehicles`, `drones`, `traders`, `questpois`, `allpois`, `resetregions`, `advclaims`. `createadvclaims` is rejected.
 
-Shop grants: after a signed Stripe checkout, control-plane queues sanitized telnet `giveplus <Steam_…> <item> <amount> [quality]` and `playerchatcolor <Steam_…> <RRGGBB> 1`. Item names are `[A-Za-z][A-Za-z0-9_:]{0,79}` only. `giveplus all` is never built. Allocs `executeconsolecommand` stays visitmap-only. PrismaCore HTTP stays read-only (`createadvclaims` blocked). Offline players retry `giveplus` on the next roster poll (chat color can apply offline).
+Shop In-Game Gifts: after a signed Stripe donation, control-plane queues sanitized telnet `giveplus <Steam_…> <item> <amount> [quality]` and `playerchatcolor <Steam_…> <RRGGBB> 1` for each thank-you gift line on the donation. These are In-Game Gifts after a donation — not a purchase of in-game items. Item names are `[A-Za-z][A-Za-z0-9_:]{0,79}` only. `giveplus all` is never built. Allocs `executeconsolecommand` stays visitmap-only. PrismaCore HTTP stays read-only (`createadvclaims` blocked). Offline players retry `giveplus` on the next roster poll (chat color can apply offline). Admin gift pickers and player shop pages use agent `ITEM_CATALOG` (items + blocks) and `/item-icon/{name}` for display.
 
 Public shop: `GET /api/player-auth/shop/status` adds `serverReachable` (boolean) and `playersOnline` (count only).
 

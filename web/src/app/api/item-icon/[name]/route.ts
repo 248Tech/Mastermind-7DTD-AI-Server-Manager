@@ -7,7 +7,7 @@ const ICON_ROOT = '/7dtd-item-icons';
 
 export async function GET(_request: Request, context: { params: Promise<{ name: string }> }) {
   const { name } = await context.params;
-  if (!/^[A-Za-z0-9_.-]{1,120}$/.test(name)) return new NextResponse(null, { status: 404 });
+  if (!/^[A-Za-z0-9_.:-]{1,120}$/.test(name) || name.includes('..')) return new NextResponse(null, { status: 404 });
   try {
     const data = await fs.readFile(path.join(ICON_ROOT, `${name}.png`));
     return new NextResponse(data, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400, immutable' } });

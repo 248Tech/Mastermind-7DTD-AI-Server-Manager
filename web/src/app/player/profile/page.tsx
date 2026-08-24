@@ -120,7 +120,7 @@ function PlayerProfileContent() {
   if (profile.auth === 'name' || !profile.stats) {
     return (
       <PortalFrame profile={profile}>
-        <div style={alert}>Sign in through Steam to view stats, inventory, logout location, and your land. Shop accounts are for purchases only.</div>
+        <div style={alert}>Sign in through Steam to view stats, inventory, logout location, and your land. Shop accounts are for donations only.</div>
         <a href="/api/player-auth/steam/start?next=/player/profile" style={{ color: '#fb923c' }}>Sign in through Steam</a>
       </PortalFrame>
     );
@@ -257,7 +257,7 @@ function PlayerProfileContent() {
           <p style={{ color: '#cbd5e1', lineHeight: 1.55, marginTop: 0 }}>
             Support is voluntary and tied directly to this Steam account (ending {donation?.steamLast4}).
             Browse the <a href="/player/shop" style={{ color: '#fb923c' }}>donator shop</a> for featured items, or give a custom amount here.
-            A supporter badge on this profile is recognition, not a purchase of in-game items.
+            A supporter badge is recognition for your donation. Any listed In-Game Gifts are thank-you gifts — not a purchase of in-game items.
           </p>
           {donation?.supporter && (
             <p style={{ color: '#fdba74', marginTop: 0 }}>

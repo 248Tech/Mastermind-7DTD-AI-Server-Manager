@@ -129,8 +129,8 @@ export default function LoginPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2rem' }}>
           <img src="/mastermind-logo.png" alt="Mastermind" style={{width:48,height:48,objectFit:'cover',objectPosition:'center 42%',borderRadius:10,boxShadow:'0 0 24px rgba(249,115,22,.4)'}} />
           <div>
-            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#f1f5f9' }}>Mastermind</div>
-            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>7DTD Server Manager</div>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#f1f5f9' }}>Mercenary Gaming</div>
+            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Staff dashboard sign-in</div>
           </div>
         </div>
 
@@ -264,7 +264,23 @@ export default function LoginPage() {
         <p style={{ margin: '1.5rem 0 0', borderTop: '1px solid #1e1e2a', paddingTop: '1rem', fontSize: '0.75rem', color: '#64748b' }}>
           New dashboard accounts require email confirmation and administrator approval.
         </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'center', marginTop: '1rem' }}>
+          <a href="/player/shop" style={portalLink}>View Shop</a>
+          <a href="/player/map" style={portalLink}>View Map</a>
+        </div>
       </div>
     </div>
   );
 }
+
+const portalLink: React.CSSProperties = {
+  display: 'inline-block',
+  padding: '0.45rem 0.9rem',
+  background: '#16161f',
+  color: '#cbd5e1',
+  textDecoration: 'none',
+  borderRadius: 7,
+  fontSize: '0.8rem',
+  fontWeight: 600,
+  border: '1px solid #2a2a38',
+};

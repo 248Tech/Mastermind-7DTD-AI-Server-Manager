@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { PortalFrame } from '../../PortalFrame';
-import { ShopDescription, ShopImage } from '../../../../lib/shop-copy';
+import { ShopDescription, ShopImage, ShopGrantList } from '../../../../lib/shop-copy';
 import { ShopAuthGate } from '../../../../lib/shop-auth';
 import {
   money,
@@ -108,9 +108,10 @@ function PlayerShopItemContent() {
           <div style={{ height: 120, display: 'grid', placeItems: 'center', color: '#64748b', background: '#050508' }}>No picture</div>
         )}
         <div className="shop-item-body">
-          <p style={shopEyebrow}>DONATOR ITEM</p>
+          <p style={shopEyebrow}>SUPPORTER PACKAGE</p>
           <h1 className="shop-item-title">{item.name}</h1>
           {item.description && <ShopDescription text={item.description} />}
+          <ShopGrantList item={item} />
           <div className="shop-item-actions">
             <span className="shop-price">{money(item.priceCents)}</span>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
