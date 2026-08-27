@@ -15,6 +15,8 @@ import { stripeCredentialsForOrg, stripeWebhookSecrets } from './donations.crede
 import { parseShopItemId, parseShopItemIds } from './donations.shop';
 import { parseChatColor, parseGrantItemList, snapshotLineGrants, aggregateGrantStatus } from './shop-grants';
 import { JobsService } from '../jobs/jobs.service';
+import { TriggersService } from '../triggers/triggers.service';
+import { inferBonusLandClaims } from '../triggers/donated-claims';
 
 @Injectable()
 export class DonationsService {
@@ -24,6 +26,7 @@ export class DonationsService {
     private readonly prisma: PrismaService,
     private readonly discord: DiscordService,
     private readonly jobs: JobsService,
+    private readonly triggers: TriggersService,
   ) {}
 
   async webhookConfigured() {
@@ -237,6 +240,7 @@ export class DonationsService {
     }
     await this.notifyDiscord(player.orgId, player.name, paid.amountCents, lineRows.map((line) => line.itemName));
     await this.jobs.enqueueShopGrants(paid.orgId, paid.serverInstanceId, player.id, paid.steamId).catch(() => undefined);
+    await this.triggers.refreshLandClaims(player.id).catch(() => undefined);
   }
 
   private async buildDonationLines(paid: {
@@ -248,7 +252,7 @@ export class DonationsService {
     if (!paid.shopItemIds.length) return [];
     const items = await this.prisma.shopItem.findMany({
       where: { orgId: paid.orgId, id: { in: paid.shopItemIds } },
-      select: { id: true, name: true, priceCents: true, grantItemName: true, grantQuantity: true, grantQuality: true, grantItems: true, chatColor: true },
+      select: { id: true, name: true, priceCents: true, grantItemName: true, grantQuantity: true, grantQuality: true, grantItems: true, chatColor: true, bonusLandClaims: true },
     });
     return paid.shopItemIds.map((id, index) => {
       const item = items.find((row) => row.id === id);
@@ -261,6 +265,7 @@ export class DonationsService {
       );
       const first = grantItems[0];
       const chatColor = parseChatColor(item?.chatColor);
+      const bonusLandClaims = inferBonusLandClaims(item?.name ?? '', grantItems, item?.bonusLandClaims ?? 0, 1);
       return {
         shopItemId: item?.id ?? null,
         itemName: item?.name ?? 'Shop item',
@@ -271,6 +276,7 @@ export class DonationsService {
         grantQuantity: first ? first.quantity : null,
         grantQuality: first?.quality ?? null,
         chatColor: chatColor || null,
+        bonusLandClaims,
         grantStatus: aggregateGrantStatus(grantItems),
         chatColorStatus: chatColor ? 'pending' : 'none',
       };

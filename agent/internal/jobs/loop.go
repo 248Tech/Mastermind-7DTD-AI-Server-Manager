@@ -39,9 +39,11 @@ func Loop(ctx context.Context, c client.Client, hostID string, pollIntervalSec i
 		}
 		pollRetry.Reset()
 		if len(jobs) == 0 {
-			// Some compatible control planes return immediately even when the wait
-			// query is present. Keep an empty successful response from becoming a
-			// tight request loop that hammers the API.
+			// When long-poll already blocked, poll again immediately. Only sleep
+			// if the control plane returned empty without waiting.
+			if longPollSec > 0 {
+				continue
+			}
 			if !waitForPoll(ctx, time.Duration(pollIntervalSec)*time.Second) {
 				return
 			}
@@ -175,7 +177,7 @@ func runOne(ctx context.Context, c client.Client, hostID string, j client.Job, e
 		}
 	}()
 	maxDuration := 15 * time.Minute
-	if j.Type == "SERVER_SAFE_RESTART" || j.Type == "SERVER_RESTART" || j.Type == "SERVER_SAVE_STOP" || j.Type == "SERVER_MAINTENANCE" {
+	if j.Type == "SERVER_SAFE_RESTART" || j.Type == "SERVER_RESTART" || j.Type == "SERVER_SAVE_STOP" || j.Type == "SERVER_MAINTENANCE" || j.Type == "SERVER_UPDATE" {
 		maxDuration = 24 * time.Hour
 	} else if isReadOnly(j.Type) {
 		maxDuration = 3 * time.Minute

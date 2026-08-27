@@ -1,0 +1,3 @@
+ALTER TABLE "Org" ADD COLUMN IF NOT EXISTS "stability_restart_enabled" BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE "Org" ADD COLUMN IF NOT EXISTS "stability_restart_memory_gib" INTEGER NOT NULL DEFAULT 12;
+ALTER TABLE "Org" ADD COLUMN IF NOT EXISTS "stability_restart_cooldown_minutes" INTEGER NOT NULL DEFAULT 240;

@@ -45,7 +45,7 @@ type Places = {
   reachable: boolean;
   claims: Array<{ id: string; position: { x: number; y: number; z: number }; size: number }>;
   homes: Array<{ id: string; position: { x: number; y: number; z: number }; active: boolean }>;
-  vehicles: Array<{ id: string; name: string; position: { x: number; y: number; z: number } }>;
+  vehicles: Array<{ id: string; name: string; position: { x: number; y: number; z: number }; vehicleKey?: string; live?: boolean; lastSeenAt?: string }>;
   drones: Array<{ id: string; name: string; position: { x: number; y: number; z: number } }>;
 };
 
@@ -95,6 +95,8 @@ function PlayerProfileContent() {
   const [donating, setDonating] = useState(false);
   const [donateError, setDonateError] = useState('');
   const [places, setPlaces] = useState<Places | null>(null);
+  const [returningKey, setReturningKey] = useState('');
+  const [returnMessage, setReturnMessage] = useState('');
 
   useEffect(() => {
     fetch('/api/player-auth/me', { cache: 'no-store' })
@@ -163,6 +165,27 @@ function PlayerProfileContent() {
     }
   }
 
+  async function returnVehicle(vehicleKey: string) {
+    setReturnMessage('');
+    setReturningKey(vehicleKey);
+    try {
+      const response = await fetch('/api/player-auth/vehicles/return', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ vehicleKey }),
+      });
+      const data = await response.json().catch(() => ({})) as { message?: string };
+      if (!response.ok) throw new Error(data.message || 'Could not return that vehicle');
+      setReturnMessage(data.message || 'Vehicle returned.');
+      const placesResponse = await fetch('/api/player-auth/places', { cache: 'no-store' });
+      if (placesResponse.ok) setPlaces(await placesResponse.json());
+    } catch (e) {
+      setReturnMessage(e instanceof Error ? e.message : 'Could not return that vehicle');
+    } finally {
+      setReturningKey('');
+    }
+  }
+
   return (
     <PortalFrame profile={profile}>
       <div style={{ display: 'grid', gap: 16 }}>
@@ -209,6 +232,7 @@ function PlayerProfileContent() {
 
         <section style={card}>
           <h2 style={heading}>Your places</h2>
+          <p style={{ color: '#64748b', fontSize: 13, marginTop: 0 }}>Return a vehicle while you are online. Mastermind looks it up in the world first; if it cannot be found, a replacement is placed in your inventory from your recent vehicle history.</p>
           {!places || (!places.claims.length && !places.homes.length && !places.vehicles.length && !places.drones.length) ? (
             <p style={{ color: '#94a3b8', margin: 0 }}>
               {places && !places.reachable
@@ -218,6 +242,7 @@ function PlayerProfileContent() {
             </p>
           ) : (
             <div style={{ display: 'grid', gap: 8 }}>
+              {returnMessage && <p style={{ margin: 0, color: '#93c5fd', fontSize: 13 }}>{returnMessage}</p>}
               {places.claims.map((claim) => (
                 <p key={claim.id} style={placeLine}>Land claim · {Math.round(claim.position.x)}, {Math.round(claim.position.z)} · {claim.size}×{claim.size}</p>
               ))}
@@ -225,7 +250,22 @@ function PlayerProfileContent() {
                 <p key={home.id} style={placeLine}>Bed{home.active ? '' : ' (inactive)'} · {Math.round(home.position.x)}, {Math.round(home.position.z)}</p>
               ))}
               {places.vehicles.map((vehicle) => (
-                <p key={vehicle.id} style={placeLine}>{vehicle.name} · {Math.round(vehicle.position.x)}, {Math.round(vehicle.position.z)}</p>
+                <div key={vehicle.id} style={{ ...placeLine, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                  <span>
+                    {vehicle.name} · {Math.round(vehicle.position.x)}, {Math.round(vehicle.position.z)}
+                    {vehicle.live === false ? ' · last seen' : ''}
+                  </span>
+                  {vehicle.vehicleKey && vehicle.vehicleKey !== 'unknown' && (
+                    <button
+                      type="button"
+                      disabled={Boolean(returningKey)}
+                      onClick={() => void returnVehicle(vehicle.vehicleKey!)}
+                      style={{ ...btnSmall, opacity: returningKey && returningKey !== vehicle.vehicleKey ? 0.5 : 1 }}
+                    >
+                      {returningKey === vehicle.vehicleKey ? 'Returning…' : 'Return'}
+                    </button>
+                  )}
+                </div>
               ))}
               {places.drones.map((drone) => (
                 <p key={drone.id} style={placeLine}>{drone.name} · {Math.round(drone.position.x)}, {Math.round(drone.position.z)}</p>
@@ -336,3 +376,4 @@ const presetOn: React.CSSProperties = { color: '#fff7ed', background: '#9a3412',
 const presetOff: React.CSSProperties = { color: '#fdba74', background: '#1c1008', border: '1px solid #7c2d12', borderRadius: 8, padding: '.45rem .8rem', cursor: 'pointer' };
 const customInput: React.CSSProperties = { width: 72, background: '#0b0b12', color: '#e2e8f0', border: '1px solid #3f3f49', borderRadius: 6, padding: '6px 8px' };
 const placeLine: React.CSSProperties = { margin: 0, color: '#e2e8f0', fontSize: 14 };
+const btnSmall: React.CSSProperties = { color: '#e2e8f0', background: '#1e3a5f', border: '1px solid #3b82f6', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' };

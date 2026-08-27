@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Post, Req, UnauthorizedException, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Post, Req, UnauthorizedException, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { PlayerAuthService } from './player-auth.service';
 import { AuthRateLimitService } from '../auth/auth-rate-limit.service';
@@ -63,6 +63,16 @@ export class PlayerAuthController {
   places(@Headers('authorization') authorization?: string) {
     if (!authorization?.startsWith('Bearer ')) throw new UnauthorizedException('Player session required');
     return this.auth.places(authorization.slice(7));
+  }
+
+  @Post('vehicles/return')
+  returnVehicle(
+    @Headers('authorization') authorization?: string,
+    @Body('vehicleKey') vehicleKey?: string,
+  ) {
+    if (!authorization?.startsWith('Bearer ')) throw new UnauthorizedException('Player session required');
+    if (typeof vehicleKey !== 'string' || !vehicleKey.trim()) throw new BadRequestException('Vehicle is required');
+    return this.auth.returnVehicle(authorization.slice(7), vehicleKey.trim());
   }
 
   @Get('map/entities')

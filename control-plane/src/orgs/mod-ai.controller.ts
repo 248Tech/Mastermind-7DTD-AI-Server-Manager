@@ -4,7 +4,7 @@ import {JwtAuthGuard,RequestWithUser} from '../server-instances/guards/jwt-auth.
 import {OrgMemberGuard} from '../server-instances/guards/org-member.guard';
 import {RequireOrgRoleGuard,RequireOrgRoles} from '../server-instances/guards/require-org-role.guard';
 import {ModAiService} from './mod-ai.service';
-class EditModDto{@IsString()@MinLength(1)@MaxLength(128) modName!:string;@IsString()@MinLength(1)@MaxLength(512) path!:string;@IsString()@MaxLength(65536) content!:string;@IsString()@MinLength(2)@MaxLength(4000) instruction!:string;}
+class EditModDto{@IsString()@MinLength(1)@MaxLength(128) modName!:string;@IsString()@MinLength(1)@MaxLength(512) path!:string;@IsString()@MaxLength(262144) content!:string;@IsString()@MinLength(2)@MaxLength(4000) instruction!:string;}
 @Controller('api/orgs/:orgId/mod-ai')
 @UseGuards(JwtAuthGuard,OrgMemberGuard,RequireOrgRoleGuard)
 @RequireOrgRoles('admin','operator')

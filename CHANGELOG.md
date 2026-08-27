@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.0.14] - 2026-08-27
+
+### Added
+
+- Added server-aware navigation and persisted server selection across operational pages, so multi-server operators can explicitly target the intended 7DTD instance.
+- Added managed stable-build updates (`SERVER_UPDATE`) for 7DTD. Mastermind checks Steam, performs a safe save/stop/update/start sequence when required, and can check for a stable build before the host starts the server.
+- Added configurable Mastermind-owned Stability Safe Restart policy: enable/disable, 4–64 GiB RAM threshold, and 30-minute to 24-hour cooldown. The VM watcher reports memory to Mastermind; it no longer directly restarts 7DTD.
+- Added one-time scheduled-reboot suppression. A successful stability restart skips the nearest automatic reboot, and operators can use **Skip next auto reboot** from the server page.
+- Added level-based automation triggers for land-claim rewards and item grants, including safe `grantitems` handling and donated land-claim reward support.
+- Added tracked player vehicles with staff return controls and player-portal visibility where permitted.
+- Added Mod-page search/filtering and expanded Mod Config access to safe runtime `{Mod}_Config` files such as `ServerTools_Config`.
+
+### Changed
+
+- ServerTools-compatible mod configuration and player/save handling were hardened for current 7DTD builds.
+- README and release context now describe the current multi-server, stability, update, automation, and player features.
+
+### Security
+
+- Stability decisions remain authenticated and server-bound. Only Mastermind queues restart jobs, preserving countdown/save/backup/Blood Moon checks, cooldowns, and job history.
+- Automatic reboot suppression applies only to the nearest enabled restart schedule for the same server and clears after that occurrence.
+
 ## [0.0.12] - 2026-08-18
 
 - Added the Steam-aware player portal, live map layers, player profiles, map history/trails, claims, inventory/stat displays, and supporter/shop flows.
@@ -33,6 +55,7 @@ Post-0.0.11 portal/shop/Allocs/PrismaCore work shipped in `0.0.12` (2026-08-18).
 - Live-map client keeps player-track hooks above early returns (fixes a React hooks crash).
 - Agent item catalog scans vanilla/mod `items.xml` and `blocks.xml` plus ItemIcons; shop open can force a fresh catalog load.
 - Mod config writes use direct writable-file fallbacks and safer replacement; pending-restart markers remain on the live agent.
+- Mods Config editor now lists runtime files ServerTools writes into `Mods/ServerTools_Config` (CommandList, Phrases, Motd, and the rest), not only files named config/settings inside the dll folder. Editor limit is 256 KiB.
 
 ### Security
 

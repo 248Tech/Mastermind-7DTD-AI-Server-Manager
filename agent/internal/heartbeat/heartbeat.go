@@ -19,8 +19,9 @@ const gameProbeInterval = 15 * time.Second
 // The control-plane contract is host-level today, so callers must not aggregate
 // multiple server instances into this value.
 type GameProbe struct {
-	Address string
-	Timeout time.Duration
+	Address      string
+	Timeout      time.Duration
+	CloseCommand string
 }
 
 // Run runs the heartbeat loop every interval until ctx is cancelled.
@@ -102,6 +103,24 @@ func probeEndpoint(ctx context.Context, probe GameProbe) (bool, float64) {
 	conn, err := dialer.DialContext(ctx, "tcp", probe.Address)
 	latency := float64(time.Since(started).Microseconds()) / 1000
 	if conn != nil {
+		if probe.CloseCommand != "" {
+			// 7DTD's Telnet server writes a greeting as soon as it accepts a
+			// connection.  Closing a bare TCP probe at that point resets the
+			// socket and makes the game log an IOException.  End the console
+			// session explicitly instead.
+			_ = conn.SetDeadline(time.Now().Add(timeout))
+			buf := make([]byte, 256)
+			_, _ = conn.Read(buf)
+			_, _ = conn.Write([]byte(probe.CloseCommand + "\n"))
+			// Drain the server's remaining banner and wait for its clean EOF.
+			// Closing with unread bytes would send an RST and merely turn the
+			// health check back into a noisy server error.
+			for {
+				if _, readErr := conn.Read(buf); readErr != nil {
+					break
+				}
+			}
+		}
 		_ = conn.Close()
 	}
 	return err == nil, latency

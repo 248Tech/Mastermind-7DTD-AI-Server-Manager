@@ -63,6 +63,11 @@ export default function SettingsPage() {
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const [avoidBloodMoonRestart, setAvoidBloodMoonRestart] = useState(false);
+  const [stabilityRestartEnabled, setStabilityRestartEnabled] = useState(true);
+  const [stabilityRestartMemoryGiB, setStabilityRestartMemoryGiB] = useState(12);
+  const [stabilityRestartCooldownMinutes, setStabilityRestartCooldownMinutes] = useState(240);
+  const [stabilityRestartSaving, setStabilityRestartSaving] = useState(false);
+  const [stabilityRestartMessage, setStabilityRestartMessage] = useState('');
   const [maintenancePassword, setMaintenancePassword] = useState('');
   const [maintenancePasswordConfigured, setMaintenancePasswordConfigured] = useState(false);
   const [maintenanceBusy, setMaintenanceBusy] = useState(false);
@@ -110,7 +115,7 @@ JOB_TIMEOUT_SECONDS=600`;
       api.get<User>('/api/auth/me'),
       api.get<Org[]>('/api/orgs').then(orgs => orgs.find(o => o.id === orgId) || null).catch(() => null),
     ])
-      .then(([u, o]) => { setUser(u); setOrg(o); setWebhookUrl(o?.discordWebhookUrl||''); setAvoidBloodMoonRestart(Boolean(o?.avoidBloodMoonRestart));setMaintenancePasswordConfigured(Boolean(o?.maintenancePasswordConfigured));setOpenaiConfigured(Boolean(o?.openaiConfigured));setOpenaiModel(o?.openaiModel||'gpt-5.3-codex');setModAiProvider(o?.modAiProvider||'codex');setKimiConfigured(Boolean(o?.kimiConfigured));setKimiModel(o?.kimiModel||'kimi-for-coding');setCloudflareConfigured(Boolean(o?.cloudflareConfigured));setDigitalOceanConfigured(Boolean(o?.digitalOceanConfigured));setMailgunConfigured(Boolean(o?.mailgunConfigured));setMailgunDomain(o?.mailgunDomain||'');setMailgunFrom(o?.mailgunFromEmail||'');setMailgunRegion(o?.mailgunRegion||'us');setStripeConfigured(Boolean(o?.stripeConfigured));setStripeWebhookConfigured(Boolean(o?.stripeWebhookConfigured));setStripeWebhookUrl(o?.stripeWebhookUrl||''); setLoading(false); })
+      .then(([u, o]) => { setUser(u); setOrg(o); setWebhookUrl(o?.discordWebhookUrl||''); setAvoidBloodMoonRestart(Boolean(o?.avoidBloodMoonRestart));setStabilityRestartEnabled(o?.stabilityRestartEnabled!==false);setStabilityRestartMemoryGiB(o?.stabilityRestartMemoryGiB||12);setStabilityRestartCooldownMinutes(o?.stabilityRestartCooldownMinutes||240);setMaintenancePasswordConfigured(Boolean(o?.maintenancePasswordConfigured));setOpenaiConfigured(Boolean(o?.openaiConfigured));setOpenaiModel(o?.openaiModel||'gpt-5.3-codex');setModAiProvider(o?.modAiProvider||'codex');setKimiConfigured(Boolean(o?.kimiConfigured));setKimiModel(o?.kimiModel||'kimi-for-coding');setCloudflareConfigured(Boolean(o?.cloudflareConfigured));setDigitalOceanConfigured(Boolean(o?.digitalOceanConfigured));setMailgunConfigured(Boolean(o?.mailgunConfigured));setMailgunDomain(o?.mailgunDomain||'');setMailgunFrom(o?.mailgunFromEmail||'');setMailgunRegion(o?.mailgunRegion||'us');setStripeConfigured(Boolean(o?.stripeConfigured));setStripeWebhookConfigured(Boolean(o?.stripeWebhookConfigured));setStripeWebhookUrl(o?.stripeWebhookUrl||''); setLoading(false); })
       .catch((err) => { setError(err.message); setLoading(false); });
   }, [orgId]);
 
@@ -151,6 +156,16 @@ JOB_TIMEOUT_SECONDS=600`;
     } catch (err) {
       setRestartGuardMessage(err instanceof Error ? err.message : 'Failed to save restart protection');
     } finally { setRestartGuardSaving(false); }
+  }
+  async function saveStabilityRestart(e:React.FormEvent) {
+    e.preventDefault(); if (!orgId) return;
+    setStabilityRestartSaving(true); setStabilityRestartMessage('');
+    try {
+      const saved=await api.patch<{stabilityRestartEnabled:boolean;stabilityRestartMemoryGiB:number;stabilityRestartCooldownMinutes:number}>(`/api/orgs/${orgId}`,{stabilityRestartEnabled,stabilityRestartMemoryGiB,stabilityRestartCooldownMinutes});
+      setStabilityRestartEnabled(saved.stabilityRestartEnabled);setStabilityRestartMemoryGiB(saved.stabilityRestartMemoryGiB);setStabilityRestartCooldownMinutes(saved.stabilityRestartCooldownMinutes);
+      setStabilityRestartMessage(saved.stabilityRestartEnabled?'Stability Safe Restart policy saved.':'Stability Safe Restart disabled.');
+    } catch (err) { setStabilityRestartMessage(err instanceof Error?err.message:'Could not save stability restart policy'); }
+    finally { setStabilityRestartSaving(false); }
   }
   async function saveOpenAi(e:React.FormEvent){e.preventDefault();if(!orgId)return;setOpenaiBusy(true);setOpenaiMessage('');try{const result=await api.post<{configured:boolean;model:string}>(`/api/orgs/${orgId}/integrations/openai`,{model:openaiModel,...(openaiKey.trim()?{apiKey:openaiKey.trim()}:{})});setOpenaiConfigured(result.configured);setOpenaiModel(result.model);setOpenaiKey('');setOpenaiMessage('OpenAI settings saved. API key encrypted and hidden.');}catch(error){setOpenaiMessage(error instanceof Error?error.message:'Could not save OpenAI settings');}finally{setOpenaiBusy(false);}}
   async function testOpenAi(){if(!orgId)return;setOpenaiBusy(true);setOpenaiMessage('Testing API key and model access…');try{const result=await api.post<{ok:boolean;model?:string;error?:string;latencyMs?:number}>(`/api/orgs/${orgId}/integrations/openai/test`,{});setOpenaiMessage(result.ok?`Connected. ${result.model} is accessible${result.latencyMs?` (${result.latencyMs} ms)`:''}.`:result.error||'Connection failed.');}catch(error){setOpenaiMessage(error instanceof Error?error.message:'Connection failed');}finally{setOpenaiBusy(false);}}
@@ -226,6 +241,25 @@ JOB_TIMEOUT_SECONDS=600`;
           Do not restart during Blood Moon days <strong style={{color:avoidBloodMoonRestart?'#4ade80':'#64748b'}}>({avoidBloodMoonRestart?'Enabled':'Disabled'})</strong>
         </label>
         {restartGuardMessage&&<p style={{color:restartGuardMessage.includes('enabled')||restartGuardMessage.includes('disabled')?'#4ade80':'#f87171',fontSize:'.8rem',marginBottom:0}}>{restartGuardMessage}</p>}
+      </div>
+
+      <div style={card}>
+        <h2 style={{ margin: '0 0 0.375rem', fontSize: '1rem', fontWeight: 600, color: '#f1f5f9' }}>7DTD Stability Safe Restart</h2>
+        <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748b' }}>
+          The VM reports memory use to Mastermind each minute. When the limit is reached, Mastermind queues a normal Safe Restart with warning, save, backup, Blood Moon protection, and job history. This policy applies to the organisation&apos;s 7DTD servers.
+        </p>
+        <form onSubmit={saveStabilityRestart} style={{display:'grid',gap:'.8rem',maxWidth:560}}>
+          <label style={{display:'flex',alignItems:'center',gap:10,color:'#e2e8f0',fontSize:'.875rem',cursor:stabilityRestartSaving?'wait':'pointer'}}>
+            <input type="checkbox" checked={stabilityRestartEnabled} disabled={stabilityRestartSaving} onChange={e=>setStabilityRestartEnabled(e.target.checked)} />
+            Enable Stability Safe Restart
+          </label>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:10}}>
+            <label style={labelStyle}>Restart at RAM use (GiB)<input type="number" min={4} max={64} value={stabilityRestartMemoryGiB} disabled={stabilityRestartSaving||!stabilityRestartEnabled} onChange={e=>setStabilityRestartMemoryGiB(Math.max(4,Math.min(64,Number(e.target.value)||4)))} style={inputStyle}/></label>
+            <label style={labelStyle}>Minimum time between restarts<select value={stabilityRestartCooldownMinutes} disabled={stabilityRestartSaving||!stabilityRestartEnabled} onChange={e=>setStabilityRestartCooldownMinutes(Number(e.target.value))} style={inputStyle}><option value={30}>30 minutes</option><option value={60}>1 hour</option><option value={120}>2 hours</option><option value={240}>4 hours</option><option value={480}>8 hours</option><option value={720}>12 hours</option><option value={1440}>24 hours</option></select></label>
+          </div>
+          <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}><button disabled={stabilityRestartSaving} style={btnPrimary}>{stabilityRestartSaving?'Saving…':'Save stability policy'}</button><span style={{fontSize:'.78rem',color:stabilityRestartEnabled?'#4ade80':'#94a3b8'}}>{stabilityRestartEnabled?`Enabled at ${stabilityRestartMemoryGiB} GiB`:'Disabled'}</span></div>
+          {stabilityRestartMessage&&<p style={{margin:0,color:/saved|disabled/i.test(stabilityRestartMessage)?'#4ade80':'#f87171',fontSize:'.8rem'}}>{stabilityRestartMessage}</p>}
+        </form>
       </div>
 
       <div style={card}>

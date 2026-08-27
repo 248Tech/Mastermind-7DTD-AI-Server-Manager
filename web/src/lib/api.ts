@@ -90,12 +90,36 @@ export const api = {
 export interface AuthResponse { access_token: string; userId: string; orgId: string; }
 export interface User { id: string; email: string; name?: string; }
 export interface OrgAccount { id:string; email:string; name:string|null; role:'admin'|'operator'|'viewer'; createdAt:string; approvedAt:string|null; emailVerifiedAt:string|null; signInEnabled:boolean; steamLinked?:boolean; steamIdLast4?:string|null; }
-export interface Org { id: string; name: string; slug: string; discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string; avoidBloodMoonRestart?: boolean; openaiConfigured?:boolean; openaiModel?:string; modAiProvider?:'codex'|'kimi'; kimiConfigured?:boolean; kimiModel?:string; cloudflareConfigured?:boolean; digitalOceanConfigured?:boolean; mailgunConfigured?:boolean; mailgunDomain?:string; mailgunFromEmail?:string; mailgunRegion?:'us'|'eu'; stripeConfigured?:boolean; stripeWebhookConfigured?:boolean; stripeWebhookUrl?:string; maintenancePasswordConfigured?:boolean; }
+export interface Org { id: string; name: string; slug: string; discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string; avoidBloodMoonRestart?: boolean; stabilityRestartEnabled?:boolean; stabilityRestartMemoryGiB?:number; stabilityRestartCooldownMinutes?:number; openaiConfigured?:boolean; openaiModel?:string; modAiProvider?:'codex'|'kimi'; kimiConfigured?:boolean; kimiModel?:string; cloudflareConfigured?:boolean; digitalOceanConfigured?:boolean; mailgunConfigured?:boolean; mailgunDomain?:string; mailgunFromEmail?:string; mailgunRegion?:'us'|'eu'; stripeConfigured?:boolean; stripeWebhookConfigured?:boolean; stripeWebhookUrl?:string; maintenancePasswordConfigured?:boolean; }
 export interface Host { id: string; orgId: string; name: string; status: string | null; lastHeartbeatAt: string | null; lastMetrics: Record<string,unknown> | null; agentVersion: string | null; createdAt: string; serverInstances: { id: string; name: string }[]; }
 export interface ServerInstance { id: string; orgId: string; hostId: string; name: string; gameType: string; capabilities: string[]; installPath: string | null; startCommand: string | null; telnetHost: string | null; telnetPort: number | null; maintenanceMode?: boolean; createdAt: string; }
 export interface Job { id: string; orgId: string; serverInstanceId: string | null; serverName?: string; type: string; payload: unknown; createdAt: string; startedBy?: { id:string; name:string; email:string } | null; latestRun: { id: string; status: string; startedAt: string | null; finishedAt: string | null; result: unknown } | null; }
-export interface Schedule { id: string; orgId: string; serverInstanceId: string; name: string; cronExpression: string; jobType: string; payload?: Record<string,unknown>; enabled: boolean; nextRunAt: string | null; lastRunAt: string | null; lastRunStatus: string | null; }
+export interface Schedule { id: string; orgId: string; serverInstanceId: string; name: string; cronExpression: string; jobType: string; payload?: Record<string,unknown>; enabled: boolean; nextRunAt: string | null; lastRunAt: string | null; lastRunStatus: string | null; skipNextRun?: boolean; skipNextRunReason?: string | null; }
 export interface AlertRule { id: string; orgId: string; name: string; condition: unknown; channel: unknown; enabled: boolean; createdAt: string; }
+export interface TriggerRecord {
+  id: string;
+  orgId: string;
+  serverInstanceId: string;
+  name: string;
+  enabled: boolean;
+  eventType: string;
+  eventConfig: { level?: number; comparison?: string };
+  actionType: string;
+  actionConfig: { claimCount?: number; notifyPlayer?: boolean; message?: string; items?: { name: string; quantity: number; quality: number | null }[] };
+  applyToExisting: boolean;
+  lastFiredAt: string | null;
+  fireCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface TriggerFireRecord {
+  id: string;
+  eventKey: string;
+  status: string;
+  jobId: string | null;
+  createdAt: string;
+  player: { id: string; name: string; steamId: string | null; eosId: string | null; level: number };
+}
 export interface PairingToken { id: string; token: string; expiresAt: string; expiresInSec: number; }
 export interface ServerLog { id: string; serverInstanceId: string; content: string; createdAt: string; }
 export interface LogKeywordRule { id: string; name: string; enabled: boolean; condition: { keyword: string; caseSensitive: boolean; serverInstanceId: string }; createdAt: string; }
@@ -108,6 +132,7 @@ export interface PlayerRecord { id:string; serverInstanceId:string; identityKey:
 export interface ServerAdminRecord { platform?:string; userId:string; name?:string; permissionLevel:number; }
 export interface ModRecord { folder:string; name:string; author?:string; website?:string; version?:string; activatedAt:string; pendingRestart?:boolean; configFiles?:string[]; recommendedBy?:string; recommendedAt?:string; originalName?:string; description?:string; }
 export interface SaveRecord { id:string; createdAt:string; gameDay:number; kind:'full-world'|'region-healer'; sizeBytes:number; }
-export interface ShopItem { id:string; name:string; description:string; priceCents:number; active:boolean; hasImage:boolean; sortOrder:number; createdAt:string; grantItemName?:string|null; grantQuantity?:number; grantQuality?:number|null; grantItems?:{name:string;quantity:number;quality:number|null}[]; chatColor?:string|null; }
+export interface ShopItem { id:string; name:string; description:string; priceCents:number; active:boolean; hasImage:boolean; sortOrder:number; createdAt:string; grantItemName?:string|null; grantQuantity?:number; grantQuality?:number|null; grantItems?:{name:string;quantity:number;quality:number|null}[]; chatColor?:string|null; bonusLandClaims?:number; }
+export interface TriggerCatalog { events:{type:string;label:string}[]; actions:{type:string;label:string}[]; }
 export interface DonationLine { id:string; shopItemId:string|null; itemName:string; amountCents:number; quantity:number; grantStatus?:string; chatColorStatus?:string; grantError?:string|null; grantItems?:{name:string;quantity:number;quality:number|null;status?:string}[]; }
 export interface DonationRecord { id:string; playerName:string; steamId:string; amountCents:number; refundedCents:number; status:string; completedAt:string|null; createdAt:string; lines:DonationLine[]; }

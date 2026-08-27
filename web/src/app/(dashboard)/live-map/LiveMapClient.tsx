@@ -16,6 +16,7 @@ import {
 import L from "leaflet";
 import { api, PlayerRecord, ServerInstance } from "../../../lib/api";
 import { getStoredOrgId } from "../../../lib/auth";
+import { getStoredServerId, useServerSelection } from "../../../lib/server-selection";
 type Entity = {
   id: string | number;
   name: string;
@@ -619,11 +620,13 @@ export default function LiveMapClient() {
     [showAllPois, setShowAllPois] = useState(false),
     [advClaimFilter, setAdvClaimFilter] = useState("all"),
     [logoutMarkers, setLogoutMarkers] = useState<Array<{ id: string; name: string; x: number; y: number | null; z: number; lastLogoutAt: string | null }>>([]),
+    [servers, setServers] = useState<ServerInstance[]>([]),
     [server, setServer] = useState<ServerInstance | null>(null),
     [visitBusy, setVisitBusy] = useState(false),
     [visitNotice, setVisitNotice] = useState(""),
     [visitStatus, setVisitStatus] = useState<VisitMapStatus>({ state: "idle" }),
     [visitSection, setVisitSection] = useState(0);
+  const selectServer = useServerSelection(servers, server?.id || "", (serverId) => setServer(servers.find((candidate) => candidate.id === serverId) ?? null));
   const prismaConfiguredRef = useRef(false);
   const prismaClaimsActiveRef = useRef(false);
   const filtersPanelRef = useRef<HTMLDivElement>(null);
@@ -699,7 +702,8 @@ export default function LiveMapClient() {
     if (!ready) return;
     let active = true;
     const get = async (path: string) => {
-      const r = await fetch(`/api/live-map/${path}`, { cache: "no-store" });
+      const separator = path.includes("?") ? "&" : "?";
+      const r = await fetch(`/api/live-map/${path}${separator}serverInstanceId=${encodeURIComponent(server?.id || "")}`, { cache: "no-store" });
       const body = await r.json();
       if (!r.ok)
         throw new Error(body.message || `Map API returned ${r.status}`);
@@ -774,14 +778,16 @@ export default function LiveMapClient() {
       active = false;
       clearInterval(timer);
     };
-  }, [ready]);
+  }, [ready, server?.id]);
   useEffect(() => {
     if (!ready || !orgId) return;
     api
       .get<ServerInstance[]>(`/api/orgs/${orgId}/server-instances`)
-      .then((servers) =>
-        setServer(servers.find((candidate) => candidate.gameType === "7dtd") ?? null),
-      )
+      .then((rows) => {
+        const gameServers = rows.filter((candidate) => candidate.gameType === "7dtd");
+        setServers(gameServers);
+        setServer(gameServers.find((candidate) => candidate.id === getStoredServerId()) ?? gameServers[0] ?? null);
+      })
       .catch(() => setVisitNotice("Could not find the registered 7DTD server."));
   }, [ready, orgId]);
   useEffect(() => {
@@ -932,7 +938,7 @@ export default function LiveMapClient() {
     await sendVisitCommand("visitmap stop", "Stop command delivered; verifying server progress…");
     window.setTimeout(async () => {
       try {
-        const response = await fetch("/api/live-map/visitmap-status", { cache: "no-store" });
+        const response = await fetch(`/api/live-map/visitmap-status?serverInstanceId=${encodeURIComponent(server?.id || "")}`, { cache: "no-store" });
         const body = await response.json();
         if (!response.ok) throw new Error(body.message || "Status unavailable");
         const status = (body.data ?? body) as VisitMapStatus;
@@ -1252,6 +1258,10 @@ export default function LiveMapClient() {
             {!feedError && <span className="map-stat" role="status" style={{ color: lastLiveUpdate ? "#4ade80" : "#fbbf24" }}>{formatAge(lastLiveUpdate)}</span>}
           </div>
         </div>
+        <select aria-label="Server" value={server?.id || ""} onChange={(event) => selectServer(event.target.value)} disabled={!servers.length} style={{ background: "#111118", color: "#e2e8f0", border: "1px solid #475569", borderRadius: 6, padding: "7px 9px", minWidth: 170 }}>
+          <option value="">Select server</option>
+          {servers.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
+        </select>
         <details className="map-maintenance">
           <summary>{gameTime || "Map maintenance"} · {visitRunning ? `generation ${visitStatus.state}` : "generation idle"}</summary>
           <div>
@@ -1516,7 +1526,7 @@ export default function LiveMapClient() {
           style={{ height: "100%", width: "100%", background: "#111827" }}
         >
           <TileLayer
-            url="/api/live-map/map/{z}/{x}/{y}.png"
+            url={`/api/live-map/map/{z}/{x}/{y}.png?serverInstanceId=${encodeURIComponent(server?.id || "")}`}
             tileSize={128}
             minZoom={-1}
             minNativeZoom={0}

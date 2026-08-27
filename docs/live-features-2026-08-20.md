@@ -31,6 +31,7 @@ Git may still lag a dirty production tree. Prefer committing hygiene (especially
 ## Mods / agent
 
 - Mod pending-restart markers and writable-file mod-config write fallbacks are on the live agent.
+- Mods Config also lists `{Mod}_Config` siblings such as `ServerTools_Config` (xml/txt/json/ini, not Logs or binaries). Editor limit is 256 KiB.
 - Deploy/restart `mastermind-agent` only when agent binaries change; do **not** restart `7dtd` for app-only releases.
 
 ## What is not a deploy gap

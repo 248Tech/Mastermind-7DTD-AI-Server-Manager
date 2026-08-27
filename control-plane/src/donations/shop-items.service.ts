@@ -34,6 +34,7 @@ export type ShopItemView = {
   grantQuality: number | null;
   grantItems: GrantItemSpec[];
   chatColor: string | null;
+  bonusLandClaims: number;
 };
 
 @Injectable()
@@ -112,7 +113,7 @@ export class ShopItemsService {
   async create(
     orgId: string,
     userId: string,
-    input: { name?: unknown; description?: unknown; price?: unknown; active?: unknown; grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; grantItems?: unknown; chatColor?: unknown },
+    input: { name?: unknown; description?: unknown; price?: unknown; active?: unknown; grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; grantItems?: unknown; chatColor?: unknown; bonusLandClaims?: unknown },
     file?: { buffer?: Buffer },
   ) {
     const count = await this.prisma.shopItem.count({ where: { orgId } });
@@ -145,7 +146,7 @@ export class ShopItemsService {
     orgId: string,
     userId: string,
     itemId: string,
-    input: { name?: unknown; description?: unknown; price?: unknown; active?: unknown; grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; grantItems?: unknown; chatColor?: unknown },
+    input: { name?: unknown; description?: unknown; price?: unknown; active?: unknown; grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; grantItems?: unknown; chatColor?: unknown; bonusLandClaims?: unknown },
     file?: { buffer?: Buffer },
   ) {
     const existing = await this.prisma.shopItem.findFirst({ where: { id: itemId, orgId } });
@@ -284,9 +285,16 @@ async function requireProcessedImage(file?: { buffer?: Buffer }) {
   return normalizeShopImage(file.buffer);
 }
 
+function parseBonusLandClaims(raw: unknown, fallback = 0): number {
+  if (raw == null || raw === '') return fallback;
+  const value = typeof raw === 'number' ? raw : Number(String(raw).trim());
+  if (!Number.isInteger(value) || value < 0 || value > 50) throw new ConflictException('Extra land claims must be a whole number from 0 to 50');
+  return value;
+}
+
 function parseShopGrantFields(
-  input: { grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; grantItems?: unknown; chatColor?: unknown },
-  existing?: { grantItemName: string | null; grantQuantity: number; grantQuality: number | null; grantItems?: unknown; chatColor: string | null },
+  input: { grantItemName?: unknown; grantQuantity?: unknown; grantQuality?: unknown; grantItems?: unknown; chatColor?: unknown; bonusLandClaims?: unknown },
+  existing?: { grantItemName: string | null; grantQuantity: number; grantQuality: number | null; grantItems?: unknown; chatColor: string | null; bonusLandClaims?: number },
 ) {
   let grantItems: GrantItemSpec[] | false = false;
   if (input.grantItems != null && input.grantItems !== '') {
@@ -317,6 +325,7 @@ function parseShopGrantFields(
     grantQuantity: first?.quantity ?? 1,
     grantQuality: first?.quality ?? null,
     chatColor,
+    bonusLandClaims: parseBonusLandClaims(input.bonusLandClaims, existing?.bonusLandClaims ?? 0),
   };
 }
 
@@ -334,6 +343,7 @@ function toView(item: {
   grantQuality?: number | null;
   grantItems?: unknown;
   chatColor?: string | null;
+  bonusLandClaims?: number;
 }): ShopItemView {
   const grantItems = viewGrantItems(item);
   const first = grantItems[0];
@@ -351,6 +361,7 @@ function toView(item: {
     grantQuality: first?.quality ?? null,
     grantItems,
     chatColor: item.chatColor ?? null,
+    bonusLandClaims: item.bonusLandClaims ?? 0,
   };
 }
 

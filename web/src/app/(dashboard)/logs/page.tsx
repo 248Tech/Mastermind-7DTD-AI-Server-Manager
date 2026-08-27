@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, Job, LogKeywordMatch, LogKeywordRule, ServerInstance, ServerLog } from '../../../lib/api';
 import { getStoredOrgId } from '../../../lib/auth';
+import { useServerSelection } from '../../../lib/server-selection';
 
 export default function LogsPage() {
   const orgId = getStoredOrgId();
@@ -19,6 +20,7 @@ export default function LogsPage() {
   const [command, setCommand] = useState('');
   const [commandBusy, setCommandBusy] = useState(false);
   const [consoleEntries, setConsoleEntries] = useState<{id:string;command:string;output:string;failed:boolean}[]>([]);
+  const selectServer=useServerSelection(servers,serverId,setServerId);
   const bottom = useRef<HTMLDivElement>(null);
   const latestLogId = useRef('');
   const loadingLogs = useRef(false);
@@ -26,9 +28,7 @@ export default function LogsPage() {
 
   useEffect(() => {
     if (!orgId) return;
-    api.get<ServerInstance[]>(`/api/orgs/${orgId}/server-instances`).then(s => {
-      setServers(s); if (s[0]) setServerId(s[0].id);
-    }).catch(e => setError(e.message));
+    api.get<ServerInstance[]>(`/api/orgs/${orgId}/server-instances`).then(rows=>setServers(rows.filter(row=>row.gameType==='7dtd'))).catch(e => setError(e.message));
     api.get<{logRetentionDays:number}>(`/api/orgs/${orgId}/logs/settings`)
       .then(s => setRetention(s.logRetentionDays)).catch(e => setError(e.message));
   }, [orgId]);
@@ -136,7 +136,7 @@ export default function LogsPage() {
         }} title="Delete recorded logs older than this period" style={{background:'#111118',color:'#e2e8f0',border:'1px solid #252532',borderRadius:6,padding:'0.5rem'}}>
           <option value={1}>1 day</option><option value={7}>1 week</option><option value={30}>1 month</option>
         </select>
-        <select value={serverId} onChange={e=>setServerId(e.target.value)} style={{background:'#111118',color:'#e2e8f0',border:'1px solid #252532',borderRadius:6,padding:'0.5rem'}}>{servers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
+        <select aria-label="Server" value={serverId} onChange={e=>selectServer(e.target.value)} style={{background:'#111118',color:'#e2e8f0',border:'1px solid #252532',borderRadius:6,padding:'0.5rem'}}>{servers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
         <button onClick={toggleAutoScroll} title="Keep the log view pinned to the newest entries" style={{background:autoScroll?'#15803d':'#111118',color:'#e2e8f0',border:'1px solid #252532',borderRadius:6,padding:'0.5rem 0.8rem'}}>{autoScroll?'Auto-scroll: On':'Auto-scroll: Off'}</button>
         <button onClick={()=>setPaused(v=>!v)} style={{background:paused?'#6366f1':'#111118',color:'#e2e8f0',border:'1px solid #252532',borderRadius:6,padding:'0.5rem 0.8rem'}}>{paused?'Resume':'Pause'}</button>
       </div>

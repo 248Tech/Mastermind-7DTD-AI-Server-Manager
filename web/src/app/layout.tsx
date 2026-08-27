@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { isLoggedIn, clearAuth, getStoredOrgId } from '../lib/auth';
 import { api, ApiError } from '../lib/api';
+import { getStoredServerId, setStoredServerId } from '../lib/server-selection';
 
 const NAV_GROUPS = [
   { label: 'Overview', items: [
@@ -27,6 +28,7 @@ const NAV_GROUPS = [
     { href: '/jobs', label: 'Jobs', icon: '⚡', title: 'Send one-off commands to your servers' },
     { href: '/schedules', label: 'Schedules', icon: '◷', title: 'Run jobs automatically on a schedule' },
     { href: '/alerts', label: 'Alerts', icon: '◎', title: 'Get notified via Discord when servers go offline' },
+    { href: '/triggers', label: 'Triggers', icon: '✦', title: 'Run actions when in-game events happen, such as a player reaching a level' },
   ]},
   { label: 'System', items: [
     { href: '/hosts', label: 'Hosts', icon: '⬡', title: 'Machines running the agent and game servers' },
@@ -44,6 +46,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const pathname = usePathname();
   const [ready, setReady] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [servers, setServers] = useState<{id:string;name:string;gameType:string}[]>([]);
+  const [serverId, setServerId] = useState('');
 
   useEffect(() => {
     const applyTheme=()=>{
@@ -104,6 +108,27 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     return () => window.removeEventListener('mastermind-auth-invalid', handleInvalidSession);
   }, [router]);
   useEffect(() => { setMenuOpen(false); }, [pathname]);
+  useEffect(() => {
+    if (!ready || isPublicPath(pathname)) return;
+    let active=true;
+    const orgId=getStoredOrgId();
+    if (!orgId) return;
+    const loadServers=()=>api.get<{id:string;name:string;gameType:string}[]>(`/api/orgs/${orgId}/server-instances`).then(rows=>{
+      if(!active)return;
+      const gameServers=rows.filter(row=>row.gameType?.toLowerCase()==='7dtd');
+      setServers(gameServers);
+      const selected=gameServers.find(row=>row.id===getStoredServerId())||gameServers[0];
+      if(selected){setServerId(selected.id);if(selected.id!==getStoredServerId())setStoredServerId(selected.id);}
+      else setServerId('');
+    }).catch(()=>{/* Keep the last good server list during a temporary API failure. */});
+    void loadServers();
+    const refresh=()=>void loadServers();
+    const timer=window.setInterval(refresh,30000);
+    window.addEventListener('focus',refresh);
+    const onChange=(event:Event)=>setServerId((event as CustomEvent<string>).detail);
+    window.addEventListener('mastermind-server-change',onChange);
+    return()=>{active=false;window.clearInterval(timer);window.removeEventListener('focus',refresh);window.removeEventListener('mastermind-server-change',onChange);};
+  }, [ready, pathname]);
 
   const isPublic = isPublicPath(pathname);
 
@@ -144,6 +169,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <div style={{ fontSize: '0.7rem', color: '#64748b', lineHeight: 1.2 }}>7DTD Manager</div>
                 </div>
               </div>
+              <label style={{display:'block',marginTop:12,color:'#64748b',fontSize:'.68rem',letterSpacing:'.05em',textTransform:'uppercase'}}>Active server<select aria-label="Active server" value={serverId} onChange={event=>{setServerId(event.target.value);setStoredServerId(event.target.value);}} disabled={!servers.length} style={{display:'block',width:'100%',marginTop:5,background:'#111118',color:'#e2e8f0',border:'1px solid #252532',borderRadius:6,padding:'.45rem',fontSize:'.78rem'}}><option value="">{servers.length?'Select server':'No 7DTD servers'}</option>{servers.map(server=><option key={server.id} value={server.id}>{server.name}</option>)}</select></label>
             </div>
 
             {/* Nav items */}

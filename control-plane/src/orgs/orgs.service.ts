@@ -246,6 +246,9 @@ export class OrgsService {
       discordWebhookConfigured: Boolean(userOrg.org.discordWebhookUrl),
       frigateConfigured: Boolean(userOrg.org.frigateUrl),
       avoidBloodMoonRestart: userOrg.org.avoidBloodMoonRestart,
+      stabilityRestartEnabled: userOrg.org.stabilityRestartEnabled,
+      stabilityRestartMemoryGiB: userOrg.org.stabilityRestartMemoryGiB,
+      stabilityRestartCooldownMinutes: userOrg.org.stabilityRestartCooldownMinutes,
       openaiConfigured:Boolean(userOrg.org.openaiApiKeyEncrypted),openaiModel:userOrg.org.openaiModel,modAiProvider:userOrg.org.modAiProvider,kimiConfigured:Boolean(userOrg.org.kimiApiKeyEncrypted),kimiModel:userOrg.org.kimiModel,cloudflareConfigured:Boolean(userOrg.org.cloudflareApiTokenEncrypted),digitalOceanConfigured:Boolean(userOrg.org.digitalOceanApiTokenEncrypted),mailgunConfigured:Boolean(userOrg.org.mailgunApiKeyEncrypted&&userOrg.org.mailgunDomain&&userOrg.org.mailgunFromEmail),mailgunDomain:userOrg.org.mailgunDomain,mailgunFromEmail:userOrg.org.mailgunFromEmail,mailgunRegion:userOrg.org.mailgunRegion,stripeConfigured:Boolean(userOrg.org.stripeSecretKeyEncrypted),stripeWebhookConfigured:Boolean(userOrg.org.stripeWebhookSecretEncrypted),stripeWebhookUrl:publicStripeWebhookUrl(),maintenancePasswordConfigured:Boolean(userOrg.org.maintenancePasswordEncrypted),
       createdAt: userOrg.org.createdAt,
       updatedAt: userOrg.org.updatedAt,
@@ -277,6 +280,9 @@ export class OrgsService {
       discordWebhookConfigured: Boolean(m.org.discordWebhookUrl),
       frigateConfigured: Boolean(m.org.frigateUrl),
       avoidBloodMoonRestart: m.org.avoidBloodMoonRestart,
+      stabilityRestartEnabled: m.org.stabilityRestartEnabled,
+      stabilityRestartMemoryGiB: m.org.stabilityRestartMemoryGiB,
+      stabilityRestartCooldownMinutes: m.org.stabilityRestartCooldownMinutes,
       openaiConfigured:Boolean(m.org.openaiApiKeyEncrypted),openaiModel:m.org.openaiModel,modAiProvider:m.org.modAiProvider,kimiConfigured:Boolean(m.org.kimiApiKeyEncrypted),kimiModel:m.org.kimiModel,cloudflareConfigured:Boolean(m.org.cloudflareApiTokenEncrypted),digitalOceanConfigured:Boolean(m.org.digitalOceanApiTokenEncrypted),mailgunConfigured:Boolean(m.org.mailgunApiKeyEncrypted&&m.org.mailgunDomain&&m.org.mailgunFromEmail),mailgunDomain:m.org.mailgunDomain,mailgunFromEmail:m.org.mailgunFromEmail,mailgunRegion:m.org.mailgunRegion,stripeConfigured:Boolean(m.org.stripeSecretKeyEncrypted),stripeWebhookConfigured:Boolean(m.org.stripeWebhookSecretEncrypted),stripeWebhookUrl:publicStripeWebhookUrl(),maintenancePasswordConfigured:Boolean(m.org.maintenancePasswordEncrypted),
       createdAt: m.org.createdAt,
       updatedAt: m.org.updatedAt,
@@ -290,26 +296,29 @@ export class OrgsService {
   async updateOrg(
     orgId: string,
     userId: string,
-    updates: { discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string; avoidBloodMoonRestart?: boolean },
-  ): Promise<{ ok: true; avoidBloodMoonRestart: boolean }> {
+    updates: { discordWebhookUrl?: string; frigateUrl?: string; frigateApiKey?: string; frigateWebhookSecret?: string; avoidBloodMoonRestart?: boolean; stabilityRestartEnabled?: boolean; stabilityRestartMemoryGiB?: number; stabilityRestartCooldownMinutes?: number },
+  ): Promise<{ ok: true; avoidBloodMoonRestart: boolean; stabilityRestartEnabled: boolean; stabilityRestartMemoryGiB: number; stabilityRestartCooldownMinutes: number }> {
     const userOrg = await this.prisma.userOrg.findUnique({
       where: { userId_orgId: { userId, orgId } },
       include: { role: true },
     });
     if (!userOrg) throw new ForbiddenException('Not a member of this org');
-    if (updates.avoidBloodMoonRestart !== undefined && userOrg.role.name !== 'admin') {
+    if ((updates.avoidBloodMoonRestart !== undefined || updates.stabilityRestartEnabled !== undefined || updates.stabilityRestartMemoryGiB !== undefined || updates.stabilityRestartCooldownMinutes !== undefined) && userOrg.role.name !== 'admin') {
       throw new ForbiddenException('Only organization administrators may change restart protection');
     }
 
-    const data: Record<string, string | null | boolean> = {};
+    const data: Record<string, string | null | boolean | number> = {};
     if (updates.discordWebhookUrl !== undefined) data.discordWebhookUrl = updates.discordWebhookUrl || null;
     if (updates.frigateUrl !== undefined) data.frigateUrl = updates.frigateUrl || null;
     if (updates.frigateApiKey !== undefined) data.frigateApiKey = updates.frigateApiKey || null;
     if (updates.frigateWebhookSecret !== undefined) data.frigateWebhookSecret = updates.frigateWebhookSecret || null;
     if (updates.avoidBloodMoonRestart !== undefined) data.avoidBloodMoonRestart = updates.avoidBloodMoonRestart;
+    if (updates.stabilityRestartEnabled !== undefined) data.stabilityRestartEnabled = updates.stabilityRestartEnabled;
+    if (updates.stabilityRestartMemoryGiB !== undefined) data.stabilityRestartMemoryGiB = updates.stabilityRestartMemoryGiB;
+    if (updates.stabilityRestartCooldownMinutes !== undefined) data.stabilityRestartCooldownMinutes = updates.stabilityRestartCooldownMinutes;
 
     const org = await this.prisma.org.update({ where: { id: orgId }, data });
-    return { ok: true, avoidBloodMoonRestart: org.avoidBloodMoonRestart };
+    return { ok: true, avoidBloodMoonRestart: org.avoidBloodMoonRestart, stabilityRestartEnabled: org.stabilityRestartEnabled, stabilityRestartMemoryGiB: org.stabilityRestartMemoryGiB, stabilityRestartCooldownMinutes: org.stabilityRestartCooldownMinutes };
   }
 
   async testFrigateConnection(

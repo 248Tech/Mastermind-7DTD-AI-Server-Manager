@@ -84,6 +84,8 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 		return a.SaveStop(ctx, cfg, job.Payload)
 	case "SERVER_MAINTENANCE":
 		return a.SetMaintenance(ctx, cfg, job.Payload)
+	case "SERVER_UPDATE":
+		return a.Update(ctx, cfg)
 	case "SERVER_WIPE_SAVE":
 		if !getBool(job.Payload, "confirmed") {
 			return agent.JobResult{Status: "failed", Error: "save wipe requires explicit confirmation"}, nil
@@ -266,20 +268,12 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 		}
 		return agent.JobResult{Status: "success", Output: out}, nil
 	case "PLAYER_SET_DEATHS":
-		identifier := playerCommandIdentifier(job.Payload)
 		deaths := getInt(job.Payload, "deaths", -1)
-		command, err := setDeathsCommand(identifier, deaths)
+		out, command, err := a.setPlayerDeaths(ctx, cfg, job.Payload, deaths)
 		if err != nil {
-			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+			return agent.JobResult{Status: "failed", Error: err.Error(), Output: out}, nil
 		}
-		out, err := a.SendCommand(ctx, cfg, command)
-		if err != nil {
-			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
-		}
-		if consoleRejected(out) || strings.Contains(strings.ToLower(out), "player '") && strings.Contains(strings.ToLower(out), "not found") {
-			return agent.JobResult{Status: "failed", Error: "Could not set deaths. The player must be online, and ServerTools st-SetDeaths must be installed.", Output: out}, nil
-		}
-		return agent.JobResult{Status: "success", Output: out}, nil
+		return agent.JobResult{Status: "success", Output: out, Result: map[string]interface{}{"command": command, "deaths": deaths}}, nil
 	case "MOD_LIST":
 		mods, err := listMods(cfg, getString(job.Payload, "mods_path", ""))
 		if err != nil {
@@ -377,6 +371,18 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 		return agent.JobResult{Status: "success", Result: map[string]interface{}{"folder": folder, "path": path, "saved": true}}, nil
+	case "TRIGGER_LAND_CLAIM":
+		result, err := applyLandClaimReward(ctx, a, cfg, job.Payload)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: result}, nil
+	case "TRIGGER_GRANT_ITEMS":
+		result, err := applyGrantItemsReward(ctx, a, cfg, job.Payload)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: result}, nil
 	case "ITEM_CATALOG":
 		catalog, err := listItemCatalog(cfg)
 		if err != nil {
@@ -1403,8 +1409,13 @@ func listModsAt(root string) ([]modInfo, error) {
 	}
 	mods := make([]modInfo, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+		if strings.HasPrefix(entry.Name(), ".") {
 			continue
+		}
+		if !entry.IsDir() {
+			if info, err := os.Stat(filepath.Join(root, entry.Name())); err != nil || !info.IsDir() {
+				continue
+			}
 		}
 		info := modInfo{Folder: entry.Name(), Name: entry.Name()}
 		if entryInfo, infoErr := entry.Info(); infoErr == nil {
@@ -1422,23 +1433,35 @@ func listModsAt(root string) ([]modInfo, error) {
 			}
 			info.Version = values["version"]
 		}
-		info.ConfigFiles = findModConfigFiles(filepath.Join(root, entry.Name()))
+		info.ConfigFiles = findModConfigFiles(root, entry.Name())
 		mods = append(mods, info)
 	}
 	sort.Slice(mods, func(i, j int) bool { return strings.ToLower(mods[i].Name) < strings.ToLower(mods[j].Name) })
 	return mods, nil
 }
 
-const maxModConfigBytes = 64 * 1024
+const maxModConfigBytes = 256 * 1024
 
 var editableModConfigExtensions = map[string]bool{
 	".cfg": true, ".conf": true, ".ini": true, ".json": true,
 	".toml": true, ".txt": true, ".xml": true, ".yaml": true, ".yml": true,
 }
 
-func findModConfigFiles(modRoot string) []string {
+func findModConfigFiles(modsRoot, folder string) []string {
+	modRoot := filepath.Join(modsRoot, folder)
+	files := collectModConfigFiles(modRoot, folder)
+	sibling := filepath.Join(modsRoot, folder+"_Config")
+	if info, err := os.Lstat(sibling); err == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+		files = append(files, collectModConfigFiles(sibling, folder)...)
+	}
+	sort.Strings(files)
+	return uniqueStrings(files)
+}
+
+func collectModConfigFiles(scanRoot, folder string) []string {
+	modRoot := filepath.Join(filepath.Dir(scanRoot), folder)
 	files := make([]string, 0)
-	_ = filepath.Walk(modRoot, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(scanRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info == nil {
 			return nil
 		}
@@ -1449,13 +1472,14 @@ func findModConfigFiles(modRoot string) []string {
 			return nil
 		}
 		if info.IsDir() {
-			if path != modRoot && strings.HasPrefix(info.Name(), ".") {
+			name := strings.ToLower(info.Name())
+			if path != scanRoot && (strings.HasPrefix(info.Name(), ".") || name == "logs" || name == "webapi") {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		rel, relErr := filepath.Rel(modRoot, path)
-		if relErr != nil || !isEditableModConfig(rel) || info.Size() > maxModConfigBytes {
+		if relErr != nil || !isEditableModConfig(folder, rel) || info.Size() > maxModConfigBytes {
 			return nil
 		}
 		files = append(files, filepath.ToSlash(rel))
@@ -1464,23 +1488,50 @@ func findModConfigFiles(modRoot string) []string {
 		}
 		return nil
 	})
-	sort.Strings(files)
 	return files
 }
 
-func isEditableModConfig(relativePath string) bool {
-	clean := filepath.Clean(relativePath)
-	if clean == "." || filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func siblingConfigPrefix(folder string) string {
+	return "../" + folder + "_Config/"
+}
+
+func isEditableModConfig(folder, relativePath string) bool {
+	clean := filepath.ToSlash(filepath.Clean(relativePath))
+	if clean == "." || filepath.IsAbs(clean) {
 		return false
 	}
-	if !editableModConfigExtensions[strings.ToLower(filepath.Ext(clean))] {
+	ext := strings.ToLower(filepath.Ext(clean))
+	if !editableModConfigExtensions[ext] {
 		return false
 	}
-	parts := strings.Split(filepath.ToSlash(clean), "/")
+	base := strings.ToLower(filepath.Base(clean))
+	if strings.HasPrefix(base, ".") || strings.HasSuffix(base, ".bak") {
+		return false
+	}
+	if prefix := siblingConfigPrefix(folder); strings.HasPrefix(clean, prefix) {
+		rest := strings.TrimPrefix(clean, prefix)
+		return rest != "" && !strings.Contains(rest, "..")
+	}
+	if strings.Contains(clean, "..") {
+		return false
+	}
+	parts := strings.Split(clean, "/")
 	if len(parts) > 1 && strings.EqualFold(parts[0], "Config") {
 		return true
 	}
-	base := strings.ToLower(filepath.Base(clean))
 	return strings.Contains(base, "config") || strings.Contains(base, "settings")
 }
 
@@ -1490,10 +1541,21 @@ func resolveModConfig(root, folder, relativePath string) (string, error) {
 		return "", err
 	}
 	clean := filepath.Clean(strings.TrimSpace(relativePath))
-	if !isEditableModConfig(clean) {
+	if !isEditableModConfig(folder, clean) {
 		return "", fmt.Errorf("invalid or unsupported mod config path")
 	}
-	target := filepath.Join(modRoot, clean)
+	target := filepath.Clean(filepath.Join(modRoot, clean))
+	if !pathInside(root, target) {
+		return "", fmt.Errorf("mod config path is outside Mods")
+	}
+	slashRel := filepath.ToSlash(clean)
+	if strings.HasPrefix(slashRel, siblingConfigPrefix(folder)) {
+		if !pathInside(filepath.Join(root, folder+"_Config"), target) {
+			return "", fmt.Errorf("mod config path is outside the runtime config folder")
+		}
+	} else if !pathInside(modRoot, target) {
+		return "", fmt.Errorf("mod config path is outside the mod folder")
+	}
 	info, err := os.Lstat(target)
 	if err != nil {
 		return "", fmt.Errorf("mod config not found: %w", err)
@@ -1502,9 +1564,16 @@ func resolveModConfig(root, folder, relativePath string) (string, error) {
 		return "", fmt.Errorf("mod config must be a regular file")
 	}
 	if info.Size() > maxModConfigBytes {
-		return "", fmt.Errorf("mod config exceeds 64 KiB editor limit")
+		return "", fmt.Errorf("mod config exceeds 256 KiB editor limit")
 	}
 	return target, nil
+}
+
+func pathInside(root, target string) bool {
+	root = filepath.Clean(root)
+	target = filepath.Clean(target)
+	sep := string(filepath.Separator)
+	return target == root || strings.HasPrefix(target, root+sep)
 }
 
 func readModConfig(cfg *agent.InstanceConfig, override, folder, relativePath string) (string, error) {
@@ -1578,7 +1647,7 @@ func writeModConfigFile(target string, content string, mode os.FileMode) error {
 
 func writeModConfig(cfg *agent.InstanceConfig, override, folder, relativePath, content string) error {
 	if len(content) > maxModConfigBytes {
-		return fmt.Errorf("mod config exceeds 64 KiB editor limit")
+		return fmt.Errorf("mod config exceeds 256 KiB editor limit")
 	}
 	root, err := modsPath(cfg, override)
 	if err != nil {
@@ -2607,15 +2676,17 @@ func (a *Adapter) Stop(ctx context.Context, cfg *agent.InstanceConfig) error {
 		}
 		return a.Runner.run(ctx, cfg.InstallPath, parts[0], parts[1:]...)
 	}
-	// Same-host deployments registered with the hardened systemd start command
-	// must stop through the matching unit. Telnet can acknowledge a connection
-	// without ever executing quit, leaving restart jobs waiting on the old PID.
+	// Same-host deployments are supervised by systemd, but first use 7DTD's
+	// supported shutdown command. It asks the game to save and exit cleanly.
+	// If Telnet is unavailable or the game does not stop within the service
+	// window, systemd sends the configured SIGINT as the safe fallback.
 	if isSystemdManaged7DTD(cfg) {
-		return systemctl7DTD(ctx, "stop")
+		return a.stopSystemdManaged7DTD(ctx, cfg)
 	}
-	// Try to send "quit" via telnet for graceful shutdown
-	resp, err := a.SendCommand(ctx, cfg, "quit")
-	if err == nil && resp != "" {
+	// `shutdown`, rather than `quit`, is the dedicated-server command that
+	// saves and exits. `quit` only ends a console/session in many builds.
+	resp, err := a.SendCommand(ctx, cfg, "shutdown")
+	if err == nil && !consoleRejected(resp) {
 		return nil
 	}
 	// Fallback: kill script or pkill (platform-dependent)
@@ -2623,7 +2694,26 @@ func (a *Adapter) Stop(ctx context.Context, cfg *agent.InstanceConfig) error {
 	if _, err := os.Stat(stopPath); err == nil {
 		return a.Runner.run(ctx, cfg.InstallPath, "/bin/sh", stopPath)
 	}
-	return fmt.Errorf("no stop_command, telnet quit failed, and no stop.sh")
+	return fmt.Errorf("no stop_command, telnet shutdown failed, and no stop.sh")
+}
+
+func (a *Adapter) stopSystemdManaged7DTD(ctx context.Context, cfg *agent.InstanceConfig) error {
+	if !serviceActive(ctx, "7dtd.service") {
+		return nil
+	}
+	output, telnetErr := a.SendCommand(ctx, cfg, "shutdown")
+	if telnetErr == nil && !consoleRejected(output) {
+		if err := waitFor7DTDState(ctx, false, 2*time.Minute); err == nil {
+			return nil
+		}
+	}
+	if err := systemctl7DTD(ctx, "stop"); err != nil {
+		if telnetErr != nil {
+			return fmt.Errorf("7DTD Telnet shutdown failed (%v); systemd fallback failed: %w", telnetErr, err)
+		}
+		return fmt.Errorf("7DTD did not stop after Telnet shutdown; systemd fallback failed: %w", err)
+	}
+	return nil
 }
 
 func isSystemdManaged7DTD(cfg *agent.InstanceConfig) bool {
@@ -2842,6 +2932,9 @@ func playerCommandIdentifier(payload map[string]interface{}) string {
 	if identifier == "" || strings.Contains(identifier, "_") {
 		return identifier
 	}
+	if isAllDigits(identifier) {
+		return identifier
+	}
 	if strings.EqualFold(platform, "Steam") {
 		return "Steam_" + identifier
 	}
@@ -2851,7 +2944,41 @@ func playerCommandIdentifier(payload map[string]interface{}) string {
 	return identifier
 }
 
+func setDeathsIdentifiers(payload map[string]interface{}) []string {
+	seen := map[string]bool{}
+	ids := make([]string, 0, 4)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || strings.ContainsAny(value, " \t\"'`") || seen[value] {
+			return
+		}
+		seen[value] = true
+		ids = append(ids, value)
+	}
+	primary := playerCommandIdentifier(payload)
+	add(primary)
+	steam := sanitizeRCONArg(payloadString(payload, "steamId"))
+	if steam != "" && !strings.Contains(steam, "_") {
+		add("Steam_" + steam)
+	} else {
+		add(steam)
+	}
+	eos := sanitizeRCONArg(payloadString(payload, "eosId"))
+	if eos != "" && !strings.HasPrefix(strings.ToUpper(eos), "EOS_") {
+		add("EOS_" + eos)
+	} else {
+		add(eos)
+	}
+	add(sanitizeRCONArg(payloadString(payload, "entityId")))
+	add(sanitizeRCONArg(payloadString(payload, "name")))
+	return ids
+}
+
 func setDeathsCommand(identifier string, deaths int) (string, error) {
+	return setDeathsCommandNamed("st-SetPlayerDeaths", identifier, deaths)
+}
+
+func setDeathsCommandNamed(command, identifier string, deaths int) (string, error) {
 	identifier = strings.TrimSpace(identifier)
 	if identifier == "" {
 		return "", fmt.Errorf("player identifier required")
@@ -2862,7 +2989,78 @@ func setDeathsCommand(identifier string, deaths int) (string, error) {
 	if deaths < 0 || deaths > 100000 {
 		return "", fmt.Errorf("deaths must be a whole number from 0 to 100000")
 	}
-	return fmt.Sprintf("st-SetDeaths %s %d", identifier, deaths), nil
+	return fmt.Sprintf("%s %s %d", command, identifier, deaths), nil
+}
+
+func payloadString(payload map[string]interface{}, key string) string {
+	switch value := payload[key].(type) {
+	case string:
+		return value
+	case float64:
+		if value == float64(int(value)) {
+			return strconv.Itoa(int(value))
+		}
+	case int:
+		return strconv.Itoa(value)
+	case json.Number:
+		return value.String()
+	}
+	return ""
+}
+
+func isAllDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *Adapter) setPlayerDeaths(ctx context.Context, cfg *agent.InstanceConfig, payload map[string]interface{}, deaths int) (string, string, error) {
+	ids := setDeathsIdentifiers(payload)
+	if len(ids) == 0 {
+		return "", "", fmt.Errorf("player identifier required")
+	}
+	commands := []string{"st-SetPlayerDeaths", "st-SetDeaths"}
+	var lastOut, lastCmd string
+	unknown := false
+	for _, name := range commands {
+		unknown = false
+		for _, id := range ids {
+			cmd, err := setDeathsCommandNamed(name, id, deaths)
+			if err != nil {
+				return "", "", err
+			}
+			out, err := a.SendCommand(ctx, cfg, cmd)
+			lastOut, lastCmd = out, cmd
+			if err != nil {
+				return out, cmd, err
+			}
+			lower := strings.ToLower(out)
+			if strings.Contains(lower, "unknown command") || strings.Contains(lower, "no command or topic found") || strings.Contains(lower, "is not a valid command") {
+				unknown = true
+				break
+			}
+			if strings.Contains(lower, "not found") || strings.Contains(lower, "unable to find") || strings.Contains(lower, "does not exist") || strings.Contains(lower, "usage:") {
+				continue
+			}
+			if consoleRejected(out) {
+				return out, cmd, fmt.Errorf("Could not set deaths. The player must be online, and ServerTools st-SetPlayerDeaths must be installed")
+			}
+			return out, cmd, nil
+		}
+		if !unknown {
+			break
+		}
+	}
+	if lastOut == "" {
+		return lastOut, lastCmd, fmt.Errorf("Could not set deaths. The player must be online, and ServerTools st-SetPlayerDeaths must be installed")
+	}
+	return lastOut, lastCmd, fmt.Errorf("Could not set deaths. The player must be online, and ServerTools st-SetPlayerDeaths must be installed")
 }
 
 func consoleRejected(output string) bool {
@@ -2966,7 +3164,9 @@ func latestPlayerLogInventory(installPath, command string) (string, bool) {
 	return "", false
 }
 
-// sendTelnet connects to 7DTD telnet, sends password, then command; returns response.
+// sendTelnet connects to 7DTD Telnet, sends an optional password and one command,
+// then explicitly exits the console session. The final `exit` prevents 7DTD from
+// trying to write a fresh prompt into a client socket that has already vanished.
 func sendTelnet(ctx context.Context, host string, port int, password, command string) (string, error) {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	dialer := &net.Dialer{}
@@ -2975,47 +3175,120 @@ func sendTelnet(ctx context.Context, host string, port int, password, command st
 		return "", err
 	}
 	defer conn.Close()
-	isPlayerList := strings.EqualFold(strings.TrimSpace(command), "lp")
-	deadline := 15 * time.Second
-	if isPlayerList {
-		deadline = 25 * time.Second
+	stopContextWatch := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
+	defer stopContextWatch()
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return "", fmt.Errorf("Telnet command is required")
 	}
-	conn.SetDeadline(time.Now().Add(deadline))
-	// 7DTD: server may send "password:" or similar; send password then command
-	buf := make([]byte, 4096)
-	n, _ := conn.Read(buf)
-	_ = n
+	isPlayerList := strings.EqualFold(command, "lp")
+	firstResponseTimeout := 15 * time.Second
+	if isPlayerList {
+		firstResponseTimeout = 25 * time.Second
+	}
+
+	// 7DTD sends a greeting immediately. A few builds do not, so an idle read
+	// is acceptable; a non-timeout network error is not.
+	if _, err := readTelnetChunk(ctx, conn, 3*time.Second); err != nil {
+		return "", fmt.Errorf("read Telnet greeting: %w", err)
+	}
 	if password != "" {
 		if _, err := conn.Write([]byte(password + "\n")); err != nil {
 			return "", err
 		}
-		time.Sleep(200 * time.Millisecond)
-		n, _ = conn.Read(buf)
-		_ = n
+		if _, err := readTelnetChunk(ctx, conn, 3*time.Second); err != nil {
+			return "", fmt.Errorf("authenticate Telnet session: %w", err)
+		}
 	}
 	if _, err := conn.Write([]byte(command + "\n")); err != nil {
 		return "", err
 	}
-	time.Sleep(500 * time.Millisecond)
-	var out []byte
-	for {
-		readTimeout := 2 * time.Second
-		if isPlayerList {
-			readTimeout = 20 * time.Second
-		}
-		conn.SetReadDeadline(time.Now().Add(readTimeout))
-		n, err := conn.Read(buf)
-		if n > 0 {
-			out = append(out, buf[:n]...)
-			if isPlayerList && strings.Contains(string(out), "Total of ") {
-				break
-			}
-		}
-		if err != nil || n == 0 {
-			break
-		}
+
+	out, err := readTelnetResponse(ctx, conn, firstResponseTimeout, isPlayerList)
+	if err != nil {
+		return strings.TrimSpace(string(out)), err
+	}
+	// shutdown deliberately terminates the server, and exit already closes a
+	// console session. Do not append a second command in either case.
+	if !strings.EqualFold(command, "shutdown") && !strings.EqualFold(command, "exit") {
+		closeTelnetSession(ctx, conn)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func readTelnetChunk(ctx context.Context, conn net.Conn, timeout time.Duration) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < timeout {
+		timeout = time.Until(deadline)
+	}
+	if timeout <= 0 {
+		return nil, context.DeadlineExceeded
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, err
+	}
+	buf := make([]byte, 4096)
+	n, err := conn.Read(buf)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		return nil, nil
+	}
+	if err != nil && n == 0 {
+		if err == io.EOF {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return buf[:n], nil
+}
+
+func readTelnetResponse(ctx context.Context, conn net.Conn, firstResponseTimeout time.Duration, isPlayerList bool) ([]byte, error) {
+	var out []byte
+	chunk, err := readTelnetChunk(ctx, conn, firstResponseTimeout)
+	if err != nil {
+		return out, err
+	}
+	out = append(out, chunk...)
+	if len(out) == 0 {
+		return out, nil
+	}
+	if isPlayerList && strings.Contains(string(out), "Total of ") {
+		return out, nil
+	}
+	idleTimeout := 750 * time.Millisecond
+	if isPlayerList {
+		idleTimeout = 2 * time.Second
+	}
+	for {
+		chunk, err = readTelnetChunk(ctx, conn, idleTimeout)
+		if err != nil {
+			return out, err
+		}
+		if len(chunk) == 0 {
+			return out, nil
+		}
+		out = append(out, chunk...)
+		if isPlayerList && strings.Contains(string(out), "Total of ") {
+			return out, nil
+		}
+	}
+}
+
+func closeTelnetSession(ctx context.Context, conn net.Conn) {
+	if ctx.Err() != nil {
+		return
+	}
+	if _, err := conn.Write([]byte("exit\n")); err != nil {
+		return
+	}
+	// 7DTD normally closes immediately after exit. Ignore the result: the
+	// preceding command already completed and a session cleanup failure should
+	// not turn it into a failed administrative action.
+	_, _ = readTelnetChunk(ctx, conn, time.Second)
 }
 
 // tailFile reads the file and writes new content to w, respecting ctx (simplified: one-shot read for placeholder).

@@ -43,22 +43,24 @@ export class AgentJobsController {
     });
   }
 
-  /** Poll for the next pending job for this host. Returns { job: null } if none queued. */
+  /** Poll for the next pending job for this host. Honors wait= seconds so list jobs are not delayed by the agent's empty-poll sleep. */
   @Get('poll')
-  async poll(@Req() req: RequestWithAgent, @Query('mutationBusy') mutationBusy?: string) {
+  async poll(@Req() req: RequestWithAgent, @Query('wait') wait?: string, @Query('mutationBusy') mutationBusy?: string) {
     const hostId = req.agentHostId!;
-
-    // Look up the host to get orgId
     const host = await this.prisma.host.findUnique({ where: { id: hostId } });
     if (!host) return { job: null };
-
-    const jobData = await this.jobsQueueService.getNextJobForHost(host.orgId, hostId, mutationBusy === 'true');
-    if (!jobData) return { job: null };
-
-    // Mark the job run as running now that the agent has claimed it
-    await this.jobsService.markJobRunStarted(hostId, jobData.jobRunId);
-
-    return { job: jobData };
+    const waitMs = Math.min(25_000, Math.max(0, Number(wait) * 1000 || 0));
+    const busy = mutationBusy === 'true';
+    const deadline = Date.now() + waitMs;
+    for (;;) {
+      const jobData = await this.jobsQueueService.getNextJobForHost(host.orgId, hostId, busy);
+      if (jobData) {
+        await this.jobsService.markJobRunStarted(hostId, jobData.jobRunId);
+        return { job: jobData };
+      }
+      if (Date.now() >= deadline) return { job: null };
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
   }
 
   /** Report job run completion. Call BatchesService when job is part of a batch. Host identity from verified agent JWT. */

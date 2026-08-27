@@ -98,6 +98,33 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       schedule.serverInstance.gameType.slug === '7dtd' && schedule.jobType.toUpperCase() === 'SERVER_RESTART'
         ? 'SERVER_SAFE_RESTART'
         : schedule.jobType;
+
+    if (schedule.skipNextRun && this.isRestartJob(schedule.jobType)) {
+      const nextRun = this.computeNextRun(schedule, new Date());
+      const status = schedule.skipNextRunReason === 'stability_restart'
+        ? 'skipped_stability_restart'
+        : 'skipped_by_operator';
+      await this.prisma.schedule.update({
+        where: { id: scheduleId },
+        data: {
+          lastRunAt: new Date(),
+          lastRunStatus: status,
+          nextRunAt: nextRun ?? undefined,
+          skipNextRun: false,
+          skipNextRunReason: null,
+          skipNextRunRequestedAt: null,
+        },
+      });
+      if (nextRun) {
+        await this.schedulerQueue!.add(
+          'schedule_fire',
+          { scheduleId },
+          { jobId: `schedule:${schedule.id}:${nextRun.getTime()}`, delay: Math.max(0, nextRun.getTime() - Date.now()) },
+        );
+      }
+      this.logger.log(`Skipped scheduled restart ${schedule.id}: ${status}`);
+      return;
+    }
     const configuredPayload = (schedule.payload as Record<string, unknown> | null) ?? {};
     const mergedPayload = {
       server_instance_id: schedule.serverInstance.id,
@@ -227,6 +254,29 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     return rows.map((s) => this.toDto(s));
   }
 
+  /** Skip the nearest enabled automatic restart for one server exactly once. */
+  async skipNextAutoRestart(orgId: string, serverInstanceId: string, reason: 'manual' | 'stability_restart') {
+    const schedule = await this.prisma.schedule.findFirst({
+      where: {
+        orgId,
+        serverInstanceId,
+        enabled: true,
+        jobType: { in: ['SERVER_RESTART', 'SERVER_SAFE_RESTART'] },
+        nextRunAt: { not: null, gte: new Date() },
+      },
+      orderBy: { nextRunAt: 'asc' },
+    });
+    if (!schedule) return { skipped: false, reason: 'no_scheduled_restart' as const };
+    if (schedule.skipNextRun) {
+      return { skipped: false, reason: 'already_skipped' as const, scheduleId: schedule.id, nextRunAt: schedule.nextRunAt?.toISOString() ?? null };
+    }
+    const updated = await this.prisma.schedule.update({
+      where: { id: schedule.id },
+      data: { skipNextRun: true, skipNextRunReason: reason, skipNextRunRequestedAt: new Date() },
+    });
+    return { skipped: true, scheduleId: updated.id, scheduleName: updated.name, nextRunAt: updated.nextRunAt?.toISOString() ?? null };
+  }
+
   async createSchedule(
     orgId: string,
     userId: string,
@@ -329,6 +379,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     cronExpression: string; jobType: string; enabled: boolean;
     payload: Prisma.JsonValue;
     nextRunAt: Date | null; lastRunAt: Date | null; lastRunStatus: string | null;
+    skipNextRun: boolean; skipNextRunReason: string | null;
     createdAt: Date; updatedAt: Date;
   }) {
     return {
@@ -343,6 +394,8 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       nextRunAt: s.nextRunAt?.toISOString() ?? null,
       lastRunAt: s.lastRunAt?.toISOString() ?? null,
       lastRunStatus: s.lastRunStatus,
+      skipNextRun: s.skipNextRun,
+      skipNextRunReason: s.skipNextRunReason,
       createdAt: s.createdAt.toISOString(),
     };
   }
@@ -355,5 +408,9 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       );
     }
     return this.orgQueues.get(orgId)!;
+  }
+
+  private isRestartJob(jobType: string) {
+    return ['SERVER_RESTART', 'SERVER_SAFE_RESTART'].includes(jobType.toUpperCase());
   }
 }

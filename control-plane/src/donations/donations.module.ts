@@ -11,6 +11,7 @@ import { PlayerAuthModule } from '../player-auth/player-auth.module';
 import { AuthModule } from '../auth/auth.module';
 import { DiscordModule } from '../discord/discord.module';
 import { JobsModule } from '../jobs/jobs.module';
+import { TriggersModule } from '../triggers/triggers.module';
 import { PrismaService } from '../prisma.service';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
 import { RequireOrgRoleGuard } from '../server-instances/guards/require-org-role.guard';
@@ -21,6 +22,7 @@ import { RequireOrgRoleGuard } from '../server-instances/guards/require-org-role
     PlayerAuthModule,
     DiscordModule,
     JobsModule,
+    TriggersModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'change-me-user-secret',
       signOptions: { expiresIn: '7d' },

@@ -10,7 +10,7 @@ type Profile = { name: string; steamId: string; serverName: string; online: bool
 type Places = {
   claims: Array<{ id: string; position: { x: number; y: number; z: number }; size: number }>;
   homes: Array<{ id: string; position: { x: number; y: number; z: number }; active: boolean }>;
-  vehicles: Array<{ id: string; name: string; position: { x: number; y: number; z: number } }>;
+  vehicles: Array<{ id: string; name: string; position: { x: number; y: number; z: number }; vehicleKey?: string; live?: boolean }>;
   drones: Array<{ id: string; name: string; position: { x: number; y: number; z: number } }>;
 };
 
@@ -34,6 +34,8 @@ export default function PlayerMapClient() {
   const [animals, setAnimals] = useState<Entity[]>([]);
   const [hostiles, setHostiles] = useState<Entity[]>([]);
   const [places, setPlaces] = useState<Places>({ claims: [], homes: [], vehicles: [], drones: [] });
+  const [returningKey, setReturningKey] = useState('');
+  const [returnMessage, setReturnMessage] = useState('');
   const [error, setError] = useState('');
   const [feedError, setFeedError] = useState('');
 
@@ -85,6 +87,35 @@ export default function PlayerMapClient() {
     const timer = setInterval(update, 15000);
     return () => { active = false; clearInterval(timer); };
   }, [profile]);
+
+  async function returnVehicle(vehicleKey: string) {
+    setReturnMessage('');
+    setReturningKey(vehicleKey);
+    try {
+      const response = await fetch('/api/player-auth/vehicles/return', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ vehicleKey }),
+      });
+      const data = await response.json().catch(() => ({})) as { message?: string };
+      if (!response.ok) throw new Error(data.message || 'Could not return that vehicle');
+      setReturnMessage(data.message || 'Vehicle returned.');
+      const placesResponse = await fetch('/api/player-auth/places', { cache: 'no-store' });
+      if (placesResponse.ok) {
+        const next = await placesResponse.json() as Places;
+        setPlaces({
+          claims: next.claims ?? [],
+          homes: next.homes ?? [],
+          vehicles: next.vehicles ?? [],
+          drones: next.drones ?? [],
+        });
+      }
+    } catch (e) {
+      setReturnMessage(e instanceof Error ? e.message : 'Could not return that vehicle');
+    } finally {
+      setReturningKey('');
+    }
+  }
 
   const mapSize = config?.mapSize || { x: 10240, y: 255, z: 10240 };
   const bounds = useMemo(() => L.latLngBounds([-mapSize.x / 2, -mapSize.z / 2], [mapSize.x / 2, mapSize.z / 2]), [mapSize.x, mapSize.z]);
@@ -148,7 +179,27 @@ export default function PlayerMapClient() {
             )}
             {profile && (
               <LayersControl.Overlay checked name={`Your vehicles (${places.vehicles.length})`}>
-                <LayerGroup>{places.vehicles.map((vehicle) => <Marker key={vehicle.id} position={[vehicle.position.x, vehicle.position.z]} icon={icon('#38bdf8', vehicle.name)}><Popup>{vehicle.name}<br />{Math.round(vehicle.position.x)}, {Math.round(vehicle.position.z)}</Popup></Marker>)}</LayerGroup>
+                <LayerGroup>{places.vehicles.map((vehicle) => (
+                  <Marker key={vehicle.id} position={[vehicle.position.x, vehicle.position.z]} icon={icon('#38bdf8', vehicle.name)}>
+                    <Popup>
+                      {vehicle.name}{vehicle.live === false ? ' (last seen)' : ''}<br />
+                      {Math.round(vehicle.position.x)}, {Math.round(vehicle.position.z)}
+                      {vehicle.vehicleKey && vehicle.vehicleKey !== 'unknown' && (
+                        <div style={{ marginTop: 8 }}>
+                          <button
+                            type="button"
+                            disabled={Boolean(returningKey)}
+                            onClick={() => void returnVehicle(vehicle.vehicleKey!)}
+                            style={{ color: '#fff', background: '#1d4ed8', border: 0, borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}
+                          >
+                            {returningKey === vehicle.vehicleKey ? 'Returning…' : 'Return to me'}
+                          </button>
+                        </div>
+                      )}
+                      {returnMessage && returningKey === '' ? <div style={{ marginTop: 6 }}>{returnMessage}</div> : null}
+                    </Popup>
+                  </Marker>
+                ))}</LayerGroup>
               </LayersControl.Overlay>
             )}
             {profile && (

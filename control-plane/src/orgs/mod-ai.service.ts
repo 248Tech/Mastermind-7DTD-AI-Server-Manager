@@ -55,7 +55,7 @@ export class ModAiService {
     try { return JSON.parse(normalized) as ProposedEdit; } catch { throw new BadGatewayException(`${provider} returned invalid edit data`); }
   }
   private validateEdit(edit: ProposedEdit) {
-    if (typeof edit.updatedContent !== 'string' || Buffer.byteLength(edit.updatedContent, 'utf8') > 65536) throw new BadGatewayException('Proposed configuration exceeds 64 KiB limit');
+    if (typeof edit.updatedContent !== 'string' || Buffer.byteLength(edit.updatedContent, 'utf8') > 262144) throw new BadGatewayException('Proposed configuration exceeds 256 KiB limit');
     if (typeof edit.summary !== 'string' || !Array.isArray(edit.warnings) || edit.warnings.some(value => typeof value !== 'string')) throw new BadGatewayException('AI provider returned an invalid proposal shape');
   }
 }

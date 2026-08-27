@@ -13,7 +13,8 @@ import { OrgsService } from './orgs.service';
 import { JwtAuthGuard, RequestWithUser } from '../server-instances/guards/jwt-auth.guard';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
 import { RequireOrgRoleGuard, RequireOrgRoles } from '../server-instances/guards/require-org-role.guard';
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
 
 class CreateOrgDto {
   name!: string;
@@ -36,6 +37,21 @@ class UpdateOrgDto {
   @IsOptional()
   @IsBoolean()
   avoidBloodMoonRestart?: boolean;
+  @IsOptional()
+  @IsBoolean()
+  stabilityRestartEnabled?: boolean;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(4)
+  @Max(64)
+  stabilityRestartMemoryGiB?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(30)
+  @Max(1440)
+  stabilityRestartCooldownMinutes?: number;
 }
 
 class CreateOrgAccountDto {

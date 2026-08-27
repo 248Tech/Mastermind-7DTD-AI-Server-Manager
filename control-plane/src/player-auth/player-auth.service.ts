@@ -5,6 +5,8 @@ import { stripeCheckoutEnabledForOrg } from '../donations/donations.credentials'
 import { PrismaService } from '../prisma.service';
 import { PrismaCoreService } from '../prismacore/prismacore.service';
 import { JobsService } from '../jobs/jobs.service';
+import { VehiclesService } from '../vehicles/vehicles.service';
+import { describeVehicle } from '../vehicles/vehicle-catalog';
 import { randomUUID } from 'crypto';
 import { mkdir, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
@@ -28,6 +30,7 @@ export class PlayerAuthService {
     private readonly jwt: JwtService,
     private readonly prismaCore: PrismaCoreService,
     private readonly jobs: JobsService,
+    private readonly vehicles: VehiclesService,
   ) {}
 
   async verifySteam(serverInstanceId: string, returnTo: string, openid: Record<string, unknown>) {
@@ -380,12 +383,37 @@ export class PlayerAuthService {
     const homes = homesLayer as { reachable?: boolean; homes?: unknown[] };
     const vehicles = vehiclesLayer as { reachable?: boolean; markers?: unknown[] };
     const drones = dronesLayer as { reachable?: boolean; markers?: unknown[] };
-    return filterPlayerPlaces({
+    const filtered = filterPlayerPlaces({
       reachable: Boolean(claims.reachable || homes.reachable || vehicles.reachable || drones.reachable),
       claims: Array.isArray(claims.claims) ? claims.claims as Array<{ steamId?: unknown; eosId?: unknown; extra?: unknown; position?: { x: number; y: number; z: number }; size?: number }> : [],
       homes: Array.isArray(homes.homes) ? homes.homes as Array<{ steamId?: unknown; eosId?: unknown; extra?: unknown; position?: { x: number; y: number; z: number }; active?: boolean }> : [],
       vehicles: Array.isArray(vehicles.markers) ? vehicles.markers as Array<{ steamId?: unknown; eosId?: unknown; extra?: unknown; name?: string; position?: { x: number; y: number; z: number } }> : [],
       drones: Array.isArray(drones.markers) ? drones.markers as Array<{ steamId?: unknown; eosId?: unknown; extra?: unknown; name?: string; position?: { x: number; y: number; z: number } }> : [],
     }, { steamId: player.steamId, eosId: player.eosId });
+    const live = filtered.vehicles.map((row) => {
+      const spec = describeVehicle(row.name);
+      return {
+        ...row,
+        vehicleKey: spec?.key ?? 'unknown',
+        name: spec?.label ?? row.name,
+        live: true,
+      };
+    });
+    await this.vehicles.captureServerVehicles(player.serverInstanceId).catch(() => undefined);
+    const recent = await this.vehicles.historyForPlayer(player.id, live);
+    return { ...filtered, vehicles: [...live, ...recent] };
+  }
+
+  async returnVehicle(token: string, vehicleKey: string) {
+    const player = await this.requirePlayer(token);
+    if (player.sessionAuth !== 'steam') throw new BadRequestException('Sign in with Steam to return a vehicle');
+    return this.vehicles.returnVehicle({
+      id: player.id,
+      orgId: player.orgId,
+      serverInstanceId: player.serverInstanceId,
+      steamId: player.steamId,
+      entityId: player.entityId,
+      online: player.online,
+    }, vehicleKey);
   }
 }

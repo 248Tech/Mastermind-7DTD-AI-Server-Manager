@@ -29,6 +29,14 @@ export class SchedulerController {
     return this.schedulerService.listSchedules(orgId);
   }
 
+  @Post('skip-next-auto-reboot')
+  @UseGuards(RequireOrgRoleGuard)
+  @RequireOrgRoles('admin', 'operator')
+  async skipNextAutoReboot(@Param('orgId') orgId: string, @Body() body: { serverInstanceId?: string }) {
+    if (!body.serverInstanceId) throw new BadRequestException('serverInstanceId is required');
+    return this.schedulerService.skipNextAutoRestart(orgId, body.serverInstanceId, 'manual');
+  }
+
   @Post()
   @UseGuards(RequireOrgRoleGuard)
   @RequireOrgRoles('admin', 'operator')

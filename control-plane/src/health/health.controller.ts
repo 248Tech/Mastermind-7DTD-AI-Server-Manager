@@ -4,7 +4,7 @@ import { Controller, Get, NotFoundException, Param, Query, Res } from '@nestjs/c
 import { Response } from 'express';
 import { sanitizeInstallToken, sanitizeInstallUrl } from '../common/install-script';
 
-const pkg = { name: 'mastermind-control-plane', version: '0.0.12' };
+const pkg = { name: 'mastermind-control-plane', version: '0.0.14' };
 
 @Controller()
 export class HealthController {
@@ -62,6 +62,12 @@ export class HealthController {
           create: 'POST /api/orgs/:orgId/alerts',
           update: 'PATCH /api/orgs/:orgId/alerts/:id',
           delete: 'DELETE /api/orgs/:orgId/alerts/:id',
+        },
+        triggers: {
+          list: 'GET /api/orgs/:orgId/triggers',
+          create: 'POST /api/orgs/:orgId/triggers',
+          update: 'PATCH /api/orgs/:orgId/triggers/:id',
+          delete: 'DELETE /api/orgs/:orgId/triggers/:id',
         },
         gameTypes: 'GET /api/game-types',
         agentInstall: 'GET /install.sh?token=TOKEN&url=URL&name=NAME',

@@ -19,6 +19,8 @@ import { PlayerAuthModule } from './player-auth/player-auth.module';
 import { DonationsModule } from './donations/donations.module';
 import { PrismaCoreModule } from './prismacore/prismacore.module';
 import { AllocsModule } from './allocs/allocs.module';
+import { TriggersModule } from './triggers/triggers.module';
+import { VehiclesModule } from './vehicles/vehicles.module';
 
 @Module({
   imports: [
@@ -43,6 +45,8 @@ import { AllocsModule } from './allocs/allocs.module';
     DonationsModule,
     PrismaCoreModule,
     AllocsModule,
+    TriggersModule,
+    VehiclesModule,
   ],
 })
 export class AppModule {}

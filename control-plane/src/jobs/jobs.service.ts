@@ -2,9 +2,13 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  ForbiddenException,
-  OnModuleDestroy,
-  OnModuleInit,
+    ForbiddenException,
+    GatewayTimeoutException,
+    OnModuleDestroy,
+    OnModuleInit,
+    Inject,
+    forwardRef,
+    ServiceUnavailableException,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
@@ -13,6 +17,9 @@ import { JobsQueueService } from './jobs-queue.service';
 import type { ReportResultDto } from './dto/report-result.dto';
 import { reconcileNameFallback } from '../players/player-identity';
 import { AlertsService } from '../alerts/alerts.service';
+import { TriggersService } from '../triggers/triggers.service';
+import { VehiclesService } from '../vehicles/vehicles.service';
+import { SchedulerService } from '../scheduler/scheduler.service';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
 import { pruneMap } from '../common/ttl-map';
@@ -44,6 +51,9 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     private readonly jobsQueueService: JobsQueueService,
     private readonly alerts: AlertsService,
     private readonly allocs: AllocsService,
+    @Inject(forwardRef(() => TriggersService)) private readonly triggers: TriggersService,
+    @Inject(forwardRef(() => VehiclesService)) private readonly vehicles: VehiclesService,
+    private readonly schedulerService: SchedulerService,
   ) {}
 
   async onModuleInit() {
@@ -148,6 +158,11 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       const membership = await this.prisma.userOrg.findUnique({ where: { userId_orgId: { userId, orgId } }, include: { role: true } });
       if (!membership || !['admin', 'operator'].includes(membership.role.name)) throw new ForbiddenException('Only organization administrators or operators may upload mods');
     }
+    if (normalizedJobType === 'SERVER_UPDATE') {
+      if (!roleName || !['admin', 'operator'].includes(roleName)) {
+        throw new ForbiddenException('Only organization administrators or operators may update the dedicated server');
+      }
+    }
     if (normalizedJobType === 'SERVER_MAINTENANCE') {
       if (!roleName || !['admin', 'operator'].includes(roleName)) {
         throw new ForbiddenException('Only organization administrators or operators may change maintenance mode');
@@ -217,6 +232,76 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       payload: mergedPayload,
     });
 
+    return { jobId: job.id, jobRunId: run.id };
+  }
+
+  async waitForJobOutput(jobRunId: string, timeoutMs = 20_000): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const run = await this.prisma.jobRun.findUnique({ where: { id: jobRunId } });
+      if (run && (run.status === 'success' || run.status === 'failed' || run.status === 'cancelled')) {
+        const result = (run.result ?? {}) as Record<string, unknown>;
+        const output = typeof result.output === 'string' ? result.output : '';
+        if (run.status !== 'success') {
+          const error = typeof result.errorMessage === 'string' ? result.errorMessage : 'Game command failed';
+          throw new ServiceUnavailableException(error);
+        }
+        return output;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    throw new GatewayTimeoutException('The game did not answer in time');
+  }
+
+  async enqueueInternalJob(
+    orgId: string,
+    userId: string | null,
+    serverInstanceId: string,
+    jobType: string,
+    payload?: Record<string, unknown>,
+  ): Promise<{ jobId: string; jobRunId: string }> {
+    const normalizedJobType = this.normalizeJobType(jobType);
+    const serverInstance = await this.prisma.serverInstance.findFirst({
+      where: { id: serverInstanceId, orgId },
+      include: {
+        host: true,
+        gameType: { select: { slug: true } },
+        org: { select: { avoidBloodMoonRestart: true } },
+      },
+    });
+    if (!serverInstance) throw new NotFoundException('Server instance not found');
+    const mergedPayload = {
+      server_instance_id: serverInstance.id,
+      game_type: serverInstance.gameType.slug,
+      install_path: serverInstance.installPath ?? undefined,
+      start_command: serverInstance.startCommand ?? undefined,
+      telnet_host: serverInstance.telnetHost ?? undefined,
+      telnet_port: serverInstance.telnetPort ?? undefined,
+      telnet_password: serverInstance.telnetPassword ?? undefined,
+      config: serverInstance.config ?? undefined,
+      avoid_blood_moon_restart: serverInstance.org.avoidBloodMoonRestart,
+      ...(payload ?? {}),
+    };
+    const job = await this.prisma.job.create({
+      data: {
+        orgId,
+        serverInstanceId,
+        type: normalizedJobType,
+        payload: mergedPayload as Prisma.InputJsonValue,
+        createdById: userId,
+      },
+    });
+    const run = await this.prisma.jobRun.create({
+      data: { jobId: job.id, hostId: serverInstance.hostId, status: 'pending' },
+    });
+    await this.jobsQueueService.addJob(orgId, {
+      jobId: job.id,
+      jobRunId: run.id,
+      hostId: serverInstance.hostId,
+      serverInstanceId,
+      type: normalizedJobType,
+      payload: mergedPayload,
+    });
     return { jobId: job.id, jobRunId: run.id };
   }
 
@@ -303,6 +388,12 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         data: { maintenanceMode: payload.enabled === true },
       });
     }
+    if (run.job.type === 'SERVER_SAFE_RESTART' && runStatus === 'success' && run.job.serverInstanceId) {
+      const payload = (run.job.payload ?? {}) as Record<string, unknown>;
+      if (payload.trigger === 'stability_memory') {
+        await this.schedulerService.skipNextAutoRestart(run.job.orgId, run.job.serverInstanceId, 'stability_restart');
+      }
+    }
     if (run.job.type === 'PLAYER_SET_DEATHS' && runStatus === 'success' && run.job.serverInstanceId) {
       const payload = (run.job.payload ?? {}) as Record<string, unknown>;
       const deaths = Number(payload.deaths);
@@ -330,6 +421,9 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     }
     if (run.job.type === 'RCON' && resultPayload.purpose === 'shop_grant' && typeof resultPayload.donationLineId === 'string') {
       await this.finishShopGrant(resultPayload, runStatus, dto.output);
+    }
+    if (run.job.type === 'TRIGGER_GRANT_ITEMS') {
+      await this.triggers.completeItemGrant(resultPayload, runStatus, `${dto.output || ''} ${dto.errorMessage || ''}`).catch(() => undefined);
     }
 
     const orgId = run.job.orgId;
@@ -471,6 +565,20 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         },
       });
       if (!existing?.online) await this.prisma.playerSession.create({ data: { playerId: player.id, startedAt: now } });
+      const previousLevel = existing?.level ?? 0;
+      const newLevel = row.level ?? existing?.level ?? 1;
+      await this.triggers.evaluateLevel(orgId, serverInstanceId, {
+        id: player.id,
+        name: player.name,
+        steamId: player.steamId,
+        eosId: player.eosId,
+        entityId: player.entityId,
+        level: newLevel,
+      }, previousLevel, newLevel).catch(() => undefined);
+      if (!existing?.online) {
+        await this.triggers.retryPendingItemGrantsForPlayer(player.id).catch(() => undefined);
+        await this.triggers.refreshLandClaims(player.id).catch(() => undefined);
+      }
     }
     const missing = await this.prisma.player.findMany({ where: { serverInstanceId, online: true, identityKey: { notIn: [...seen] } } });
     for (const player of missing) {
@@ -492,6 +600,8 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     }
     await this.queueInventorySnapshots(orgId, serverInstanceId).catch(() => undefined);
     await this.enqueuePendingShopGrants(orgId, serverInstanceId).catch(() => undefined);
+    await this.triggers.retryPendingItemGrants(orgId, serverInstanceId).catch(() => undefined);
+    await this.vehicles.captureServerVehicles(serverInstanceId).catch(() => undefined);
   }
 
   private async storeInventorySnapshot(playerId: string, output: string) {

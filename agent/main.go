@@ -93,6 +93,7 @@ func main() {
 		} else {
 			if discovered.TelnetHost != "" && discovered.TelnetPort > 0 {
 				gameProbe.Address = net.JoinHostPort(discovered.TelnetHost, strconv.Itoa(discovered.TelnetPort))
+				gameProbe.CloseCommand = "exit"
 			}
 			err = cl.SyncDiscoveredServer(context.Background(), hostID, "7dtd", &client.DiscoveredServer{
 				Name:           discovered.Name,
