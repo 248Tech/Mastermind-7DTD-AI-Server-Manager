@@ -13,6 +13,7 @@ import {
   parseGrantItemsActionConfig,
   parseLandClaimActionConfig,
   parsePlayerLevelConfig,
+  playerReachedLevel,
   type GrantItemsActionConfig,
   type LandClaimActionConfig,
   type PlayerLevelConfig,
@@ -112,10 +113,14 @@ export class TriggersService {
     });
     for (const trigger of triggers) {
       const event = parsePlayerLevelConfig(trigger.eventConfig);
-      const crossed = event.comparison === 'eq'
-        ? previousLevel !== event.level && newLevel === event.level
-        : previousLevel < event.level && newLevel >= event.level;
-      if (!crossed) continue;
+      const crossed = playerReachedLevel(event.comparison, previousLevel, newLevel, event.level);
+      if (!crossed) {
+        if (!trigger.applyToExisting || newLevel < event.level) continue;
+        const existingFire = await this.prisma.triggerFire.findUnique({
+          where: { triggerId_playerId_eventKey: { triggerId: trigger.id, playerId: player.id, eventKey: eventKeyForLevel(event.level) } },
+        });
+        if (existingFire) continue;
+      }
       await this.fireTrigger(trigger, player, event.level).catch(() => undefined);
     }
   }
@@ -297,6 +302,22 @@ export class TriggersService {
     await this.enqueueLandClaim(trigger, player, level, true);
   }
 
+  private async accumulatedTriggerClaimBonus(playerId: string): Promise<number> {
+    const fires = await this.prisma.triggerFire.findMany({
+      where: { playerId, trigger: { actionType: TRIGGER_ACTION_LAND_CLAIM } },
+      include: { trigger: true },
+    });
+    let total = 0;
+    const seen = new Set<string>();
+    for (const fire of fires) {
+      const key = `${fire.triggerId}:${fire.eventKey}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      total += parseLandClaimActionConfig(fire.trigger.actionConfig).claimCount;
+    }
+    return total;
+  }
+
   private async enqueueLandClaim(
     trigger: { id: string; orgId: string; serverInstanceId: string; createdById: string | null; actionConfig: unknown },
     player: { id: string; name: string; steamId: string | null; eosId: string | null; entityId: number | null; level: number },
@@ -305,7 +326,6 @@ export class TriggersService {
   ) {
     const action = parseLandClaimActionConfig(trigger.actionConfig);
     const donated = await donatedBonusClaims(this.prisma, player.id);
-    const claimCount = stackedClaimCount(action.claimCount, donated);
     const eventKey = eventKeyForLevel(level);
     if (recordFire) {
       try {
@@ -316,6 +336,8 @@ export class TriggersService {
         return;
       }
     }
+    const triggerBonus = await this.accumulatedTriggerClaimBonus(player.id);
+    const bonusClaims = stackedClaimCount(triggerBonus, donated);
     if (!player.steamId && !player.eosId) {
       return;
     }
@@ -326,13 +348,12 @@ export class TriggersService {
       eosId: player.eosId,
       entityId: player.entityId,
       name: player.name,
-      claimCount,
+      bonusClaims,
       donatedClaims: donated,
-      notifyPlayer: recordFire,
+      notifyPlayer: recordFire && action.notifyPlayer,
       message: action.message
         .replaceAll('{name}', player.name)
-        .replaceAll('{level}', String(player.level))
-        .replaceAll('{claims}', String(claimCount)),
+        .replaceAll('{level}', String(player.level)),
     });
     if (recordFire) {
       await this.prisma.triggerFire.update({

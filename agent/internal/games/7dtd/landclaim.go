@@ -19,9 +19,20 @@ var playerTagPattern = regexp.MustCompile(`(?is)<Player\b[^>]*?/?>`)
 var xmlCommentPattern = regexp.MustCompile(`(?s)<!--.*?-->`)
 
 func applyLandClaimReward(ctx context.Context, adapter *Adapter, cfg *agent.InstanceConfig, payload map[string]interface{}) (map[string]interface{}, error) {
-	count, err := landClaimCount(payload)
+	bonus, err := landClaimBonusClaims(payload)
 	if err != nil {
 		return nil, err
+	}
+	serverDefault, err := readServerLandClaimDefault(cfg, payload)
+	if err != nil {
+		return nil, err
+	}
+	count := serverDefault + bonus
+	if count < 1 {
+		count = 1
+	}
+	if count > 100 {
+		count = 100
 	}
 	name := strings.TrimSpace(getString(payload, "name", ""))
 	steamId := strings.TrimSpace(getString(payload, "steamId", ""))
@@ -64,32 +75,71 @@ func applyLandClaimReward(ctx context.Context, adapter *Adapter, cfg *agent.Inst
 	} else if err := writeModConfigFile(target, next, mode); err != nil {
 		return nil, fmt.Errorf("write LandClaimCount.xml: %w", err)
 	}
-	notified := sendTriggerNotice(ctx, adapter, cfg, payload, getString(payload, "message", "You reached the land-claim reward level."))
-	return map[string]interface{}{"path": target, "claimCount": count, "ids": ids, "notified": notified}, nil
+	message := strings.ReplaceAll(getString(payload, "message", "You reached the land-claim reward level."), "{claims}", strconv.Itoa(count))
+	notified := sendTriggerNotice(ctx, adapter, cfg, payload, message)
+	return map[string]interface{}{
+		"path":          target,
+		"serverDefault": serverDefault,
+		"bonusClaims":   bonus,
+		"claimCount":    count,
+		"ids":           ids,
+		"notified":      notified,
+	}, nil
 }
 
-func landClaimCount(payload map[string]interface{}) (int, error) {
-	raw := payload["claimCount"]
+func readServerLandClaimDefault(cfg *agent.InstanceConfig, payload map[string]interface{}) (int, error) {
+	configPath := strings.TrimSpace(getString(payload, "server_config_path", ""))
+	if configPath == "" {
+		configPath = filepath.Join(filepath.Dir(cfg.InstallPath), "serverconfig.xml")
+	}
+	value, err := readServerConfigProperty(configPath, "LandClaimCount")
+	if err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(value) == "" {
+		return 1, nil
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || count < 1 {
+		return 1, nil
+	}
+	if count > 100 {
+		return 100, nil
+	}
+	return count, nil
+}
+
+func landClaimBonusClaims(payload map[string]interface{}) (int, error) {
+	if _, ok := payload["bonusClaims"]; ok {
+		return parseLandClaimBonus(payload["bonusClaims"])
+	}
+	if _, ok := payload["claimCount"]; ok {
+		return parseLandClaimBonus(payload["claimCount"])
+	}
+	return 0, fmt.Errorf("claim bonus is required")
+}
+
+func parseLandClaimBonus(raw interface{}) (int, error) {
 	switch value := raw.(type) {
 	case float64:
 		count := int(value)
-		if count < 1 || count > 100 {
-			return 0, fmt.Errorf("claim count must be between 1 and 100")
+		if count < 0 || count > 100 {
+			return 0, fmt.Errorf("claim bonus must be between 0 and 100")
 		}
 		return count, nil
 	case int:
-		if value < 1 || value > 100 {
-			return 0, fmt.Errorf("claim count must be between 1 and 100")
+		if value < 0 || value > 100 {
+			return 0, fmt.Errorf("claim bonus must be between 0 and 100")
 		}
 		return value, nil
 	case string:
 		count, err := strconv.Atoi(strings.TrimSpace(value))
-		if err != nil || count < 1 || count > 100 {
-			return 0, fmt.Errorf("claim count must be between 1 and 100")
+		if err != nil || count < 0 || count > 100 {
+			return 0, fmt.Errorf("claim bonus must be between 0 and 100")
 		}
 		return count, nil
 	default:
-		return 0, fmt.Errorf("claim count is required")
+		return 0, fmt.Errorf("claim bonus is required")
 	}
 }
 
@@ -344,12 +394,15 @@ func triggerNoticeCommands(payload map[string]interface{}, message string) []str
 	if message == "" {
 		return nil
 	}
-	commands := []string{"say " + message}
 	entityId := getInt(payload, "entityId", 0)
 	if entityId > 0 {
-		commands = append(commands, fmt.Sprintf("sayplayer %d %s", entityId, message))
+		return []string{fmt.Sprintf("sayplayer %d %q", entityId, message)}
 	}
-	return commands
+	name := strings.TrimSpace(sanitizeRCONArg(getString(payload, "name", "")))
+	if name != "" {
+		return []string{fmt.Sprintf("sayplayer %q %q", name, message)}
+	}
+	return nil
 }
 
 func landClaimNotifyCommand(payload map[string]interface{}, message string) string {

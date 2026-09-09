@@ -1,5 +1,6 @@
 'use client';
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { MapContainer, TileLayer, Marker, Popup, LayersControl, LayerGroup, Rectangle, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { PortalFrame } from '../PortalFrame';
@@ -27,7 +28,36 @@ function Fit({ bounds }: { bounds: L.LatLngBoundsExpression }) {
   return null;
 }
 
+function FocusPoint({ x, z }: { x: number; z: number }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setView([x, z], Math.max(map.getZoom(), 3), { animate: true });
+  }, [map, x, z]);
+  return null;
+}
+
+function LogoutMarker({ x, z, name }: { x: number; z: number; name: string }) {
+  const markerRef = useRef<L.Marker | null>(null);
+  useEffect(() => {
+    markerRef.current?.openPopup();
+  }, [x, z]);
+  return (
+    <Marker ref={markerRef} position={[x, z]} icon={icon('#fbbf24', name)}>
+      <Popup>
+        <strong>{name}</strong><br />
+        Last logout<br />
+        {Math.round(x)}, {Math.round(z)}
+      </Popup>
+    </Marker>
+  );
+}
+
 export default function PlayerMapClient() {
+  const query = useSearchParams();
+  const focusLogout = query.get('focus') === 'logout';
+  const focusX = Number(query.get('x'));
+  const focusZ = Number(query.get('z'));
+  const logoutFocus = focusLogout && Number.isFinite(focusX) && Number.isFinite(focusZ);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
   const [players, setPlayers] = useState<Entity[]>([]);
@@ -138,23 +168,31 @@ export default function PlayerMapClient() {
   return (
     <PortalFrame profile={profile} wide>
       <div style={{ display: 'flex', gap: 13, flexWrap: 'wrap', fontSize: 13, marginBottom: 8 }}>
-        {profile ? <span style={{ color: '#60a5fa' }}>Players {players.length} · Steam verified</span> : <a href="/player" style={{ color: '#fbbf24' }}>Players hidden · sign in through Steam</a>}
-        <span style={{ color: '#4ade80' }}>Animals {animals.length}</span>
-        <span style={{ color: '#f87171' }}>Zombies/hostiles {hostiles.length}</span>
-        {profile && <span style={{ color: '#c084fc' }}>Your claims {places.claims.length}</span>}
+        {logoutFocus && <span style={{ color: '#fbbf24' }}>Showing your last logout location only</span>}
+        {profile && !logoutFocus ? <span style={{ color: '#60a5fa' }}>Players {players.length} · Steam verified</span> : !logoutFocus ? <a href="/player" style={{ color: '#fbbf24' }}>Players hidden · sign in through Steam</a> : null}
+        {!logoutFocus && <span style={{ color: '#4ade80' }}>Animals {animals.length}</span>}
+        {!logoutFocus && <span style={{ color: '#f87171' }}>Zombies/hostiles {hostiles.length}</span>}
+        {profile && !logoutFocus && <span style={{ color: '#c084fc' }}>Your claims {places.claims.length}</span>}
         {feedError && <span style={{ color: '#fbbf24' }}>{feedError}</span>}
       </div>
       <div style={{ height: 'calc(100vh - 165px)', minHeight: 480, border: '1px solid #292936', borderRadius: 10, overflow: 'hidden' }}>
         <MapContainer crs={crs} center={[0, 0]} zoom={1} minZoom={-1} maxZoom={5} maxBounds={bounds.pad(0.12)} fadeAnimation={false} style={{ height: '100%', width: '100%', background: '#111827' }}>
-          <Fit bounds={bounds} />
+          {logoutFocus ? <FocusPoint x={focusX} z={focusZ} /> : <Fit bounds={bounds} />}
           <TileLayer url="/api/player-map/map/{z}/{x}/{y}.png" noWrap bounds={bounds} tileSize={128} minZoom={-1} minNativeZoom={0} maxNativeZoom={config.maxZoom ?? 4} keepBuffer={16} updateInterval={50} updateWhenIdle={false} updateWhenZooming />
           <LayersControl position="topright">
-            {profile && (
+            {logoutFocus && (
+              <LayersControl.Overlay checked name="Your last logout">
+                <LayerGroup>
+                  <LogoutMarker x={focusX} z={focusZ} name={profile?.name || 'You'} />
+                </LayerGroup>
+              </LayersControl.Overlay>
+            )}
+            {profile && !logoutFocus && (
               <LayersControl.Overlay checked name="Players">
                 <LayerGroup>{players.map((e) => <Marker key={e.id} position={[e.position.x, e.position.z]} icon={icon('#3b82f6', e.name)}><Popup><strong>{e.name}</strong><br />{Math.round(e.position.x)}, {Math.round(e.position.z)}</Popup></Marker>)}</LayerGroup>
               </LayersControl.Overlay>
             )}
-            {profile && (
+            {profile && !logoutFocus && (
               <LayersControl.Overlay checked name={`Your claims (${places.claims.length})`}>
                 <LayerGroup>
                   {places.claims.map((claim) => {
@@ -172,12 +210,12 @@ export default function PlayerMapClient() {
                 </LayerGroup>
               </LayersControl.Overlay>
             )}
-            {profile && (
+            {profile && !logoutFocus && (
               <LayersControl.Overlay checked name={`Your bed (${places.homes.length})`}>
                 <LayerGroup>{places.homes.map((home) => <Marker key={home.id} position={[home.position.x, home.position.z]} icon={icon('#fbbf24', 'Bed')}><Popup>Your bed{home.active ? '' : ' (inactive)'}<br />{Math.round(home.position.x)}, {Math.round(home.position.z)}</Popup></Marker>)}</LayerGroup>
               </LayersControl.Overlay>
             )}
-            {profile && (
+            {profile && !logoutFocus && (
               <LayersControl.Overlay checked name={`Your vehicles (${places.vehicles.length})`}>
                 <LayerGroup>{places.vehicles.map((vehicle) => (
                   <Marker key={vehicle.id} position={[vehicle.position.x, vehicle.position.z]} icon={icon('#38bdf8', vehicle.name)}>
@@ -202,17 +240,21 @@ export default function PlayerMapClient() {
                 ))}</LayerGroup>
               </LayersControl.Overlay>
             )}
-            {profile && (
+            {profile && !logoutFocus && (
               <LayersControl.Overlay checked name={`Your drones (${places.drones.length})`}>
                 <LayerGroup>{places.drones.map((drone) => <Marker key={drone.id} position={[drone.position.x, drone.position.z]} icon={icon('#f472b6', drone.name)}><Popup>{drone.name}<br />{Math.round(drone.position.x)}, {Math.round(drone.position.z)}</Popup></Marker>)}</LayerGroup>
               </LayersControl.Overlay>
             )}
-            <LayersControl.Overlay checked name="Animals">
-              <LayerGroup>{animals.map((e) => <Marker key={e.id} position={[e.position.x, e.position.z]} icon={icon('#22c55e')}><Popup>{e.name}</Popup></Marker>)}</LayerGroup>
-            </LayersControl.Overlay>
-            <LayersControl.Overlay checked name="Zombies & hostiles">
-              <LayerGroup>{hostiles.map((e) => <Marker key={e.id} position={[e.position.x, e.position.z]} icon={icon('#ef4444')}><Popup>{e.name}</Popup></Marker>)}</LayerGroup>
-            </LayersControl.Overlay>
+            {!logoutFocus && (
+              <LayersControl.Overlay checked name="Animals">
+                <LayerGroup>{animals.map((e) => <Marker key={e.id} position={[e.position.x, e.position.z]} icon={icon('#22c55e')}><Popup>{e.name}</Popup></Marker>)}</LayerGroup>
+              </LayersControl.Overlay>
+            )}
+            {!logoutFocus && (
+              <LayersControl.Overlay checked name="Zombies & hostiles">
+                <LayerGroup>{hostiles.map((e) => <Marker key={e.id} position={[e.position.x, e.position.z]} icon={icon('#ef4444')}><Popup>{e.name}</Popup></Marker>)}</LayerGroup>
+              </LayersControl.Overlay>
+            )}
           </LayersControl>
         </MapContainer>
       </div>

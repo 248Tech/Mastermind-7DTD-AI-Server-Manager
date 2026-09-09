@@ -15,6 +15,7 @@ const NAV_GROUPS = [
     { href: '/tools', label: 'Tools', icon: '⚒', title: 'Connection protection and server utilities' },
     { href: '/players', label: 'Players', icon: '♟', title: 'Player identities, playtime, kick, and ban controls' },
     { href: '/mods', label: 'Mods', icon: '◇', title: 'Installed mods, quarantine, and member recommendations awaiting approval' },
+    { href: '/poi-search', label: 'POI Search', icon: '⌕', title: 'Search server POI prefabs and view game preview images' },
     { href: '/saves', label: 'Saves', icon: '▣', title: 'Back up, restore, and manage world saves' },
     { href: '/logs', label: 'Logs', icon: '≡', title: 'Live and recorded server logs' },
     { href: '/chat', label: 'Chat', icon: '💬', title: 'Player-only chat history and Discord relay' },

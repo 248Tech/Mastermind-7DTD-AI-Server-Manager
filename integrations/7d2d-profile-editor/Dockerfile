@@ -10,6 +10,10 @@ LABEL org.opencontainers.image.licenses="GPL-3.0"
 LABEL org.opencontainers.image.vendor="RussDev7 / DannyRuss"
 WORKDIR /app
 COPY --from=source /source /app
+COPY overlay/save.php /app/save.php
+COPY overlay/upload.php /app/upload.php
+COPY overlay/lang/en.php /app/lang/en.php
+COPY overlay/lang/ja.php /app/lang/ja.php
 USER www-data
 EXPOSE 8000
 CMD ["php", "-S", "0.0.0.0:8000", "-t", "/app"]

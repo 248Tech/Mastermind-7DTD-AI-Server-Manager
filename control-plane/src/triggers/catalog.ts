@@ -24,6 +24,11 @@ export function parsePlayerLevelConfig(raw: unknown): PlayerLevelConfig {
   return { level, comparison };
 }
 
+/** True when the player newly reached the target, including jumping past it. */
+export function playerReachedLevel(_comparison: 'gte' | 'eq', previousLevel: number, newLevel: number, target: number): boolean {
+  return previousLevel < target && newLevel >= target;
+}
+
 export function parseLandClaimActionConfig(raw: unknown): LandClaimActionConfig {
   const data = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const claimCount = Number(data.claimCount);
@@ -33,7 +38,7 @@ export function parseLandClaimActionConfig(raw: unknown): LandClaimActionConfig 
   const message = typeof data.message === 'string' ? data.message.trim().slice(0, 200) : '';
   return {
     claimCount,
-    notifyPlayer: data.notifyPlayer === true,
+    notifyPlayer: data.notifyPlayer !== false,
     message: message || '{name} reached level {level} and can now place {claims} land claims.',
   };
 }
@@ -50,7 +55,7 @@ export function parseGrantItemsActionConfig(raw: unknown): GrantItemsActionConfi
   const message = typeof data.message === 'string' ? data.message.trim().slice(0, 200) : '';
   return {
     items,
-    notifyPlayer: data.notifyPlayer === true,
+    notifyPlayer: data.notifyPlayer !== false,
     message: message || 'You reached a reward level.',
   };
 }

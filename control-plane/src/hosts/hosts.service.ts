@@ -1,9 +1,23 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException, forwardRef } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
+import { JobsService } from '../jobs/jobs.service';
 
 const HEALTH_SAMPLE_RETENTION_MS = 48 * 60 * 60_000;
 const HEALTH_SAMPLE_PRUNE_INTERVAL_MS = 5 * 60_000;
+/** Minimum gap between automatic reboot-if-down starts for one server. */
+const REBOOT_IF_DOWN_COOLDOWN_MS = 3 * 60_000;
+const REBOOT_IF_DOWN_BLOCKING_JOBS = [
+  'SERVER_START',
+  'SERVER_RESTART',
+  'SERVER_SAFE_RESTART',
+  'SERVER_STOP',
+  'SERVER_SAVE_STOP',
+  'SERVER_UPDATE',
+  'SERVER_MAINTENANCE',
+  'SERVER_WIPE_SAVE',
+  'SERVER_KILL',
+];
 
 export interface HeartbeatMetrics {
   cpu?: number;
@@ -17,9 +31,13 @@ export interface HeartbeatMetrics {
 
 @Injectable()
 export class HostsService {
+  private readonly logger = new Logger(HostsService.name);
   private readonly lastHealthSample = new Map<string, number>();
   private lastHealthPrune = 0;
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => JobsService)) private readonly jobsService: JobsService,
+  ) {}
 
   /** List all hosts in the org with their server instance count. */
   async findAll(orgId: string) {
@@ -158,6 +176,51 @@ export class HostsService {
       throw new NotFoundException('Host not found');
     }
     await this.recordHeartbeat(hostId, host.orgId, metrics);
+    if (metrics?.gameReachable === false) {
+      await this.maybeRebootIfDown(hostId, host.orgId).catch((error) => {
+        this.logger.warn(`reboot-if-down check failed for host ${hostId}: ${error instanceof Error ? error.message : error}`);
+      });
+    }
+  }
+
+  /**
+   * When the game probe reports unreachable, start any servers on this host that
+   * opted into reboot-if-down (and are not in maintenance).
+   */
+  private async maybeRebootIfDown(hostId: string, orgId: string): Promise<void> {
+    const servers = await this.prisma.serverInstance.findMany({
+      where: { hostId, orgId, rebootIfDown: true, maintenanceMode: false },
+      select: { id: true },
+    });
+    if (servers.length === 0) return;
+
+    const cooldownSince = new Date(Date.now() - REBOOT_IF_DOWN_COOLDOWN_MS);
+    for (const server of servers) {
+      const active = await this.prisma.jobRun.findFirst({
+        where: {
+          hostId,
+          status: { in: ['pending', 'running'] },
+          job: { serverInstanceId: server.id, type: { in: REBOOT_IF_DOWN_BLOCKING_JOBS } },
+        },
+        select: { id: true },
+      });
+      if (active) continue;
+
+      const recent = await this.prisma.job.findFirst({
+        where: {
+          serverInstanceId: server.id,
+          type: { in: REBOOT_IF_DOWN_BLOCKING_JOBS },
+          createdAt: { gte: cooldownSince },
+        },
+        select: { id: true },
+      });
+      if (recent) continue;
+
+      await this.jobsService.enqueueInternalJob(orgId, null, server.id, 'SERVER_START', {
+        trigger: 'reboot_if_down',
+      });
+      this.logger.log(`Queued SERVER_START for server ${server.id} (reboot if down)`);
+    }
   }
 
   /**

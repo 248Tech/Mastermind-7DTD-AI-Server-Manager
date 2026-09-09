@@ -1,8 +1,12 @@
 package sevendtd
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mastermind/agent/internal/agent"
 )
 
 func TestUpsertLandClaimXMLCreatesFile(t *testing.T) {
@@ -74,23 +78,50 @@ func TestUpsertLandClaimXMLUpdatesWithoutInserting(t *testing.T) {
 	}
 }
 
-func TestTriggerNoticeUsesGlobalSay(t *testing.T) {
+func TestTriggerNoticeUsesSayPlayerByNameWhenNoEntity(t *testing.T) {
 	commands := triggerNoticeCommands(map[string]interface{}{"name": "Pat Two"}, "You can now place 6 land claims.")
-	if len(commands) != 1 || commands[0] != "say You can now place 6 land claims." {
+	if len(commands) != 1 || commands[0] != `sayplayer "Pat Two" "You can now place 6 land claims."` {
 		t.Fatalf("commands=%v", commands)
 	}
 }
 
-func TestTriggerNoticeAddsSayPlayerByEntity(t *testing.T) {
+func TestTriggerNoticeUsesSayPlayerByEntity(t *testing.T) {
 	commands := triggerNoticeCommands(map[string]interface{}{"name": "Pat Two", "entityId": float64(171)}, "Reward granted.")
-	if len(commands) != 2 || commands[0] != "say Reward granted." || commands[1] != "sayplayer 171 Reward granted." {
+	if len(commands) != 1 || commands[0] != `sayplayer 171 "Reward granted."` {
 		t.Fatalf("commands=%v", commands)
 	}
 }
 
-func TestLandClaimNotifyCommandIsGlobalSay(t *testing.T) {
-	command := landClaimNotifyCommand(map[string]interface{}{"name": "Pat Two"}, "Hello")
-	if command != "say Hello" {
+func TestLandClaimNotifyCommandIsPrivateSayPlayer(t *testing.T) {
+	command := landClaimNotifyCommand(map[string]interface{}{"name": "Pat Two", "entityId": float64(171)}, "Hello there")
+	if command != `sayplayer 171 "Hello there"` {
 		t.Fatalf("command=%q", command)
+	}
+}
+
+func TestReadServerLandClaimDefault(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "serverconfig.xml")
+	if err := os.WriteFile(configPath, []byte(`<ServerSettings><property name="LandClaimCount" value="4"/></ServerSettings>`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &agent.InstanceConfig{InstallPath: filepath.Join(dir, "7DaysToDieServer.x86_64")}
+	got, err := readServerLandClaimDefault(cfg, map[string]interface{}{"server_config_path": configPath})
+	if err != nil || got != 4 {
+		t.Fatalf("got=%d err=%v", got, err)
+	}
+}
+
+func TestLandClaimBonusClaimsPrefersBonusClaimsKey(t *testing.T) {
+	got, err := landClaimBonusClaims(map[string]interface{}{"bonusClaims": float64(2), "claimCount": float64(9)})
+	if err != nil || got != 2 {
+		t.Fatalf("got=%d err=%v", got, err)
+	}
+}
+
+func TestLandClaimBonusClaimsLegacyClaimCount(t *testing.T) {
+	got, err := landClaimBonusClaims(map[string]interface{}{"claimCount": float64(1)})
+	if err != nil || got != 1 {
+		t.Fatalf("got=%d err=%v", got, err)
 	}
 }

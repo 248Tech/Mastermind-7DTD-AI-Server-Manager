@@ -2,7 +2,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
-type Profile = { name: string; steamId?: string | null; serverName: string; auth?: string };
+type Profile = { name: string; steamId?: string | null; serverName: string; auth?: string; isAdmin?: boolean; donation?: { supporter?: boolean } };
 export default function PlayerPortal() {
   return (
     <Suspense fallback={<main style={shell}><section style={card}><p style={{ color: '#94a3b8' }}>Loading player portal…</p></section></main>}>
@@ -28,6 +28,7 @@ function PlayerPortalContent() {
   const login = `/api/player-auth/steam/start${server ? `?server=${encodeURIComponent(server)}` : ''}`;
   const steam = profile && profile.auth !== 'name';
   const steamLast4 = profile?.steamId ? profile.steamId.slice(-4) : '';
+  const canBrowseMods = Boolean(profile?.isAdmin || profile?.donation?.supporter);
   async function submitModRequest(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!requestFile || !requestDescription.trim() || requestBusy) return;
@@ -71,6 +72,8 @@ function PlayerPortalContent() {
             {steam && <a href="/player/profile" style={primary}>View profile</a>}
             <a href="/player/shop" style={primary}>Donate</a>
             <a href="/player/map" style={primary}>Open live map</a>
+            {canBrowseMods && <a href="/player/mods" style={primary}>View / download mods</a>}
+            {canBrowseMods && <a href="/player/pois" style={primary}>Search POIs</a>}
             <details style={requestBox}>
               <summary style={{ cursor: 'pointer', color: '#fed7aa', fontWeight: 700 }}>Request a mod</summary>
               <p style={helpText}>Recommend a ZIP mod for staff review. Your verified in-game name is recorded with the request.</p>

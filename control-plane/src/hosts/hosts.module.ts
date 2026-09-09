@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { HostsService } from './hosts.service';
 import { HostsController } from './hosts.controller';
@@ -7,11 +7,13 @@ import { PrismaService } from '../prisma.service';
 import { PairingModule } from '../pairing/pairing.module';
 import { OrgMemberGuard } from '../server-instances/guards/org-member.guard';
 import { ServerInstancesModule } from '../server-instances/server-instances.module';
+import { JobsModule } from '../jobs/jobs.module';
 
 @Module({
   imports: [
     PairingModule, // exports AgentAuthGuard and PairingService
     ServerInstancesModule,
+    forwardRef(() => JobsModule),
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'change-me-user-secret',
       signOptions: { expiresIn: '7d' },

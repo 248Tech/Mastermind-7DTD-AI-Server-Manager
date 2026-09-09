@@ -1,0 +1,1 @@
+ALTER TABLE "ServerInstance" ADD COLUMN IF NOT EXISTS "reboot_if_down" BOOLEAN NOT NULL DEFAULT false;

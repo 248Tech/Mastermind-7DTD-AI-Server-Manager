@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/mastermind/agent/internal/agent"
+	"github.com/mastermind/agent/internal/games/7dtd/configmerge"
 )
 
 const gameSlug = "7dtd"
@@ -286,6 +287,8 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			getString(job.Payload, "mods_path", ""),
 			getString(job.Payload, "archive_path", ""),
 			getString(job.Payload, "originalName", "uploaded-mod.zip"),
+			getBool(job.Payload, "overrideActive"),
+			getBool(job.Payload, "transferConfig"),
 		)
 		if err != nil {
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
@@ -334,27 +337,42 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 		}
 		return agent.JobResult{Status: "success", Result: map[string]interface{}{"quarantined": folder}}, nil
 	case "MOD_QUARANTINE_LIST":
-		root, err := quarantinePath(cfg, getString(job.Payload, "mods_path", ""))
-		if err != nil {
-			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
-		}
-		mods, err := listModsAt(root)
+		mods, err := listQuarantinedMods(cfg, getString(job.Payload, "mods_path", ""))
 		if err != nil {
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 		return agent.JobResult{Status: "success", Result: map[string]interface{}{"mods": mods}}, nil
 	case "MOD_RESTORE":
 		folder := getString(job.Payload, "folder", "")
-		if err := restoreMod(cfg, getString(job.Payload, "mods_path", ""), folder); err != nil {
+		var transferOverride *bool
+		if _, ok := job.Payload["transferConfig"]; ok {
+			value := getBool(job.Payload, "transferConfig")
+			transferOverride = &value
+		}
+		result, err := restoreMod(cfg, getString(job.Payload, "mods_path", ""), folder, getBool(job.Payload, "forceOverride"), transferOverride)
+		if err != nil {
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
-		return agent.JobResult{Status: "success", Result: map[string]interface{}{"restored": folder}}, nil
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{
+			"restored":       folder,
+			"restoredAs":     result.RestoredAs,
+			"transferConfig": result.TransferConfig,
+			"sourceFolder":   result.SourceFolder,
+		}}, nil
 	case "MOD_DELETE":
 		folder := getString(job.Payload, "folder", "")
-		if err := deleteModWithPipe(ctx, cfg, getString(job.Payload, "mods_path", ""), folder); err != nil {
+		source := strings.ToLower(strings.TrimSpace(getString(job.Payload, "source", "active")))
+		var err error
+		switch source {
+		case "quarantine", "quarantined":
+			err = deleteQuarantinedMod(cfg, getString(job.Payload, "mods_path", ""), folder)
+		default:
+			err = deleteModWithPipe(ctx, cfg, getString(job.Payload, "mods_path", ""), folder)
+		}
+		if err != nil {
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
-		return agent.JobResult{Status: "success", Result: map[string]interface{}{"deleted": folder}}, nil
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"deleted": folder, "source": source}}, nil
 	case "MOD_CONFIG_READ":
 		folder := getString(job.Payload, "folder", "")
 		path := getString(job.Payload, "path", "")
@@ -371,6 +389,48 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 		return agent.JobResult{Status: "success", Result: map[string]interface{}{"folder": folder, "path": path, "saved": true}}, nil
+	case "MOD_CONFIG_MERGE_PREVIEW":
+		result, err := previewConfigMerge(cfg, getString(job.Payload, "mods_path", ""), getString(job.Payload, "sourceFolder", ""), getString(job.Payload, "targetFolder", ""))
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"files": result}}, nil
+	case "MOD_CONFIG_MERGE_APPLY":
+		files, _ := job.Payload["files"].([]interface{})
+		if len(files) == 0 {
+			return agent.JobResult{Status: "failed", Error: "no files to apply"}, nil
+		}
+		applied := 0
+		targetFolder := getString(job.Payload, "folder", "")
+		for _, f := range files {
+			entry, ok := f.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			path := getString(entry, "path", "")
+			content := getString(entry, "content", "")
+			if path == "" || content == "" {
+				continue
+			}
+			if err := writeModConfig(cfg, getString(job.Payload, "mods_path", ""), targetFolder, path, content); err != nil {
+				return agent.JobResult{Status: "failed", Error: fmt.Sprintf("write %s: %s", path, err.Error())}, nil
+			}
+			applied++
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"applied": applied, "folder": targetFolder}}, nil
+	case "SERVER_CONFIG_READ":
+		content, path, err := readConfiguredServerConfig(cfg, job.Payload)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"path": path, "content": content}}, nil
+	case "SERVER_CONFIG_WRITE":
+		content := getString(job.Payload, "content", "")
+		path, err := writeConfiguredServerConfig(cfg, job.Payload, content)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"path": path, "saved": true}}, nil
 	case "TRIGGER_LAND_CLAIM":
 		result, err := applyLandClaimReward(ctx, a, cfg, job.Payload)
 		if err != nil {
@@ -389,6 +449,18 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 		return agent.JobResult{Status: "success", Result: catalog}, nil
+	case "POI_CATALOG":
+		catalog, err := listPOICatalog(cfg)
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: catalog}, nil
+	case "POI_PREVIEW":
+		preview, err := readPOIPreview(cfg, getString(job.Payload, "name", ""))
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: preview}, nil
 	case "PROFILE_LIST":
 		profiles, err := listPlayerProfiles(job.Payload)
 		if err != nil {
@@ -415,8 +487,12 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 // Keep the base64 job result below Nest's default JSON request limit.
 // Normal 7DTD profiles are only tens of KiB.
 const maxProfileEditorBytes = 64 * 1024
-const profileStagingRoot = "/var/lib/mastermind-agent/profile-staging"
-const profileBackupRoot = "/var/lib/mastermind-agent/profile-backups"
+
+var profileStagingRoot = "/var/lib/mastermind-agent/profile-staging"
+var profileBackupRoot = "/var/lib/mastermind-agent/profile-backups"
+var sevenDaysRunning = func() bool {
+	return exec.Command("/usr/bin/systemctl", "is-active", "--quiet", "7dtd.service").Run() == nil
+}
 
 type playerProfile struct {
 	Path               string    `json:"path"`
@@ -696,7 +772,7 @@ func applyStagedPlayerProfiles(serverID string) error {
 			break
 		}
 	}
-	if hasQueued && exec.Command("/usr/bin/systemctl", "is-active", "--quiet", "7dtd.service").Run() == nil {
+	if hasQueued && sevenDaysRunning() {
 		return fmt.Errorf("7DTD must be fully stopped before applying staged profiles")
 	}
 	for _, entry := range entries {
@@ -771,6 +847,9 @@ func applyStagedPlayerProfiles(serverID string) error {
 			_ = os.Remove(temporaryPath)
 			return fmt.Errorf("install replacement profile: %w", err)
 		}
+		if err := copySaveFile(metadata.Target, metadata.Target+".bak", info.Mode().Perm()); err != nil {
+			return fmt.Errorf("write injected profile companion: %w", err)
+		}
 		if err := os.Remove(dataPath); err != nil {
 			return err
 		}
@@ -833,12 +912,31 @@ func quarantineMod(cfg *agent.InstanceConfig, override, folder string) error {
 const maxModArchiveFiles = 10000
 const maxModArchiveExpandedBytes int64 = 2 * 1024 * 1024 * 1024
 
-func installUploadedModsToQuarantine(cfg *agent.InstanceConfig, override, archivePath, originalName string) ([]string, error) {
+func installUploadedModsToQuarantine(cfg *agent.InstanceConfig, override, archivePath, originalName string, overrideActive, transferConfig bool) ([]string, error) {
 	dest, err := quarantinePath(cfg, override)
 	if err != nil {
 		return nil, err
 	}
-	return installUploadedMods(dest, archivePath, originalName)
+	folders, err := installUploadedMods(dest, archivePath, originalName)
+	if err != nil {
+		return nil, err
+	}
+	activeRoot, err := modsPath(cfg, override)
+	if err != nil {
+		return nil, err
+	}
+	for _, folder := range folders {
+		conflicts := activeModFolderExists(activeRoot, folder)
+		record := quarantineRecord{
+			TargetFolder:   folder,
+			OverrideActive: overrideActive && conflicts,
+			TransferConfig: transferConfig && overrideActive && conflicts,
+		}
+		if err := writeQuarantineRecord(dest, folder, record); err != nil {
+			return nil, err
+		}
+	}
+	return folders, nil
 }
 
 func installUploadedModsToPending(cfg *agent.InstanceConfig, override, archivePath, originalName, recommendedBy, recommendedById, description string) ([]string, error) {
@@ -1033,9 +1131,96 @@ func installUploadedMods(destRoot, archivePath, originalName string) ([]string, 
 		}
 		moved = append(moved, folder)
 		folders = append(folders, folder)
+
+		// Also extract a sibling {folder}_Config tree from the ZIP when present
+		// (e.g. ServerTools_Config next to ServerTools). These hold runtime XML
+		// templates used by config merge / replace-with-original.
+		if err := extractSiblingConfigFromZip(reader.File, cleanNames, root, folder, destRoot); err != nil {
+			for _, rollback := range moved {
+				_ = os.RemoveAll(filepath.Join(destRoot, rollback))
+			}
+			_ = os.RemoveAll(filepath.Join(destRoot, folder+"_Config"))
+			return nil, err
+		}
 	}
 	sort.Strings(folders)
 	return folders, nil
+}
+
+// extractSiblingConfigFromZip copies ZIP entries under a sibling "{folder}_Config"
+// directory that sits next to the mod root (same parent as ModInfo.xml's folder).
+// Official ServerTools packages rarely include this; staff can add defaults for merge.
+func extractSiblingConfigFromZip(files []*zip.File, cleanNames map[*zip.File]string, modRoot, folder, destRoot string) error {
+	configName := folder + "_Config"
+	parent := "."
+	if modRoot != "." {
+		parent = pathpkg.Dir(modRoot)
+		if parent == "." {
+			parent = ""
+		}
+	}
+	prefix := configName + "/"
+	if parent != "" {
+		prefix = parent + "/" + configName + "/"
+	}
+	exactDir := strings.TrimSuffix(prefix, "/")
+	var matched bool
+	for _, entry := range files {
+		clean := cleanNames[entry]
+		if clean != exactDir && !strings.HasPrefix(clean, prefix) {
+			continue
+		}
+		matched = true
+		break
+	}
+	if !matched {
+		return nil
+	}
+	destConfig := filepath.Join(destRoot, configName)
+	if _, err := os.Lstat(destConfig); !os.IsNotExist(err) {
+		return fmt.Errorf("config folder already exists: %s", configName)
+	}
+	if err := os.MkdirAll(destConfig, 0750); err != nil {
+		return fmt.Errorf("create %s: %w", configName, err)
+	}
+	for entry, clean := range cleanNames {
+		if clean != exactDir && !strings.HasPrefix(clean, prefix) {
+			continue
+		}
+		relative := strings.TrimPrefix(strings.TrimPrefix(clean, exactDir), "/")
+		if relative == "" {
+			continue
+		}
+		target := filepath.Join(destConfig, filepath.FromSlash(relative))
+		if target != destConfig && !strings.HasPrefix(target, destConfig+string(filepath.Separator)) {
+			return fmt.Errorf("unsafe config path: %q", entry.Name)
+		}
+		if entry.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0750); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
+			return err
+		}
+		source, err := entry.Open()
+		if err != nil {
+			return fmt.Errorf("open ZIP entry %q: %w", entry.Name, err)
+		}
+		destination, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0640)
+		if err != nil {
+			_ = source.Close()
+			return fmt.Errorf("create config file %q: %w", relative, err)
+		}
+		copied, copyErr := io.Copy(destination, io.LimitReader(source, int64(entry.UncompressedSize64)+1))
+		closeErr := destination.Close()
+		sourceErr := source.Close()
+		if copyErr != nil || closeErr != nil || sourceErr != nil || copied != int64(entry.UncompressedSize64) {
+			return fmt.Errorf("extract config entry %q: archive data is incomplete or invalid", entry.Name)
+		}
+	}
+	return normalizeModPermissions(destConfig)
 }
 
 func quarantinePath(cfg *agent.InstanceConfig, override string) (string, error) {
@@ -1169,41 +1354,95 @@ func rejectPendingMod(cfg *agent.InstanceConfig, override, folder string) error 
 	return nil
 }
 
-func restoreMod(cfg *agent.InstanceConfig, override, folder string) error {
-	root, err := modsPath(cfg, override)
-	if err != nil {
-		return err
-	}
+func deleteQuarantinedMod(cfg *agent.InstanceConfig, override, folder string) error {
 	quarantineRoot, err := quarantinePath(cfg, override)
 	if err != nil {
 		return err
 	}
-	source, err := realModDirectory(quarantineRoot, folder)
+	target, err := realModDirectory(quarantineRoot, folder)
 	if err != nil {
 		return fmt.Errorf("quarantined %w", err)
 	}
-	destination := filepath.Join(root, folder)
+	if err := os.RemoveAll(target); err != nil {
+		return fmt.Errorf("delete quarantined mod: %w", err)
+	}
+	_ = os.Remove(activationMarkerPath(cfg, override, folder))
+	return nil
+}
+
+type restoreResult struct {
+	RestoredAs     string `json:"restoredAs"`
+	TransferConfig bool   `json:"transferConfig"`
+	SourceFolder   string `json:"sourceFolder"`
+}
+
+func restoreMod(cfg *agent.InstanceConfig, override, folder string, forceOverride bool, transferConfigOverride *bool) (restoreResult, error) {
+	empty := restoreResult{}
+	root, err := modsPath(cfg, override)
+	if err != nil {
+		return empty, err
+	}
+	quarantineRoot, err := quarantinePath(cfg, override)
+	if err != nil {
+		return empty, err
+	}
+	source, err := realModDirectory(quarantineRoot, folder)
+	if err != nil {
+		return empty, fmt.Errorf("quarantined %w", err)
+	}
+	record := readQuarantineRecord(quarantineRoot, folder)
+	targetFolder := record.TargetFolder
+	if targetFolder == "" {
+		targetFolder = folder
+	}
+	overrideActive := record.OverrideActive || forceOverride
+	transferConfig := record.TransferConfig
+	if transferConfigOverride != nil {
+		transferConfig = *transferConfigOverride
+	}
+	if !overrideActive {
+		transferConfig = false
+	}
+	var destination string
+	if overrideActive {
+		if err := removeActiveModFolder(root, targetFolder); err != nil {
+			return empty, err
+		}
+		destination = filepath.Join(root, targetFolder)
+	} else {
+		nextFolder, err := nextAvailableModFolder(root, targetFolder)
+		if err != nil {
+			return empty, err
+		}
+		destination = filepath.Join(root, nextFolder)
+	}
+	_ = os.Remove(quarantineRecordPath(quarantineRoot, folder))
 	if _, err := os.Lstat(destination); !os.IsNotExist(err) {
-		return fmt.Errorf("active mod folder already exists: %s", folder)
+		return empty, fmt.Errorf("active mod folder already exists: %s", filepath.Base(destination))
 	}
 	if output, err := exec.Command("/usr/bin/mv", "--", source, destination).CombinedOutput(); err != nil {
-		return fmt.Errorf("restore mod: %w: %s", err, strings.TrimSpace(string(output)))
+		return empty, fmt.Errorf("restore mod: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	if err := normalizeModPermissions(destination); err != nil {
-		return fmt.Errorf("make restored mod readable by game server: %w", err)
+		return empty, fmt.Errorf("make restored mod readable by game server: %w", err)
 	}
 	now := time.Now()
 	if err := os.Chtimes(destination, now, now); err != nil {
-		return fmt.Errorf("record restored mod activation time: %w", err)
+		return empty, fmt.Errorf("record restored mod activation time: %w", err)
 	}
-	marker := activationMarkerPath(cfg, override, folder)
+	restoredAs := filepath.Base(destination)
+	marker := activationMarkerPath(cfg, override, restoredAs)
 	if err := os.MkdirAll(filepath.Dir(marker), 0750); err != nil {
-		return fmt.Errorf("create mod activation state: %w", err)
+		return empty, fmt.Errorf("create mod activation state: %w", err)
 	}
 	if err := os.WriteFile(marker, []byte(now.UTC().Format(time.RFC3339Nano)+"\n"), 0640); err != nil {
-		return fmt.Errorf("record mod activation state: %w", err)
+		return empty, fmt.Errorf("record mod activation state: %w", err)
 	}
-	return nil
+	return restoreResult{
+		RestoredAs:     restoredAs,
+		TransferConfig: transferConfig,
+		SourceFolder:   folder,
+	}, nil
 }
 
 // Quarantine preserves the source tree's ownership and modes. Normalize the
@@ -1235,8 +1474,12 @@ type modInfo struct {
 	ConfigFiles    []string  `json:"configFiles,omitempty"`
 	RecommendedBy  string    `json:"recommendedBy,omitempty"`
 	RecommendedAt  string    `json:"recommendedAt,omitempty"`
-	OriginalName   string    `json:"originalName,omitempty"`
-	Description    string    `json:"description,omitempty"`
+	OriginalName        string `json:"originalName,omitempty"`
+	Description         string `json:"description,omitempty"`
+	OverrideActive      bool   `json:"overrideActive,omitempty"`
+	TransferConfig      bool   `json:"transferConfig,omitempty"`
+	ConflictsWithActive bool   `json:"conflictsWithActive,omitempty"`
+	RestoreTarget       string `json:"restoreTarget,omitempty"`
 }
 
 type serverAdmin struct {
@@ -1536,6 +1779,12 @@ func isEditableModConfig(folder, relativePath string) bool {
 }
 
 func resolveModConfig(root, folder, relativePath string) (string, error) {
+	return resolveModConfigPath(root, folder, relativePath, false)
+}
+
+// resolveModConfigPath validates an editable mod config path. When allowMissing
+// is true (merge apply of brand-new template files), the target need not exist yet.
+func resolveModConfigPath(root, folder, relativePath string, allowMissing bool) (string, error) {
 	modRoot, err := realModDirectory(root, folder)
 	if err != nil {
 		return "", err
@@ -1558,6 +1807,9 @@ func resolveModConfig(root, folder, relativePath string) (string, error) {
 	}
 	info, err := os.Lstat(target)
 	if err != nil {
+		if allowMissing && os.IsNotExist(err) {
+			return target, nil
+		}
 		return "", fmt.Errorf("mod config not found: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
@@ -1590,6 +1842,107 @@ func readModConfig(cfg *agent.InstanceConfig, override, folder, relativePath str
 		return "", fmt.Errorf("read mod config: %w", err)
 	}
 	return string(content), nil
+}
+
+// previewConfigMerge reads config files from both a quarantined source mod
+// and a live active target mod, then produces a template-safe merged preview
+// for each file. It does not write anything.
+func previewConfigMerge(cfg *agent.InstanceConfig, override, sourceFolder, targetFolder string) ([]configmerge.MergeResult, error) {
+	if sourceFolder == "" || targetFolder == "" {
+		return nil, fmt.Errorf("sourceFolder and targetFolder are required")
+	}
+	activeRoot, err := modsPath(cfg, override)
+	if err != nil {
+		return nil, err
+	}
+	quarantineRoot, err := quarantinePath(cfg, override)
+	if err != nil {
+		return nil, err
+	}
+	return previewConfigMergeAt(activeRoot, quarantineRoot, sourceFolder, targetFolder)
+}
+
+// previewConfigMergeAt compares quarantined templates against live active configs.
+func previewConfigMergeAt(activeRoot, quarantineRoot, sourceFolder, targetFolder string) ([]configmerge.MergeResult, error) {
+	// Discover config files from the active (target) mod — these are the live files
+	liveConfigFiles := findModConfigFiles(activeRoot, targetFolder)
+	// Discover config files from the quarantined (source) mod — these are the templates
+	templateConfigFiles := findModConfigFiles(quarantineRoot, sourceFolder)
+
+	// Build a set of template paths for quick lookup
+	templateSet := make(map[string]bool, len(templateConfigFiles))
+	for _, p := range templateConfigFiles {
+		templateSet[p] = true
+	}
+
+	// Union of all paths: template files + live files
+	allPaths := make(map[string]bool)
+	for _, p := range templateConfigFiles {
+		allPaths[p] = true
+	}
+	for _, p := range liveConfigFiles {
+		allPaths[p] = true
+	}
+
+	results := make([]configmerge.MergeResult, 0, len(allPaths))
+	for path := range allPaths {
+		templateContent := ""
+		liveContent := ""
+
+		// Read template from quarantine
+		if templateSet[path] {
+			resolved, resolveErr := resolveModConfig(quarantineRoot, sourceFolder, path)
+			if resolveErr == nil {
+				data, readErr := os.ReadFile(resolved)
+				if readErr == nil {
+					templateContent = string(data)
+				}
+			}
+		}
+
+		// Read live from active
+		liveResolved, liveResolveErr := resolveModConfig(activeRoot, targetFolder, path)
+		if liveResolveErr == nil {
+			data, readErr := os.ReadFile(liveResolved)
+			if readErr == nil {
+				liveContent = string(data)
+			}
+		}
+
+		if templateContent == "" && liveContent == "" {
+			continue
+		}
+		if templateContent == "" {
+			// Live file has no counterpart in new mod
+			results = append(results, configmerge.MergeResult{
+				Path:          path,
+				MergedContent: liveContent,
+				ParseFormat:   "text",
+				Warning:       "live file has no counterpart in new mod; will not be modified",
+				Skipped:       true,
+			})
+			continue
+		}
+		if liveContent == "" {
+			// Template exists but live doesn't — write template defaults
+			results = append(results, configmerge.MergeResult{
+				Path:            path,
+				MergedContent:   templateContent,
+				TemplateContent: templateContent,
+				ParseFormat:     "text",
+				Warning:         "new config file from updated mod (no existing live file)",
+				Stats:           configmerge.MergeStats{NewKeys: configmerge.CountNonEmptyLines(templateContent)},
+			})
+			continue
+		}
+
+		// Both exist: merge
+		result := configmerge.MergeFile(path, templateContent, liveContent)
+		result.TemplateContent = templateContent
+		results = append(results, result)
+	}
+
+	return results, nil
 }
 
 func modConfigFileWritable(target string) bool {
@@ -1653,18 +2006,34 @@ func writeModConfig(cfg *agent.InstanceConfig, override, folder, relativePath, c
 	if err != nil {
 		return err
 	}
-	target, err := resolveModConfig(root, folder, relativePath)
+	target, err := resolveModConfigPath(root, folder, relativePath, true)
 	if err != nil {
 		return err
+	}
+	targetDir := filepath.Dir(target)
+	mode := os.FileMode(0660)
+	info, statErr := os.Stat(target)
+	if statErr == nil {
+		mode = info.Mode().Perm()
+	} else if os.IsNotExist(statErr) {
+		if err := os.MkdirAll(targetDir, 0770); err != nil {
+			return fmt.Errorf("create mod config directory: %w", err)
+		}
+		if writeErr := os.WriteFile(target, []byte(content), mode); writeErr != nil {
+			if ensureErr := ensureModConfigWritable(target); ensureErr != nil {
+				return fmt.Errorf("create mod config: %w", writeErr)
+			}
+			if writeErr = os.WriteFile(target, []byte(content), mode); writeErr != nil {
+				return fmt.Errorf("create mod config: %w", writeErr)
+			}
+		}
+		return nil
+	} else {
+		return fmt.Errorf("stat mod config: %w", statErr)
 	}
 	if err := ensureModConfigWritable(target); err != nil {
 		return err
 	}
-	info, err := os.Stat(target)
-	if err != nil {
-		return fmt.Errorf("stat mod config: %w", err)
-	}
-	targetDir := filepath.Dir(target)
 	if modConfigDirectoryWritable(targetDir) {
 		temporary, tempErr := os.CreateTemp(targetDir, ".mastermind-config-*")
 		if tempErr == nil {
@@ -1679,7 +2048,7 @@ func writeModConfig(cfg *agent.InstanceConfig, override, folder, relativePath, c
 			if err != nil {
 				return fmt.Errorf("write temporary mod config: %w", err)
 			}
-			if err = os.Chmod(temporaryPath, info.Mode().Perm()); err != nil {
+			if err = os.Chmod(temporaryPath, mode); err != nil {
 				return fmt.Errorf("preserve mod config permissions: %w", err)
 			}
 			if err = os.Rename(temporaryPath, target); err == nil {
@@ -1687,10 +2056,65 @@ func writeModConfig(cfg *agent.InstanceConfig, override, folder, relativePath, c
 			}
 		}
 	}
-	if err := writeModConfigFile(target, content, info.Mode().Perm()); err != nil {
+	if err := writeModConfigFile(target, content, mode); err != nil {
 		return fmt.Errorf("write mod config: %w", err)
 	}
 	return nil
+}
+
+func configuredServerConfigPath(cfg *agent.InstanceConfig, payload map[string]interface{}) (string, error) {
+	config, _ := payload["config"].(map[string]interface{})
+	discovery, _ := config["discovery"].(map[string]interface{})
+	path, _ := discovery["serverConfigPath"].(string)
+	path = strings.TrimSpace(path)
+	if path == "" && cfg != nil && cfg.InstallPath != "" {
+		path = filepath.Join(filepath.Dir(cfg.InstallPath), "serverconfig.xml")
+	}
+	path = filepath.Clean(path)
+	if path == "." || !filepath.IsAbs(path) || (!strings.EqualFold(filepath.Base(path), "serverconfig.xml") && !strings.EqualFold(filepath.Base(path), "sdtdserver.xml")) {
+		return "", fmt.Errorf("configured 7DTD server config path required")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("read server config: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("server config must be a real file")
+	}
+	return path, nil
+}
+
+func readConfiguredServerConfig(cfg *agent.InstanceConfig, payload map[string]interface{}) (string, string, error) {
+	path, err := configuredServerConfigPath(cfg, payload)
+	if err != nil {
+		return "", "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", fmt.Errorf("read server config: %w", err)
+	}
+	if len(data) > maxModConfigBytes {
+		return "", "", fmt.Errorf("server config exceeds 256 KiB editor limit")
+	}
+	return string(data), path, nil
+}
+
+func writeConfiguredServerConfig(cfg *agent.InstanceConfig, payload map[string]interface{}, content string) (string, error) {
+	if len(content) > maxModConfigBytes {
+		return "", fmt.Errorf("server config exceeds 256 KiB editor limit")
+	}
+	path, err := configuredServerConfigPath(cfg, payload)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("stat server config: %w", err)
+	}
+	if err := writeModConfigFile(path, content, info.Mode().Perm()); err != nil {
+		return "", fmt.Errorf("write server config: %w", err)
+	}
+	return path, nil
 }
 
 func readModInfo(path string) (map[string]string, error) {

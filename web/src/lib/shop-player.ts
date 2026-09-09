@@ -22,7 +22,7 @@ export type ShopProfile = {
   serverName: string;
   online?: boolean;
   auth?: 'steam' | 'name';
-  donation?: { checkoutEnabled?: boolean };
+  donation?: { supporter?: boolean; checkoutEnabled?: boolean };
 };
 export type ShopSort = 'featured' | 'name-asc' | 'name-desc' | 'date-desc' | 'date-asc' | 'price-desc' | 'price-asc';
 

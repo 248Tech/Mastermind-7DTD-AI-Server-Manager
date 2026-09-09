@@ -1,5 +1,6 @@
 'use client';
 
+import { usePathname } from 'next/navigation';
 import { useShopCart } from '../../lib/shop-cart';
 
 export type PortalProfile = {
@@ -9,6 +10,7 @@ export type PortalProfile = {
   online?: boolean;
   auth?: string;
   isAdmin?: boolean;
+  donation?: { supporter?: boolean; checkoutEnabled?: boolean };
 };
 
 function isSteamSession(profile: PortalProfile | null) {
@@ -28,6 +30,7 @@ export function PortalFrame({
 }) {
   const signedIn = Boolean(profile?.name);
   const steam = isSteamSession(profile);
+  const path = usePathname() || '';
   return (
     <main style={{ minHeight: '100vh', background: '#08080d', color: '#f1f5f9' }}>
       <header style={{ height: 64, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '0 18px', background: '#111118', borderBottom: '1px solid #292936' }}>
@@ -40,12 +43,13 @@ export function PortalFrame({
         </div>
         <nav style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#94a3b8', fontSize: 13 }}>
           {profile?.name && <span style={{ color: profile.online ? '#4ade80' : '#94a3b8' }}>{profile.online ? '●' : '○'} {profile.name}</span>}
-          <a href="/player" style={link}>Home</a>
-          {steam && <a href="/player/profile" style={link}>Profile</a>}
-          {profile?.isAdmin && <a href="/" style={link}>Admin dashboard</a>}
-          <a href="/player/shop" style={link}>Shop</a>
-          <CartNavLink />
-          <a href="/player/map" style={link}>Map</a>
+          <NavLink href="/player" current={path === '/player'}>Home</NavLink>
+          {steam && <NavLink href="/player/profile" current={path.startsWith('/player/profile')}>Profile</NavLink>}
+          {profile?.isAdmin && <NavLink href="/" current={false}>Admin dashboard</NavLink>}
+          <NavLink href="/player/shop" current={path.startsWith('/player/shop')}>Shop</NavLink>
+          <CartNavLink current={path.startsWith('/player/shop/cart')} />
+          <NavLink href="/player/map" current={path.startsWith('/player/map')}>Map</NavLink>
+          {(profile?.isAdmin || profile?.donation?.supporter) && <NavLink href="/player/pois" current={path.startsWith('/player/pois')}>POIs</NavLink>}
           {signedIn && (
             <button
               onClick={() => fetch('/api/player-auth/logout', { method: 'POST' }).then(() => { location.href = '/player'; })}
@@ -62,11 +66,16 @@ export function PortalFrame({
 }
 
 const link: React.CSSProperties = { color: '#fb923c', textDecoration: 'none' };
+const linkOn: React.CSSProperties = { color: '#fed7aa', textDecoration: 'none', fontWeight: 700 };
 
-function CartNavLink() {
+function NavLink({ href, current, children }: { href: string; current: boolean; children: React.ReactNode }) {
+  return <a href={href} style={current ? linkOn : link}>{children}</a>;
+}
+
+function CartNavLink({ current }: { current?: boolean }) {
   const { count } = useShopCart();
   return (
-    <a href="/player/shop/cart" style={link}>
+    <a href="/player/shop/cart" style={current ? linkOn : link}>
       Cart{count > 0 ? ` (${count})` : ''}
     </a>
   );

@@ -21,6 +21,7 @@ import { PrismaCoreModule } from './prismacore/prismacore.module';
 import { AllocsModule } from './allocs/allocs.module';
 import { TriggersModule } from './triggers/triggers.module';
 import { VehiclesModule } from './vehicles/vehicles.module';
+import { PoiCatalogModule } from './poi-catalog/poi-catalog.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { VehiclesModule } from './vehicles/vehicles.module';
     AllocsModule,
     TriggersModule,
     VehiclesModule,
+    PoiCatalogModule,
   ],
 })
 export class AppModule {}

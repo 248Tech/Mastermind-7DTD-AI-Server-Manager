@@ -90,7 +90,7 @@ function actionSummary(trigger: TriggerRecord) {
       : 'Grant items';
   }
   const count = Number(trigger.actionConfig?.claimCount);
-  return Number.isInteger(count) ? `Land claims = ${count} + donated extras` : trigger.actionType;
+  return Number.isInteger(count) ? `+${count} claims (server default + donated)` : trigger.actionType;
 }
 
 export default function TriggersPage() {
@@ -308,7 +308,7 @@ export default function TriggersPage() {
                     <label style={labelStyle}>When level is</label>
                     <select style={inputStyle} value={form.comparison} onChange={(event) => setForm({ ...form, comparison: event.target.value as 'gte' | 'eq' })}>
                       <option value="gte">At least</option>
-                      <option value="eq">Exactly</option>
+                      <option value="eq">Reached this level</option>
                     </select>
                   </div>
                   <div>
@@ -341,7 +341,7 @@ export default function TriggersPage() {
                 <div>
                   <label style={labelStyle}>Trigger land claims *</label>
                   <input style={inputStyle} type="number" min={1} max={50} value={form.claimCount} onChange={(event) => setForm({ ...form, claimCount: event.target.value })} required />
-                  <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: 4 }}>Written to LandClaimCount.xml as this number plus extra claims from completed donations.</div>
+                  <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: 4 }}>Added on top of the server default LandClaimCount from serverconfig.xml, plus any extra claims from completed donations.</div>
                 </div>
               )}
               {form.actionType === 'grant_items' && (

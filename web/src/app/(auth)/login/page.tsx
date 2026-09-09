@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, AuthResponse } from '../../../lib/api';
-import { saveAuth } from '../../../lib/auth';
+import { saveAuth, isLoggedIn } from '../../../lib/auth';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -26,6 +26,11 @@ export default function LoginPage() {
     setMathPrompt(challenge.mathPrompt);setMathChallengeToken(challenge.mathChallengeToken);setMathAnswer('');setRecaptchaEnabled(challenge.recaptchaEnabled);setRecaptchaSiteKey(challenge.recaptchaSiteKey||'');
     if(recaptchaWidget.current!==null)window.grecaptcha?.reset(recaptchaWidget.current);
   }
+  useEffect(() => {
+    if (isLoggedIn()) {
+      router.replace('/dashboard');
+    }
+  }, [router]);
   useEffect(()=>{void loadSecurityChallenge().catch(()=>setError('Could not load the sign-in security challenge.'));},[]);
   useEffect(()=>{
     if(!recaptchaEnabled||!recaptchaSiteKey||!recaptchaHost.current)return;
@@ -95,6 +100,10 @@ export default function LoginPage() {
     try { await api.post('/api/auth/resend-verification',{email});setNotice('If this address has a pending account, a new confirmation email has been sent.'); }
     catch(err){setError(err instanceof Error?err.message:'Could not resend confirmation email');}
     finally{setLoading(false);}
+  }
+
+  if (isLoggedIn()) {
+    return null;
   }
 
   return (

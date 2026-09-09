@@ -36,6 +36,7 @@ import {
   lineGrantItems,
 } from '../donations/shop-grants';
 import { catalogFromAgentResult } from '../donations/item-catalog';
+import { poiCatalogFromAgentResult } from '../poi-catalog/poi-catalog';
 
 @Injectable()
 export class JobsService implements OnModuleInit, OnModuleDestroy {
@@ -92,7 +93,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       include: { role: true, user: { select: { email: true, name: true } } },
     });
     const roleName = membership?.role.name;
-    const viewerAllowed = ['MOD_LIST', 'MOD_QUARANTINE_LIST', 'MOD_PENDING_LIST', 'MOD_UPLOAD_PENDING'];
+    const viewerAllowed = ['MOD_LIST', 'MOD_QUARANTINE_LIST', 'MOD_PENDING_LIST', 'MOD_UPLOAD_PENDING', 'POI_CATALOG', 'POI_PREVIEW'];
     if (roleName === 'viewer' && !viewerAllowed.includes(normalizedJobType)) {
       throw new ForbiddenException('Verified members may recommend mods, but cannot change installed mods');
     }
@@ -163,6 +164,11 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         throw new ForbiddenException('Only organization administrators or operators may update the dedicated server');
       }
     }
+    if (normalizedJobType === 'SERVER_CONFIG_READ' || normalizedJobType === 'SERVER_CONFIG_WRITE') {
+      if (!roleName || !['admin', 'operator'].includes(roleName)) {
+        throw new ForbiddenException('Only organization administrators or operators may edit the server configuration');
+      }
+    }
     if (normalizedJobType === 'SERVER_MAINTENANCE') {
       if (!roleName || !['admin', 'operator'].includes(roleName)) {
         throw new ForbiddenException('Only organization administrators or operators may change maintenance mode');
@@ -187,6 +193,11 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         let password = '';
         try { password = decryptIntegrationSecret(encrypted); } catch { throw new BadRequestException('Stored maintenance password could not be decrypted'); }
         payload = { ...(payload ?? {}), enabled: true, password, kick_reason: 'Server entering maintenance' };
+        // Disable keep-alive starts immediately so heartbeat cannot fight maintenance.
+        await this.prisma.serverInstance.update({
+          where: { id: serverInstance.id },
+          data: { rebootIfDown: false },
+        });
       } else {
         payload = { ...(payload ?? {}), enabled: false, kick_reason: 'Server leaving maintenance' };
       }
@@ -351,9 +362,11 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const runStatus = dto.status === 'success' ? 'success' : 'failed';
-    const resultData = run.job.type === 'ITEM_CATALOG' && runStatus === 'success'
+    const resultData = runStatus === 'success' && run.job.type === 'ITEM_CATALOG'
       ? catalogFromAgentResult(dto.result)
-      : dto.result;
+      : runStatus === 'success' && run.job.type === 'POI_CATALOG'
+        ? poiCatalogFromAgentResult(dto.result)
+        : dto.result;
     const result = {
       durationMs: dto.durationMs,
       errorMessage: dto.errorMessage,
@@ -383,9 +396,13 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
 
     if (run.job.type === 'SERVER_MAINTENANCE' && runStatus === 'success' && run.job.serverInstanceId) {
       const payload = (run.job.payload ?? {}) as Record<string, unknown>;
+      const enabled = payload.enabled === true;
       await this.prisma.serverInstance.update({
         where: { id: run.job.serverInstanceId },
-        data: { maintenanceMode: payload.enabled === true },
+        data: {
+          maintenanceMode: enabled,
+          ...(enabled ? { rebootIfDown: false } : {}),
+        },
       });
     }
     if (run.job.type === 'SERVER_SAFE_RESTART' && runStatus === 'success' && run.job.serverInstanceId) {

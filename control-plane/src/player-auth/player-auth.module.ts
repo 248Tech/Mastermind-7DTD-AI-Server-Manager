@@ -9,9 +9,10 @@ import { PrismaCoreModule } from '../prismacore/prismacore.module';
 import { AllocsModule } from '../allocs/allocs.module';
 import { JobsModule } from '../jobs/jobs.module';
 import { VehiclesModule } from '../vehicles/vehicles.module';
+import { PoiCatalogModule } from '../poi-catalog/poi-catalog.module';
 
 @Module({
-  imports: [AuthModule, PrismaCoreModule, AllocsModule, JobsModule, VehiclesModule, JwtModule.register({ secret: process.env.PLAYER_JWT_SECRET || process.env.JWT_SECRET || 'change-me-user-secret' })],
+  imports: [AuthModule, PrismaCoreModule, AllocsModule, JobsModule, VehiclesModule, PoiCatalogModule, JwtModule.register({ secret: process.env.PLAYER_JWT_SECRET || process.env.JWT_SECRET || 'change-me-user-secret' })],
   controllers: [PlayerAuthController, PublicLandingController],
   providers: [PlayerAuthService, PrismaService],
   exports: [PlayerAuthService],

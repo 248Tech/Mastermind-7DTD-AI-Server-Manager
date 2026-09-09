@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Headers, Post, Req, UnauthorizedException, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Post, Query, Req, UnauthorizedException, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { PlayerAuthService } from './player-auth.service';
 import { AuthRateLimitService } from '../auth/auth-rate-limit.service';
@@ -46,6 +46,25 @@ export class PlayerAuthController {
   me(@Headers('authorization') authorization?: string) {
     if (!authorization?.startsWith('Bearer ')) throw new UnauthorizedException('Player session required');
     return this.auth.profile(authorization.slice(7));
+  }
+
+  @Get('mods')
+  mods(@Headers('authorization') authorization?: string) {
+    if (!authorization?.startsWith('Bearer ')) throw new UnauthorizedException('Player session required');
+    return this.auth.portalMods(authorization.slice(7));
+  }
+
+  @Get('pois')
+  pois(@Headers('authorization') authorization?: string) {
+    if (!authorization?.startsWith('Bearer ')) throw new UnauthorizedException('Player session required');
+    return this.auth.portalPOIs(authorization.slice(7));
+  }
+
+  @Get('pois/preview')
+  poiPreview(@Headers('authorization') authorization?: string, @Query('name') name?: string) {
+    if (!authorization?.startsWith('Bearer ')) throw new UnauthorizedException('Player session required');
+    if (!name?.trim()) throw new BadRequestException('POI name is required');
+    return this.auth.portalPOIPreview(authorization.slice(7), name.trim());
   }
 
   @Post('mod-request')

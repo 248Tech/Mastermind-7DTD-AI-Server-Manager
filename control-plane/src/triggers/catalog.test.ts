@@ -1,4 +1,4 @@
-import { parseGrantItemsActionConfig, parseLandClaimActionConfig } from './catalog';
+import { parseGrantItemsActionConfig, parseLandClaimActionConfig, playerReachedLevel } from './catalog';
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -29,5 +29,11 @@ try {
   threw = true;
 }
 assert(threw, 'rejects giveplus all');
+
+assert(playerReachedLevel('eq', 69, 111, 100), 'exact trigger still fires when a player jumps past the level');
+assert(playerReachedLevel('gte', 69, 111, 100), 'at-least trigger fires when jumping past the level');
+assert(!playerReachedLevel('eq', 111, 111, 100), 'does not re-fire after the player is already past the level');
+assert(!playerReachedLevel('eq', 99, 99, 100), 'does not fire below the level');
+assert(playerReachedLevel('eq', 99, 100, 100), 'fires when landing exactly on the level');
 
 console.log('trigger catalog grant-items tests passed');

@@ -16,7 +16,8 @@ Mastermind is a control panel for a 7 Days to Die server. It lets an owner see w
 | Watch players, zombies, animals, or claims | **Live Map** |
 | Read logs or talk to the server | **Logs → Console** |
 | Manage players | **Players** |
-| Add, edit, quarantine, or restore mods | **Mods** |
+| Add, edit, quarantine, restore, or find player-ready mods | **Mods** |
+| Find an installed prefab and its preview image | **POI Search** |
 | Back up or restore the world | **Saves** |
 | Schedule restarts and backups | **Schedules** |
 | Configure Discord, email, AI, maps, or security | **Settings** |
@@ -31,7 +32,7 @@ Mastermind is a control panel for a 7 Days to Die server. It lets an owner see w
 
 ### Quick navigation
 
-[Quickstart](#quickstart-copy-paste) · [Features](#current-features-v0014) · [Security](#security-notes) · [Deployment](docs/DIGITALOCEAN_DEPLOYMENT.md) · [Human guide](human/user-guide.md) · [Release context](docs/release-0.0.14-context.md)
+[Quickstart](#quickstart-copy-paste) · [Features](#current-features-v0015) · [Security](#security-notes) · [Deployment](docs/DIGITALOCEAN_DEPLOYMENT.md) · [Human guide](human/user-guide.md) · [Release context](docs/release-0.0.15-context.md)
 
 ---
 
@@ -98,39 +99,30 @@ This separation is why the public website does not need direct access to telnet,
 
 ---
 
-## Release 0.0.14 (August 27, 2026)
+## Release 0.0.15 (September 9, 2026)
 
 ### Highlights
 
-- Selectable Codex or Kimi Code mod-editing agents with encrypted provider credentials, connection testing, structured proposals, mandatory diff approval, and no automatic writes.
-- Native chat moderation with editable per-word actions, flood controls, mute/unmute, audited actions, and Discord suppression for blocked messages.
-- Safe ZIP mod uploads that discover `ModInfo.xml`, remove redundant wrapper/`Mods` folders, reject unsafe archives, normalize permissions, and stage every upload in quarantine.
-- Live-map world bounds from `map_info.xml`, section or explicitly warned full-world `visitmap` generation, truthful start/stop status, player name tags, land claims, entity tracking, and stable extended zoom/history controls.
-- Profile Editor injection status for queued/applied `.ttp` changes, including staged and applied timestamps.
-- A hardened Go host agent with persistent batched log tailing, pooled HTTP connections, bounded concurrency, jittered retry, configured game reachability, metrics, version reporting, and graceful systemd shutdown.
-- Scheduler overlap prevention and stale-running-job recovery keep long operations from silently blocking later work.
-- Steam-aware account status and administrator dashboard links connect the player portal with staff workflows without exposing credentials.
-- The mod editor now provides IDE-style tabs, line numbers, search, wrapping, syntax coloring, dirty-state feedback, and keyboard save.
-- ServerTools and Allocs inventory parsers preserve real stack quantities instead of displaying every item as one.
-- Verified players can recommend ZIP mods from `/player` with a short description; requests are staged in Pending Approval and attributed to the authenticated in-game/Steam identity.
-- Pending mod requests are normalized by the host agent, displayed to staff with recommendation metadata, and can be approved or rejected without exposing upload paths.
-- Multi-server navigation keeps an explicit server selection across operational pages, preventing commands and data views from silently targeting the wrong instance.
-- Managed 7DTD stable-build updates safely save, stop, update, and restart only when Steam reports an available stable server build.
-- Stability Safe Restart is configured in Mastermind, with RAM thresholds and cooldowns; a successful stability restart suppresses only the next scheduled reboot for that same server.
-- Player-level automation can grant items or land-claim rewards, and staff can track and return supported player vehicles.
+- Added **POI Search**: index a selected server's native 7DTD prefab names, filter them in the dashboard or player portal, and request the matching in-game preview image on demand.
+- Added a shared ServerConfig editor on each server-management page, using the same review-friendly editor experience as mod config files and constrained agent read/write jobs.
+- Supporters and administrators can now browse and download approved active mods from the player portal for its selected server.
+- Improved safe mod replacement: quarantined updates can explicitly replace a conflicting active mod, compare supported config templates, and carry forward compatible XML/INI/text settings for review.
+- Expanded multi-server continuity across dashboard and player-portal pages, including POI Search, Mods, maps, profiles, and server management.
+- Hardened start/stop/recovery paths, server configuration ownership/permissions, current ServerTools-compatible runtime config handling, and profile-editor staging/injection flows.
+- Documented the active Mastermind-owned stability restart policy and its one-time **Skip next auto reboot** protection as part of the supported operations model.
 
 ---
 
-## Current features (v0.0.14)
+## Current features (v0.0.15)
 
-The complete release handoff is documented in [docs/release-0.0.14-context.md](docs/release-0.0.14-context.md). Package versions and release metadata are `0.0.14`.
+The complete release handoff is documented in [docs/release-0.0.15-context.md](docs/release-0.0.15-context.md). Package versions and release metadata are `0.0.15`.
 
 ### Implemented end-to-end
 
 - **Authentication and organizations:** register/login, JWT sessions, organization membership and roles, admin-created operator/viewer accounts, protected account deletion, administrator resets for lower-tier passwords, protected pairing-token creation, agent-key rotation, password changes using salted scrypt with legacy-hash migration, account approval, Steam-link status, escalating lockouts, registration quotas, math challenges, optional reCAPTCHA, and email confirmation.
 - **Host agents:** one-time pairing, persistent agent identity, versioned heartbeat/inventory reporting, configured 7DTD reachability, same-host Linux autodiscovery, automatic server registration, pooled HTTP connections, bounded jittered retries, bounded read concurrency, serialized mutations, and graceful systemd shutdown.
 - **Server-first, multi-server dashboard:** registered servers are primary; every operational page can use the persisted explicit server selection, while each server opens a management view with overview, controls, console, and server-filtered job history.
-- **7DTD controls and updates:** start, graceful stop, verified restart, safe restart with countdown/save/backup/kick verification, stable Steam build check/update, emergency process kill, telnet console commands, and a confirmed save wipe that safely stops or escalates a hung server before deleting only the configured save and verifying fresh-world creation.
+- **7DTD controls, configuration, and updates:** start, graceful stop, verified restart, safe restart with countdown/save/backup/kick verification, stable Steam build check/update, emergency process kill, constrained ServerConfig editing, telnet console commands, and a confirmed save wipe that safely stops or escalates a hung server before deleting only the configured save and verifying fresh-world creation.
 - **Blood Moon safety:** an optional organization setting defers restart jobs on in-game days divisible by 7 until the next game day begins.
 - **Stability Safe Restart:** the host memory watcher reports to Mastermind, which applies a configurable 4–64 GiB limit and 30-minute to 24-hour cooldown before queuing the normal safe-restart flow. Successful stability restarts automatically skip the next same-server scheduled reboot; operators can also request that one-time skip manually.
 - **Jobs and accountability:** queue-backed start/stop/restart/safe-restart/kill/RCON/custom jobs, result/output tracking, schedule and batch support, per-server filtering, initiating-account attribution, stale-run recovery, durable mutation backpressure, and bounded concurrent read-only inventory jobs.
@@ -138,14 +130,15 @@ The complete release handoff is documented in [docs/release-0.0.14-context.md](d
 - **Chat:** player and server-authored chat extraction, stored history, player-only per-server Discord webhook relay with mention suppression, operator replies automatically sent as server `say` messages, and native bad-word/flood moderation with editable log/warn/kick actions plus mute/unmute controls.
 - **Health:** host-scoped CPU, RAM, disk, agent latency, and real 7DTD reachability samples with current values, historical averages, and configurable polling intervals.
 - **Players:** authoritative roster polling (Allocs `getplayersonline`, telnet `lp` fallback), reconciled Steam/EOS identity capture, last-known IP address, online state, current/lifetime playtime, last seen, level, zombie/player kills, deaths, staff **Set deaths** via ServerTools, Allocs JSON inventory inspection, search/filter/sort controls, responsive card layout (desktop and mobile), kick/ban/kick-all actions, post-kick verification, and XML-backed administrator status with promote/demote controls.
-- **Mods:** searchable active/quarantined inventories, `ModInfo.xml` name/version/author/website parsing, activation timestamps, sortable columns, single/bulk selection, quarantine, permission-safe restore, constrained permanent deletion, IDE-style configuration editing with tabs/line numbers/search/syntax colors/wrapping/Ctrl+S (including runtime files in `{Mod}_Config` folders such as `ServerTools_Config`), normalized ZIP upload directly to quarantine, and selectable Codex/Kimi Code proposals with mandatory diff review and approval before an atomic save.
+- **Mods:** searchable active/quarantined/pending inventories, `ModInfo.xml` name/version/author/website parsing, activation timestamps, sortable columns, single/bulk selection, quarantine, safe restore or explicit conflicting-mod replacement, template-aware compatible-config merge preview/apply, constrained permanent deletion, IDE-style configuration editing with tabs/line numbers/search/syntax colors/wrapping/Ctrl+S (including runtime files in `{Mod}_Config` folders such as `ServerTools_Config`), normalized ZIP upload directly to quarantine, supporter/admin portal browsing and downloads of active mods, and selectable Codex/Kimi Code proposals with mandatory diff review and approval before an atomic save.
 - **Automation and rewards:** level-based triggers can grant validated items or land-claim rewards; supported player vehicles are tracked, surfaced to authorized staff, and can be returned through the managed job queue.
 - **Connection protection tools:** per-server high-ping kicker with consecutive-sample threshold and cooldown, plus country-based kick/ban policies when the game exposes a real public player IP. Relay-masked/private IPs are deliberately skipped.
 - **RegionHealer:** status information plus start/stop jobs for a separately installed RegionHealer-v2 service.
 - **7D2D Profile Editor:** isolated integration of RussDev7's GPL-3.0 TTP Profile Editor with server profile discovery, staged live edits, queued/applied injection status and timestamps, timestamped original `.ttp`/`.ttp.bak` archives plus audit metadata, atomic installation on the next Mastermind-managed start/restart, and visible/backend attribution.
 - **Live server map:** authenticated official terrain map with `map_info.xml` world bounds, live players from PrismaCore (Allocs fallback), hostiles/animals from Allocs (not telnet `le`), PrismaCore overlays (vehicles, drones, homes, traders, POIs, reset regions, advanced claims), optional player name tags, coordinates, game time, region grid, owned land-claim blocks/protection areas, selectable tracking/trail colors, stable extended zoom, 5-minute through 72-hour browser-local history, and guarded section/full-world `visitmap` generation via Allocs. The dashboard and telnet ports remain private.
+- **POI Search:** selected-server indexing of safe native prefab names from `Data/Prefabs/POIs`, dashboard and authorized player-portal filtering, and bounded on-demand JPEG previews. POI files remain on the game host except for the requested preview.
 - **Live-data fallbacks:** player roster polling prefers Allocs `getplayersonline` for ping, IP, kills, deaths, level, and position, then falls back to telnet `lp` when the API is unavailable or unusable. An authoritative empty API roster is treated as empty rather than replaced with stale data. Map entity feeds fail closed with a visible feed error.
-- **Steam-verified player portal:** `/player` map (terrain, zombies, and animals are public; player locations stay hidden until Steam OpenID verifies a SteamID already on that server), `/player/profile` for Steam sessions with inventory quantities, stats, supporter status, and an administrator dashboard link when recognized, and `/player/shop` for the donator catalog. Staff controls, claims, raw telnet, and management APIs are excluded from the player portal.
+- **Steam-verified player portal:** `/player` map (terrain, zombies, and animals are public; player locations stay hidden until Steam OpenID verifies a SteamID already on that server), `/player/profile` for Steam sessions with inventory quantities, stats, supporter status, and an administrator dashboard link when recognized, `/player/mods` and `/player/pois` for supporter/admin selected-server content, and `/player/shop` for the donator catalog. Staff controls, claims, raw telnet, and management APIs are excluded from the player portal.
 - **Donator shop and Stripe:** public shop browse and WebP images; checkout requires Steam or an in-game-name password account. Admins manage packages on `/donator-shop` (optional In-Game Gifts, quality, chat color, ItemIcons/catalog autocomplete) and completed donations on `/purchases` (gift delivery status). Player item pages list In-Game Gifts as thank-you gifts after a donation — not a purchase of in-game items. Custom $5–$500 gifts remain available. Supporter status and In-Game Gifts come only from a signed Stripe webhook (`giveplus` / `playerchatcolor`, offline retry for items).
 - **Saves:** combined full-world and RegionHealer snapshot inventory, timestamp/game-day metadata, manual full backup, confirmed server-off restore/delete, full-backup retention, and scheduled backups from every 15 minutes through daily.
 - **Schedules:** safe scheduled restarts, a simple day/hour/minute builder, advanced five-field cron entry, automatic full-world backup intervals, overlap prevention that skips a recurrence while its previous job is still pending/running, and a one-time next-reboot skip for stability or operator-triggered recovery.
@@ -172,7 +165,7 @@ Frigate integration is currently deprecated and hidden from the Settings and new
 - [DigitalOcean deployment](docs/DIGITALOCEAN_DEPLOYMENT.md) — production VPS layout and service checks.
 - [Allocs integration](docs/allocs.md) — live entities, inventory, roster data, and private API requirements.
 - [PrismaCore integration](docs/prismacore.md) — claims and staff map overlays.
-- [Release context](docs/release-0.0.14-context.md) — maintainer handoff, validation, and deployment checklist.
+- [Release context](docs/release-0.0.15-context.md) — maintainer handoff, validation, and deployment checklist.
 - [Release 0.0.13 context](docs/release-0.0.13-context.md) — previous verified-player mod-request release.
 - [Live features (2026-08-20)](docs/live-features-2026-08-20.md) — post-0.0.12 capabilities already running in production.
 

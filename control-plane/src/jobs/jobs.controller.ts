@@ -40,9 +40,13 @@ export class JobsController {
     @Param('orgId') orgId: string,
     @Req() req: RequestWithUser,
     @Body('serverInstanceId') serverInstanceId: string,
+    @Body('overrideActive') overrideActive?: string,
+    @Body('transferConfig') transferConfigRaw?: string,
     @UploadedFile() file?: { originalname: string; size: number; buffer: Buffer },
   ) {
-    return this.stageModUpload(orgId, req.user!.id, serverInstanceId, file, 'MOD_UPLOAD_QUARANTINE');
+    const override = overrideActive === 'true' || overrideActive === '1';
+    const transferConfig = (transferConfigRaw === 'true' || transferConfigRaw === '1') && override;
+    return this.stageModUpload(orgId, req.user!.id, serverInstanceId, file, 'MOD_UPLOAD_QUARANTINE', override, transferConfig);
   }
 
   private async stageModUpload(
@@ -51,6 +55,8 @@ export class JobsController {
     serverInstanceId: string,
     file: { originalname: string; size: number; buffer: Buffer } | undefined,
     jobType: 'MOD_UPLOAD_QUARANTINE' | 'MOD_UPLOAD_PENDING',
+    overrideActive = false,
+    transferConfig = false,
   ) {
     if (!serverInstanceId) throw new BadRequestException('Server instance is required');
     if (!file?.buffer?.length) throw new BadRequestException('Choose a non-empty ZIP archive');
@@ -70,7 +76,7 @@ export class JobsController {
         userId,
         serverInstanceId,
         jobType,
-        { uploadId, originalName: file.originalname, sizeBytes: file.size },
+        { uploadId, originalName: file.originalname, sizeBytes: file.size, ...(jobType === 'MOD_UPLOAD_QUARANTINE' && overrideActive ? { overrideActive: true } : {}), ...(jobType === 'MOD_UPLOAD_QUARANTINE' && transferConfig ? { transferConfig: true } : {}) },
       );
     } catch (error) {
       await unlink(stagedPath).catch(() => undefined);
@@ -113,7 +119,7 @@ export class JobsController {
   ) {
     const take = limit ? Math.min(100, parseInt(limit, 10) || 20) : 20;
     const jobs = await this.prisma.job.findMany({
-      where: { orgId, NOT: { OR: [{ type: 'PLAYER_LIST_SYNC' }, { type: 'ITEM_CATALOG' }, { type: 'TRIGGER_GRANT_ITEMS' }, { type: 'RCON', payload: { path: ['purpose'], equals: 'inventory_snapshot' } }, { type: 'RCON', payload: { path: ['purpose'], equals: 'shop_grant' } }, { type: 'RCON', payload: { path: ['purpose'], equals: 'vehicle_return' } }] }, ...(serverInstanceId ? { serverInstanceId } : {}) },
+      where: { orgId, NOT: { OR: [{ type: 'PLAYER_LIST_SYNC' }, { type: 'ITEM_CATALOG' }, { type: 'POI_CATALOG' }, { type: 'POI_PREVIEW' }, { type: 'TRIGGER_GRANT_ITEMS' }, { type: 'RCON', payload: { path: ['purpose'], equals: 'inventory_snapshot' } }, { type: 'RCON', payload: { path: ['purpose'], equals: 'shop_grant' } }, { type: 'RCON', payload: { path: ['purpose'], equals: 'vehicle_return' } }] }, ...(serverInstanceId ? { serverInstanceId } : {}) },
       orderBy: { createdAt: 'desc' },
       take,
       include: {

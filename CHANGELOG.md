@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.0.15] - 2026-09-09
+
+### Added
+
+- Added selected-server **POI Search**. The agent indexes safe native prefab names from the installed 7DTD `Data/Prefabs/POIs` folder, the dashboard and authorized player portal filter the catalog, and a preview is transferred only when requested.
+- Added constrained `SERVER_CONFIG_READ` / `SERVER_CONFIG_WRITE` jobs and a ServerConfig editor to the server manager using the shared configuration-editor interface.
+- Added supporter/admin player-portal pages to browse and download active mods, and to search the selected server's POIs.
+- Added safer mod-update tooling for quarantined conflicts: explicit replacement, template-aware configuration merge previews, and reviewed carry-forward of compatible XML/INI/text settings.
+
+### Changed
+
+- Extended persisted server selection across the new dashboard and player-portal surfaces, keeping server-scoped data and actions explicit.
+- Hardened 7DTD service/config ownership, profile staging/injection, ServerTools runtime config handling, and agent image builds for multi-package Go source layouts.
+- Updated release context, feature documentation, and package/health metadata for `0.0.15`.
+
+### Security
+
+- POI names are constrained before filesystem access; catalog/result payloads and preview sizes are bounded. Preview images are never bulk-exported from the game host.
+- ServerConfig and mod writes remain authenticated, server-bound, path-constrained agent jobs; player downloads remain limited to active mods and authorized supporter/admin sessions.
+
 ## [0.0.14] - 2026-08-27
 
 ### Added

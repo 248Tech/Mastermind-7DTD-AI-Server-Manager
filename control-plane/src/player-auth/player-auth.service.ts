@@ -1,4 +1,4 @@
-import { BadGatewayException, BadRequestException, ConflictException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, GatewayTimeoutException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { DUMMY_PASSWORD_HASH, makePasswordHash, verifyPassword } from '../auth/auth.service';
 import { stripeCheckoutEnabledForOrg } from '../donations/donations.credentials';
@@ -12,6 +12,7 @@ import { mkdir, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { parsePortalPassword, parsePortalPlayerName, parseShopReturnPath } from './player-auth.names';
 import { emptyPlayerPlaces, filterPlayerPlaces } from './player-places';
+import { PoiCatalogService } from '../poi-catalog/poi-catalog.service';
 
 const STEAM_OPENID = 'https://steamcommunity.com/openid/login';
 const CLAIMED_ID = /^https?:\/\/steamcommunity\.com\/openid\/id\/(7656119\d{10})$/;
@@ -23,6 +24,19 @@ function hostLooksOnline(host: { status: string | null; lastHeartbeatAt: Date | 
   return Date.now() - host.lastHeartbeatAt.getTime() < 120_000;
 }
 
+function portalText(value: unknown, max = 180) {
+  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+function publicDownloadUrl(value: unknown) {
+  const text = portalText(value, 2048);
+  if (!text) return null;
+  try {
+    const url = new URL(text);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null;
+  } catch { return null; }
+}
+
 @Injectable()
 export class PlayerAuthService {
   constructor(
@@ -31,6 +45,7 @@ export class PlayerAuthService {
     private readonly prismaCore: PrismaCoreService,
     private readonly jobs: JobsService,
     private readonly vehicles: VehiclesService,
+    private readonly poiCatalog: PoiCatalogService,
   ) {}
 
   async verifySteam(serverInstanceId: string, returnTo: string, openid: Record<string, unknown>) {
@@ -263,11 +278,7 @@ export class PlayerAuthService {
     // Dashboard accounts and game players are intentionally separate records.
     // When an administrator has linked the same display name to a player, expose
     // only a boolean so the portal can offer a convenient dashboard link.
-    const adminNames = await this.prisma.userOrg.findMany({
-      where: { orgId: player.orgId, role: { name: 'admin' }, user: { name: { not: null } } },
-      select: { user: { select: { name: true } } },
-    });
-    const isAdmin = adminNames.some(row => row.user.name?.trim().toLocaleLowerCase() === player.name.trim().toLocaleLowerCase());
+    const isAdmin = await this.isPortalAdmin(player.orgId, player.name);
     const checkoutEnabled = await stripeCheckoutEnabledForOrg(this.prisma, player.orgId);
     const steamLast4 = player.steamId ? player.steamId.slice(-4) : '';
     if (player.sessionAuth === 'name') {
@@ -344,6 +355,57 @@ export class PlayerAuthService {
     };
   }
 
+  /** Active mods and their published download pages for supporters and administrators. */
+  async portalMods(token: string) {
+    const player = await this.requirePlayer(token);
+    const isAdmin = await this.isPortalAdmin(player.orgId, player.name);
+    if (!player.supporter && !isAdmin) {
+      throw new ForbiddenException('Mod downloads are available to supporters and administrators');
+    }
+    const queued = await this.jobs.enqueueInternalJob(player.orgId, null, player.serverInstanceId, 'MOD_LIST');
+    const data = await this.waitForPortalJobData(queued.jobRunId);
+    const source = data && typeof data === 'object' && Array.isArray((data as { mods?: unknown }).mods)
+      ? (data as { mods: unknown[] }).mods
+      : [];
+    const mods = source.map((row) => {
+      const item = row && typeof row === 'object' ? row as Record<string, unknown> : {};
+      return {
+        name: portalText(item.name, 160) || 'Unnamed mod',
+        author: portalText(item.author, 120) || null,
+        version: portalText(item.version, 80) || null,
+        description: portalText(item.description, 500) || null,
+        website: publicDownloadUrl(item.website),
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+    return { serverName: player.serverInstance.name, mods };
+  }
+
+  async portalPOIs(token: string) {
+    const player = await this.requirePlayer(token);
+    const isAdmin = await this.isPortalAdmin(player.orgId, player.name);
+    if (!player.supporter && !isAdmin) throw new ForbiddenException('POI search is available to supporters and administrators');
+    const server = await this.portalServer();
+    if (server.orgId !== player.orgId) throw new ForbiddenException('Player portal server is unavailable');
+    let result = await this.poiCatalog.latest(player.orgId, server.id);
+    if (!result.indexedAt) {
+      const queued = await this.jobs.enqueueInternalJob(player.orgId, null, server.id, 'POI_CATALOG');
+      await this.waitForPortalJobData(queued.jobRunId);
+      result = await this.poiCatalog.latest(player.orgId, server.id);
+    }
+    return { serverName: server.name, indexedAt: result.indexedAt, ...result.catalog };
+  }
+
+  async portalPOIPreview(token: string, name: string) {
+    const player = await this.requirePlayer(token);
+    const isAdmin = await this.isPortalAdmin(player.orgId, player.name);
+    if (!player.supporter && !isAdmin) throw new ForbiddenException('POI search is available to supporters and administrators');
+    const server = await this.portalServer();
+    if (server.orgId !== player.orgId) throw new ForbiddenException('Player portal server is unavailable');
+    const queued = await this.jobs.enqueueInternalJob(player.orgId, null, server.id, 'POI_PREVIEW', { name });
+    const data = await this.waitForPortalJobData(queued.jobRunId);
+    return data && typeof data === 'object' ? data : { name, available: false };
+  }
+
   async requestMod(token: string, file: { originalname: string; size: number; buffer: Buffer } | undefined, description: unknown) {
     const player = await this.requirePlayer(token);
     const text = typeof description === 'string' ? description.trim() : '';
@@ -368,6 +430,28 @@ export class PlayerAuthService {
       await unlink(stagedPath).catch(() => undefined);
       throw error;
     }
+  }
+
+  private async isPortalAdmin(orgId: string, playerName: string) {
+    const adminNames = await this.prisma.userOrg.findMany({
+      where: { orgId, role: { name: 'admin' }, user: { name: { not: null } } },
+      select: { user: { select: { name: true } } },
+    });
+    return adminNames.some(row => row.user.name?.trim().toLocaleLowerCase() === playerName.trim().toLocaleLowerCase());
+  }
+
+  private async waitForPortalJobData(jobRunId: string): Promise<unknown> {
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      const run = await this.prisma.jobRun.findUnique({ where: { id: jobRunId }, select: { status: true, result: true } });
+      if (run && ['success', 'failed', 'cancelled'].includes(run.status)) {
+        const result = (run.result ?? {}) as Record<string, unknown>;
+        if (run.status !== 'success') throw new ServiceUnavailableException(typeof result.errorMessage === 'string' ? result.errorMessage : 'The game could not list mods');
+        return result.data;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    throw new GatewayTimeoutException('The game did not answer in time');
   }
 
   async places(token: string) {

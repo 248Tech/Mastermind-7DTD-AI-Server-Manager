@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength, Min, Max, IsInt, Matches, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MaxLength, Min, Max, IsInt, Matches, MinLength } from 'class-validator';
 
 export class UpdateServerInstanceDto {
   @IsOptional()
@@ -40,4 +40,8 @@ export class UpdateServerInstanceDto {
   @IsString()
   @MaxLength(256)
   telnetPassword?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  rebootIfDown?: boolean;
 }

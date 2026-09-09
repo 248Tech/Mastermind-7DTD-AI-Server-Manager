@@ -36,5 +36,11 @@ export async function donatedBonusClaims(prisma: PrismaService, playerId: string
 }
 
 export function stackedClaimCount(base: number, donated: number): number {
-  return Math.min(MAX_STACKED_CLAIMS, Math.max(1, base + donated));
+  return Math.min(MAX_STACKED_CLAIMS, Math.max(0, base + donated));
+}
+
+export function totalLandClaimLimit(serverDefault: number, bonusClaims: number): number {
+  const base = Number.isInteger(serverDefault) && serverDefault > 0 ? serverDefault : 1;
+  const bonus = Number.isInteger(bonusClaims) && bonusClaims >= 0 ? bonusClaims : 0;
+  return Math.min(MAX_STACKED_CLAIMS, base + bonus);
 }

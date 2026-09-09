@@ -4,7 +4,7 @@ import { Controller, Get, NotFoundException, Param, Query, Res } from '@nestjs/c
 import { Response } from 'express';
 import { sanitizeInstallToken, sanitizeInstallUrl } from '../common/install-script';
 
-const pkg = { name: 'mastermind-control-plane', version: '0.0.14' };
+const pkg = { name: 'mastermind-control-plane', version: '0.0.15' };
 
 @Controller()
 export class HealthController {

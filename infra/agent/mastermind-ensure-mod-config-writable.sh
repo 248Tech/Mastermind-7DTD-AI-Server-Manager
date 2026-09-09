@@ -11,13 +11,19 @@ case "$target" in
     ;;
 esac
 
+dir="$(dirname "$target")"
+group="${MASTERMIND_MODS_GROUP:-serveradmin}"
+
+mkdir -p "$dir"
+if [[ ! -e "$target" ]]; then
+  # Merge apply may create brand-new template files that did not exist live.
+  umask 002
+  : > "$target"
+fi
 if [[ ! -f "$target" ]]; then
   echo "not a regular file: $target" >&2
   exit 1
 fi
-
-dir="$(dirname "$target")"
-group="${MASTERMIND_MODS_GROUP:-serveradmin}"
 
 chgrp "$group" "$dir" "$target"
 chmod g+wX "$dir"

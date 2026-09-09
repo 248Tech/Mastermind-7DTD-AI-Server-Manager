@@ -198,6 +198,7 @@ export class ServerInstancesService {
         ...(dto.telnetHost !== undefined && { telnetHost: dto.telnetHost?.trim() || null }),
         ...(dto.telnetPort !== undefined && { telnetPort: dto.telnetPort ?? null }),
         ...(dto.telnetPassword !== undefined && { telnetPassword: dto.telnetPassword ?? null }),
+        ...(dto.rebootIfDown !== undefined && { rebootIfDown: dto.rebootIfDown }),
       },
       include: { host: true, gameType: { select: { slug: true, capabilities: true } } },
     });
@@ -235,6 +236,7 @@ export class ServerInstancesService {
       telnetPort: number | null;
       telnetPassword: string | null;
       maintenanceMode?: boolean;
+      rebootIfDown?: boolean;
       createdAt: Date;
       updatedAt: Date;
       gameType?: { slug: string; capabilities: unknown };
@@ -257,6 +259,7 @@ export class ServerInstancesService {
       telnetHost: row.telnetHost,
       telnetPort: row.telnetPort,
       maintenanceMode: Boolean((row as { maintenanceMode?: boolean }).maintenanceMode),
+      rebootIfDown: Boolean((row as { rebootIfDown?: boolean }).rebootIfDown),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
