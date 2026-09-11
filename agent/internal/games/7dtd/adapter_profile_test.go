@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/mastermind/agent/internal/agent"
 )
 
 func TestApplyStagedPlayerProfilesIsOneShotAndUpdatesBak(t *testing.T) {
@@ -148,6 +150,73 @@ func TestApplyStagedPlayerProfilesRefusesWhileServerRunning(t *testing.T) {
 	}
 	if string(got) != string(original) {
 		t.Fatalf("live profile changed while server running: %q", got)
+	}
+}
+
+func TestStagePlayerProfileDeleteOnlyTargetsActiveSave(t *testing.T) {
+	staging := t.TempDir()
+	userData := t.TempDir()
+	saves := filepath.Join(userData, "Saves")
+	activePlayerDir := filepath.Join(saves, "Navezgane", "ActiveSave", "Player")
+	historicalPlayerDir := filepath.Join(saves, "OldWorld", "OldSave", "Player")
+	for _, dir := range []string{activePlayerDir, historicalPlayerDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	active := filepath.Join(activePlayerDir, "EOS_player-1.ttp")
+	historical := filepath.Join(historicalPlayerDir, "EOS_player-1.ttp")
+	if err := os.WriteFile(active, []byte("ttp\x00active"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(active+".bak", []byte("ttp\x00active-bak"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(historical, []byte("ttp\x00historical"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "serverconfig.xml")
+	config := `<ServerSettings><property name="GameWorld" value="Navezgane"/><property name="GameName" value="ActiveSave"/><property name="UserDataFolder" value="` + userData + `"/></ServerSettings>`
+	if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	previousStaging := profileStagingRoot
+	previousRunning := sevenDaysRunning
+	t.Cleanup(func() {
+		profileStagingRoot = previousStaging
+		sevenDaysRunning = previousRunning
+	})
+	profileStagingRoot = staging
+	sevenDaysRunning = func() bool { return false }
+	payload := map[string]interface{}{
+		"server_instance_id": "server1",
+		"config": map[string]interface{}{"discovery": map[string]interface{}{"savesPath": saves, "serverConfigPath": configPath}},
+	}
+	profiles, err := stagePlayerProfileDelete(&agent.InstanceConfig{}, payload, "", "player-1")
+	if err != nil || len(profiles) != 1 || profiles[0].Path != "Navezgane/ActiveSave/Player/EOS_player-1.ttp" {
+		t.Fatalf("profiles=%+v err=%v", profiles, err)
+	}
+	listed, err := listPlayerProfiles(payload)
+	if err != nil || len(listed) != 2 {
+		t.Fatalf("list profiles=%+v err=%v", listed, err)
+	}
+	for _, profile := range listed {
+		if profile.Path == profiles[0].Path && profile.InjectionStatus != "reset_queued" {
+			t.Fatalf("reset status=%q", profile.InjectionStatus)
+		}
+	}
+	if err := applyStagedPlayerProfiles("server1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(active); !os.IsNotExist(err) {
+		t.Fatalf("active profile still exists: %v", err)
+	}
+	if _, err := os.Stat(active + ".bak"); !os.IsNotExist(err) {
+		t.Fatalf("active profile companion still exists: %v", err)
+	}
+	if _, err := os.Stat(historical); err != nil {
+		t.Fatalf("historical profile was changed: %v", err)
 	}
 }
 

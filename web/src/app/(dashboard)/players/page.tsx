@@ -58,6 +58,18 @@ export default function PlayersPage(){
     }catch(e){setError(e instanceof Error?e.message:'Could not set deaths');}
     finally{setBusy(false);}
   }
+  async function resetPlayer(player:PlayerRecord){
+    if(!orgId||busy)return;
+    if(!player.steamId&&!player.eosId){setError('Steam or EOS ID required to reset a player profile.');return;}
+    if(!confirm(`Permanently reset ${player.name}'s active-world player profile on the next Mastermind-managed reboot?\n\nThis permanently deletes the .ttp profile and its .bak companion. No recovery copy will be created. Historical worlds, player records, claims, bans, and donations are not changed.`))return;
+    setBusy(true);setError('');setMessage('');
+    try{
+      const queued=await api.post<{jobRunId:string}>(`/api/orgs/${orgId}/jobs`,{serverInstanceId:serverId,type:'PROFILE_DELETE_STAGE',payload:{steamId:player.steamId,eosId:player.eosId}});
+      await waitForJob(queued.jobRunId);
+      setMessage(`${player.name}'s active player profile reset is queued for the next Mastermind-managed reboot.`);
+    }catch(e){setError(e instanceof Error?e.message:'Could not queue player profile reset');}
+    finally{setBusy(false);}
+  }
   async function showInventory(player:PlayerRecord){
     if(!orgId||(!player.steamId&&!player.eosId)||busy)return;
     setBusy(true);setError('');setMessage('');try{const result=await api.get<{player:string;snapshot:{bag:InventoryGridItem[];belt:InventoryGridItem[];equipment:InventoryGridItem[];other?:InventoryGridItem[]}}>(`/api/orgs/${orgId}/players/${player.id}/inventory`);setInventory({player:result.player||player.name,output:JSON.stringify(result.snapshot,null,2),sections:inventorySections(result.snapshot)});}catch(e){setError(e instanceof Error?e.message:'Failed to read player inventory');}finally{setBusy(false);}
@@ -71,7 +83,7 @@ export default function PlayersPage(){
     params.set('name',player.name);
     return `/profile-editor?${params.toString()}`;
   }
-  function actions(p:PlayerRecord,admin:ServerAdminRecord|undefined){return <div className="player-actions"><Link href={profileEditorHref(p)} className="player-action" style={{...button('#4f46e5'),textDecoration:'none'}}>Profile</Link><button disabled={(!p.steamId&&!p.eosId)||busy} onClick={()=>void showInventory(p)} style={button('#0369a1')}>Inventory</button><button disabled={!p.online||busy} onClick={()=>void setDeaths(p)} style={button('#6d28d9')}>Deaths</button><button disabled={!p.online||busy} onClick={()=>moderationAction(p,'PLAYER_KICK')} style={button('#b45309')}>Kick</button><button disabled={busy} onClick={()=>moderationAction(p,'PLAYER_BAN')} style={button('#991b1b')}>Ban</button>{admin?<button disabled={busy} onClick={()=>adminAction(p,false)} style={button('#7c2d12')}>Demote</button>:<button disabled={busy||(!p.steamId&&!p.eosId)} onClick={()=>adminAction(p,true)} style={button('#15803d')}>Promote</button>}</div>}
+  function actions(p:PlayerRecord,admin:ServerAdminRecord|undefined){return <div className="player-actions"><Link href={profileEditorHref(p)} className="player-action" style={{...button('#4f46e5'),textDecoration:'none'}}>Profile</Link><button disabled={(!p.steamId&&!p.eosId)||busy} onClick={()=>void showInventory(p)} style={button('#0369a1')}>Inventory</button><button disabled={(!p.steamId&&!p.eosId)||busy} onClick={()=>void resetPlayer(p)} title="Permanently delete the active-world .ttp profile on the next Mastermind-managed reboot" style={button('#7f1d1d')}>Reset player</button><button disabled={!p.online||busy} onClick={()=>void setDeaths(p)} style={button('#6d28d9')}>Deaths</button><button disabled={!p.online||busy} onClick={()=>moderationAction(p,'PLAYER_KICK')} style={button('#b45309')}>Kick</button><button disabled={busy} onClick={()=>moderationAction(p,'PLAYER_BAN')} style={button('#991b1b')}>Ban</button>{admin?<button disabled={busy} onClick={()=>adminAction(p,false)} style={button('#7c2d12')}>Demote</button>:<button disabled={busy||(!p.steamId&&!p.eosId)} onClick={()=>adminAction(p,true)} style={button('#15803d')}>Promote</button>}</div>}
   return <div className="players-page"><div className="players-header"><div><h1 style={{margin:0,color:'#f1f5f9',fontSize:'1.5rem'}}>Players</h1><p style={{color:'#64748b',margin:'.25rem 0 0'}}>Live presence from <code>lp</code> · refreshes every 5 seconds{lastRefresh?` · updated ${lastRefresh.toLocaleTimeString()}`:''}</p></div><div className="players-header-actions"><button disabled={busy||!serverId} onClick={()=>void kickAll()} style={button('#991b1b')}>Kick all online</button><button disabled={busy||!serverId} onClick={()=>{void loadPlayers();void loadAdmins();}} style={button('#334155')}>Refresh now</button><select aria-label="Server" value={serverId} onChange={e=>selectServer(e.target.value)} style={{background:'#111118',color:'#e2e8f0',border:'1px solid #252532',borderRadius:6,padding:'.5rem',maxWidth:'100%'}}>{servers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></div></div>
   {error&&<div style={{color:'#f87171',marginBottom:10}}>{error}</div>}{message&&<div style={{color:'#4ade80',marginBottom:10}}>{message}</div>}
   <div className="player-summary-grid"><Summary label="Online now" value={onlineCount} color="#4ade80"/><Summary label="Known players" value={players.length} color="#38bdf8"/><Summary label="Administrators" value={adminCount} color="#fbbf24"/><Summary label="Showing" value={visible.length} color="#a78bfa"/></div>

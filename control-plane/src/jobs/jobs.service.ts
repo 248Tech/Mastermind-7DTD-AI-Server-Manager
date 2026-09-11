@@ -151,9 +151,17 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         throw new ForbiddenException('Only organization administrators or operators may manage saves');
       }
     }
-    if (normalizedJobType === 'PROFILE_STAGE') {
+    if (normalizedJobType === 'PROFILE_STAGE' || normalizedJobType === 'PROFILE_DELETE_STAGE') {
       const membership = await this.prisma.userOrg.findUnique({ where: { userId_orgId: { userId, orgId } }, include: { role: true } });
-      if (!membership || !['admin', 'operator'].includes(membership.role.name)) throw new ForbiddenException('Only organization administrators or operators may stage player profiles');
+      if (!membership || !['admin', 'operator'].includes(membership.role.name)) throw new ForbiddenException('Only organization administrators or operators may stage player profile changes');
+    }
+    if (normalizedJobType === 'PROFILE_DELETE_STAGE') {
+      const steamId = (typeof payload?.steamId === 'string' ? payload.steamId.trim() : '').replace(/^Steam_/i, '');
+      const eosId = (typeof payload?.eosId === 'string' ? payload.eosId.trim() : '').replace(/^EOS_/i, '');
+      const validIdentifier = (value: string) => /^[A-Za-z0-9_-]{1,128}$/.test(value);
+      if (!steamId && !eosId) throw new BadRequestException('Steam or EOS ID is required to reset a player profile');
+      if ((steamId && !validIdentifier(steamId)) || (eosId && !validIdentifier(eosId))) throw new BadRequestException('Invalid player profile identifier');
+      payload = { steamId: steamId || undefined, eosId: eosId || undefined };
     }
     if (normalizedJobType === 'MOD_UPLOAD_QUARANTINE') {
       const membership = await this.prisma.userOrg.findUnique({ where: { userId_orgId: { userId, orgId } }, include: { role: true } });

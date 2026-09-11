@@ -479,6 +479,12 @@ func (a *Adapter) Execute(ctx context.Context, job agent.Job) (agent.JobResult, 
 			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
 		}
 		return agent.JobResult{Status: "success", Result: map[string]interface{}{"profile": profile, "staged": true, "appliesOnNextStart": true}}, nil
+	case "PROFILE_DELETE_STAGE":
+		profiles, err := stagePlayerProfileDelete(cfg, job.Payload, getString(job.Payload, "steamId", ""), getString(job.Payload, "eosId", ""))
+		if err != nil {
+			return agent.JobResult{Status: "failed", Error: err.Error()}, nil
+		}
+		return agent.JobResult{Status: "success", Result: map[string]interface{}{"profiles": profiles, "staged": true, "permanent": true, "appliesOnNextStart": true}}, nil
 	default:
 		return agent.JobResult{Status: "failed", Error: "unsupported job type: " + job.Type}, nil
 	}
@@ -659,7 +665,11 @@ func playerProfileInjectionStates(serverID string) map[string]profileInjectionSt
 				continue
 			}
 			path := filepath.ToSlash(metadata.Relative)
-			states[path] = profileInjectionState{Status: "queued", StagedAt: metadata.StagedAt}
+			status := "queued"
+			if metadata.Action == "delete" {
+				status = "reset_queued"
+			}
+			states[path] = profileInjectionState{Status: status, StagedAt: metadata.StagedAt}
 		}
 	}
 	return states
@@ -701,6 +711,7 @@ type stagedProfileMetadata struct {
 	Target   string    `json:"target"`
 	Relative string    `json:"relative"`
 	StagedAt time.Time `json:"stagedAt"`
+	Action   string    `json:"action,omitempty"`
 }
 
 type profileBackupMetadata struct {
@@ -753,6 +764,160 @@ func stagePlayerProfile(payload map[string]interface{}, relative, encoded string
 	return profile, nil
 }
 
+func validProfileIdentifier(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for _, r := range value {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && r != '_' && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// activePlayerProfiles resolves only the configured active world/save. Player
+// reset must never reach historical worlds merely because they share an ID.
+func activePlayerProfiles(cfg *agent.InstanceConfig, payload map[string]interface{}, steamID, eosID string) ([]playerProfile, error) {
+	steamID = strings.TrimSpace(steamID)
+	eosID = strings.TrimSpace(eosID)
+	if len(steamID) >= len("Steam_") && strings.EqualFold(steamID[:len("Steam_")], "Steam_") {
+		steamID = steamID[len("Steam_"):]
+	}
+	if len(eosID) >= len("EOS_") && strings.EqualFold(eosID[:len("EOS_")], "EOS_") {
+		eosID = eosID[len("EOS_"):]
+	}
+	if (steamID != "" && !validProfileIdentifier(steamID)) || (eosID != "" && !validProfileIdentifier(eosID)) {
+		return nil, fmt.Errorf("invalid player profile identifier")
+	}
+	if steamID == "" && eosID == "" {
+		return nil, fmt.Errorf("Steam or EOS ID is required")
+	}
+	root, err := configuredSavesPath(payload)
+	if err != nil {
+		return nil, err
+	}
+	configPath, err := configuredServerConfigPath(cfg, payload)
+	if err != nil {
+		return nil, err
+	}
+	liveSave, err := resolveLiveSave(cfg, configPath)
+	if err != nil {
+		return nil, err
+	}
+	if !pathInside(root, liveSave) {
+		return nil, fmt.Errorf("configured active save is outside the configured saves directory")
+	}
+	liveInfo, err := os.Lstat(liveSave)
+	if err != nil {
+		return nil, fmt.Errorf("read configured active save: %w", err)
+	}
+	if !liveInfo.IsDir() || liveInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("configured active save must be a real directory")
+	}
+	playerDir := filepath.Join(liveSave, "Player")
+	dirInfo, err := os.Lstat(playerDir)
+	if err != nil {
+		return nil, fmt.Errorf("read active player profiles: %w", err)
+	}
+	if !dirInfo.IsDir() || dirInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("active Player directory must be a real directory")
+	}
+
+	candidates := make([]string, 0, 2)
+	if steamID != "" {
+		candidates = append(candidates, "Steam_"+steamID+".ttp")
+	}
+	if eosID != "" {
+		candidates = append(candidates, "EOS_"+eosID+".ttp")
+	}
+	profiles := make([]playerProfile, 0, len(candidates))
+	seen := map[string]bool{}
+	for _, name := range candidates {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		target := filepath.Join(playerDir, name)
+		info, statErr := os.Lstat(target)
+		if os.IsNotExist(statErr) {
+			continue
+		}
+		if statErr != nil {
+			return nil, fmt.Errorf("read active player profile: %w", statErr)
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("active player profile must be a regular file: %s", name)
+		}
+		relative, relErr := filepath.Rel(root, target)
+		if relErr != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+			return nil, fmt.Errorf("active player profile is outside the configured saves directory")
+		}
+		parts := strings.Split(filepath.ToSlash(relative), "/")
+		profile := playerProfile{Path: filepath.ToSlash(relative), Name: name, PlayerName: profileOwner(target, map[string]map[string]string{}), SizeBytes: info.Size(), ModifiedAt: info.ModTime().UTC()}
+		if len(parts) >= 4 {
+			profile.World, profile.Save = parts[len(parts)-4], parts[len(parts)-3]
+		}
+		profiles = append(profiles, profile)
+	}
+	if len(profiles) == 0 {
+		return nil, fmt.Errorf("no active player profile matched the supplied Steam or EOS ID")
+	}
+	return profiles, nil
+}
+
+func stagePlayerProfileDelete(cfg *agent.InstanceConfig, payload map[string]interface{}, steamID, eosID string) ([]playerProfile, error) {
+	profiles, err := activePlayerProfiles(cfg, payload, steamID, eosID)
+	if err != nil {
+		return nil, err
+	}
+	serverID := getString(payload, "server_instance_id", "")
+	if serverID == "" {
+		return nil, fmt.Errorf("server instance ID required")
+	}
+	root, err := configuredSavesPath(payload)
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(profileStagingRoot, serverID)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return nil, fmt.Errorf("create profile staging directory: %w", err)
+	}
+	for _, profile := range profiles {
+		key := fmt.Sprintf("%x", sha256.Sum256([]byte(profile.Path)))
+		metadataPath := filepath.Join(dir, key+".json")
+		metadata, _ := json.Marshal(stagedProfileMetadata{Target: filepath.Join(root, filepath.FromSlash(profile.Path)), Relative: profile.Path, StagedAt: time.Now().UTC(), Action: "delete"})
+		if err := os.WriteFile(metadataPath, metadata, 0640); err != nil {
+			return nil, fmt.Errorf("write profile reset metadata: %w", err)
+		}
+		// A delete marker overrides an existing staged replacement. Its leftover
+		// data is ignored and removed together with the marker at the next start.
+	}
+	return profiles, nil
+}
+
+func deletePlayerProfileFiles(target string) error {
+	paths := []string{target, target + ".bak"}
+	for _, path := range paths {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read player profile for reset: %w", err)
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("player profile reset target must be a regular file: %s", filepath.Base(path))
+		}
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("permanently delete player profile: %w", err)
+		}
+	}
+	return nil
+}
+
 func applyStagedPlayerProfiles(serverID string) error {
 	if serverID == "" {
 		return nil
@@ -788,11 +953,26 @@ func applyStagedPlayerProfiles(serverID string) error {
 		if json.Unmarshal(metadataBytes, &metadata) != nil || !filepath.IsAbs(metadata.Target) || !strings.EqualFold(filepath.Base(filepath.Dir(metadata.Target)), "Player") || !strings.EqualFold(filepath.Ext(metadata.Target), ".ttp") {
 			return fmt.Errorf("invalid staged profile metadata")
 		}
+		dataPath := strings.TrimSuffix(metadataPath, ".json") + ".ttp"
+		if metadata.Action == "delete" {
+			if err := deletePlayerProfileFiles(metadata.Target); err != nil {
+				return err
+			}
+			if err := os.Remove(dataPath); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			if err := os.Remove(metadataPath); err != nil {
+				return err
+			}
+			continue
+		}
+		if metadata.Action != "" {
+			return fmt.Errorf("invalid staged profile action")
+		}
 		info, err := os.Lstat(metadata.Target)
 		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("live profile is no longer a regular file: %s", metadata.Relative)
 		}
-		dataPath := strings.TrimSuffix(metadataPath, ".json") + ".ttp"
 		content, err := os.ReadFile(dataPath)
 		if err != nil || len(content) < 4 || string(content[:4]) != "ttp\x00" {
 			return fmt.Errorf("invalid queued profile: %s", metadata.Relative)
