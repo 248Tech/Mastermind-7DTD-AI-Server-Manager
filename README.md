@@ -1,4 +1,31 @@
+<div align="center">
+
+<img src="site/assets/logo.png" alt="Mastermind logo" width="160">
+
 # Mastermind — 7DTD AI Server Manager
+
+**Control plane + Go host agent for 7 Days to Die — safe restarts, live map, mod quarantine, backups and a Steam-verified player portal.**
+
+[![Live Demo](https://img.shields.io/badge/▶_Live_Demo-sign_in_as_admin-6366f1?style=for-the-badge)](https://248tech.github.io/Mastermind-7DTD-AI-Server-Manager/demo/)
+
+[![License: MIT](https://img.shields.io/github/license/248Tech/Mastermind-7DTD-AI-Server-Manager?style=flat-square&color=6366f1)](LICENSE)
+[![Release](https://img.shields.io/badge/release-v0.0.15-6366f1?style=flat-square)](CHANGELOG.md)
+[![Last commit](https://img.shields.io/github/last-commit/248Tech/Mastermind-7DTD-AI-Server-Manager?style=flat-square&color=22c55e)](https://github.com/248Tech/Mastermind-7DTD-AI-Server-Manager/commits/main)
+[![Stars](https://img.shields.io/github/stars/248Tech/Mastermind-7DTD-AI-Server-Manager?style=flat-square&color=fb923c)](https://github.com/248Tech/Mastermind-7DTD-AI-Server-Manager/stargazers)
+[![Issues](https://img.shields.io/github/issues/248Tech/Mastermind-7DTD-AI-Server-Manager?style=flat-square)](https://github.com/248Tech/Mastermind-7DTD-AI-Server-Manager/issues)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Go](https://img.shields.io/badge/Go_1.22-00ADD8?style=flat-square&logo=go&logoColor=white)
+![NestJS](https://img.shields.io/badge/NestJS-E0234E?style=flat-square&logo=nestjs&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js_14-000?style=flat-square&logo=nextdotjs&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL_16-4169E1?style=flat-square&logo=postgresql&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis_7-DC382D?style=flat-square&logo=redis&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
+
+[**Live demo**](https://248tech.github.io/Mastermind-7DTD-AI-Server-Manager/demo/) · [Project site](https://248tech.github.io/Mastermind-7DTD-AI-Server-Manager/) · [Quickstart](QUICKSTART.md) · [User guide](human/user-guide.md) · [Changelog](CHANGELOG.md)
+
+</div>
+
+> **Try it without installing anything:** open the [live demo](https://248tech.github.io/Mastermind-7DTD-AI-Server-Manager/demo/) and click **Enter as demo administrator** (or use `demo.admin@mastermind.demo` / `DemoAdmin!2026`). It is a static, in-browser simulation with mock data — no backend.
 
 **Control Plane + Host Agent** for managing 7 Days to Die (and other game) servers. Instead of SSH’ing into each box, you run a small agent on every host; the control plane sends jobs (start, stop, restart, RCON, etc.) and the agent runs them locally.
 
