@@ -46,7 +46,7 @@ window.MM_DATA = (function () {
   ];
 
   const jobs = [
-    { id: 'j-1042', type: 'safe-restart', server: 'srv-1', by: 'demo.admin', status: 'succeeded', at: ago(190), out: 'Countdown 5m → save → backup → kick verified → restart OK' },
+    { id: 'j-1042', type: 'safe-restart', server: 'srv-1', by: 'demo.admin', status: 'succeeded', at: ago(190), out: 'Countdown 60s → save → backup → kick verified → restart OK' },
     { id: 'j-1041', type: 'backup', server: 'srv-2', by: 'scheduler', status: 'succeeded', at: ago(245), out: 'Full backup 1.8 GB written, retention pruned 1' },
     { id: 'j-1040', type: 'rcon', server: 'srv-1', by: 'ops.sam', status: 'succeeded', at: ago(300), out: 'say "Horde night tonight, stock up!"' },
     { id: 'j-1039', type: 'mod-quarantine', server: 'srv-2', by: 'demo.admin', status: 'succeeded', at: ago(980), out: 'ExtraStorage moved to quarantine' },

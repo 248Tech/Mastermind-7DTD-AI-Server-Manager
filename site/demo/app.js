@@ -123,14 +123,14 @@
   function bindActions() {
     $$('[data-act]').forEach((b) => b.addEventListener('click', () => {
       const a = b.dataset.act, id = b.dataset.id || state.server, s = D.servers.find((x) => x.id === id);
-      if (a === 'safe-restart') return confirmBox('Safe restart ' + s.name, 'Players receive a 5-minute countdown, the world is saved and backed up, remaining players are kicked, and the server restarts with verification.', 'Queue safe restart', () => safeRestart(s));
+      if (a === 'safe-restart') return confirmBox('Safe restart ' + s.name, 'Players receive a 60-second countdown, the world is saved and backed up, remaining players are kicked, and the server restarts with verification.', 'Queue safe restart', () => safeRestart(s));
       if (a === 'start') return queueJob('start', id, 'Server process started, telnet reachable in 41s', { done() { s.status = 'online'; s.players = 0; s.fps = 60; } });
       if (a === 'backup') return queueJob('backup', id, 'Full backup 1.8 GB written, retention pruned 1', { done() { D.saves.unshift({ id: 'b' + Date.now(), server: id, kind: 'Full backup', day: s.day, size: '1.8 GB', at: new Date().toISOString().slice(0, 16).replace('T', ' '), by: 'demo.admin' }); } });
       if (a === 'skip-reboot') return toast('Next scheduled reboot for ' + s.name + ' will be skipped once.');
     }));
   }
   function safeRestart(s) {
-    const job = queueJob('safe-restart', s.id, 'Countdown 5m → save → backup → kick verified → restart OK');
+    const job = queueJob('safe-restart', s.id, 'Countdown 60s → save → backup → kick verified → restart OK');
     const steps = ['Announcing countdown', 'Saving world', 'Writing backup', 'Kicking players', 'Restarting & verifying'];
     steps.forEach((t, i) => setTimeout(() => { job.out = t + '…'; refreshIf('jobs'); }, 800 + i * 280));
   }

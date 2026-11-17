@@ -63,6 +63,16 @@ Mastermind is a control panel for a 7 Days to Die server. It lets an owner see w
 
 ---
 
+## Screenshots
+
+From the [browser demo](https://248tech.github.io/Mastermind-7DTD-AI-Server-Manager/demo/), which uses mock data and the same layout as the real dashboard.
+
+| Fleet dashboard | Job history with safe-restart output |
+|---|---|
+| ![Dashboard listing three 7 Days to Die servers with player counts, game day, FPS and quick actions](docs/screenshots/demo-dashboard.png) | ![Jobs table showing a safe restart, backup, RCON message, mod quarantine and auto-kick, each with its initiating account and output](docs/screenshots/demo-jobs.png) |
+
+---
+
 ## Architecture overview
 
 ```
@@ -380,7 +390,7 @@ The agent has 22 Go test files covering the job loop, backoff, config merging, m
 
 ## Status and limitations
 
-**Status:** actively maintained. Releases v0.0.1 to v0.0.15 (February to September 2026). It runs in production for one 7 Days to Die community.
+**Status:** actively maintained. Releases v0.0.1 to v0.0.15 (February to September 2026). It runs the 7 Days to Die servers for the maintainer's gaming community (3,000+ members, active since 2014).
 
 - **Linux and systemd only** for the host agent. The 7DTD adapter expects a `7dtd.service` unit and a sudo-allowed update script; these paths are not yet configurable.
 - **Recovery is policy-driven, not autonomous.** Crash restarts come from systemd `Restart=on-failure`. The control plane can trigger a safe restart when reported memory crosses a configured threshold (with cooldown and duplicate-job checks), but the memory reporter that calls it is not part of this repo.
