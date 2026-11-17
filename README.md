@@ -110,7 +110,7 @@ This separation is why the public website does not need direct access to telnet,
 ## Repo layout
 
 ```
-├── control-plane/    # NestJS API (REST + WS), Prisma, jobs, pairing, alerts
+├── control-plane/    # NestJS REST API, Prisma, jobs, pairing, alerts (WebSocket gateway is a stub)
 ├── web/              # Next.js frontend
 ├── discord-bot/      # Optional downloadable Discord slash-command bridge
 ├── agent/            # Go host agent (pairing, heartbeat, job runner)
@@ -352,7 +352,7 @@ On first run, the agent will pair, read the local 7DTD paths, and auto-create or
 
 ## Security notes
 
-- **Signed jobs:** Agents authenticate with a JWT; the control plane only gives jobs to the correct host. See `docs/security-agent-pairing.md`.
+- **Agent authentication:** Agents exchange a one-time pairing token for a JWT; the control plane only gives jobs to the host they belong to. Individual jobs are not cryptographically signed. See `docs/security-agent-pairing.md`.
 - **Allowlists:** The agent runs commands via game adapters (no arbitrary shell by default). See `docs/security-review.md`.
 - **Discord:** Webhook URL is stored per org; don’t log it. Rate limit outbound alerts.
 - **Account approval:** public registrations are pending viewers. An administrator must approve them from **Accounts** before dashboard access is granted.
@@ -363,7 +363,31 @@ On first run, the agent will pair, read the local 7DTD paths, and auto-create or
 
 ## Repository workflow
 
-The `main` branch is protected. Submit changes through a pull request; direct pushes, force-pushes, and branch deletion are disabled. Pull requests require at least one approval, dismiss stale approvals after new commits, require approval from someone other than the last pusher, and require resolved review conversations. Review the staged diff for secrets and deployment-only files before opening a PR.
+This is a single-maintainer project. Branch protection on `main` requires a reviewed pull request for contributors, but the maintainer can push directly, and several releases were committed that way. Development is AI-assisted; some commits carry `Co-authored-by` trailers for the AI tools used. Review the staged diff for secrets and deployment-only files before opening a PR.
+
+---
+
+## Testing
+
+```bash
+cd agent && go test ./...          # agent and 7DTD adapter; several packages build on Linux only
+node control-plane/src/common/security.util.test.mjs   # control-plane tests are standalone assert scripts
+```
+
+The agent has 22 Go test files covering the job loop, backoff, config merging, metrics and the 7DTD adapter (including mod-config handling). The control plane has 16 standalone assert scripts; they are not yet wired into `pnpm test`, and `make test` currently ignores failures. No CI workflow runs the tests yet.
+
+---
+
+## Status and limitations
+
+**Status:** actively maintained. Releases v0.0.1 to v0.0.15 (February to September 2026). It runs in production for one 7 Days to Die community.
+
+- **Linux and systemd only** for the host agent. The 7DTD adapter expects a `7dtd.service` unit and a sudo-allowed update script; these paths are not yet configurable.
+- **Recovery is policy-driven, not autonomous.** Crash restarts come from systemd `Restart=on-failure`. The control plane can trigger a safe restart when reported memory crosses a configured threshold (with cooldown and duplicate-job checks), but the memory reporter that calls it is not part of this repo.
+- **Safe restart** warns players, waits out Blood Moon if configured, takes a full backup, kicks and confirms zero players, then restarts. Any failed step aborts. There is no automatic rollback of updates.
+- **AI is optional and narrow:** it proposes edits to mod configuration files (OpenAI or Moonshot Kimi, per-organization key) and is audit-logged. Approval is enforced in the web UI, not by the API.
+- **No WebSocket push yet:** the `control-plane` WebSocket gateway is a stub.
+- **Deployment-specific values** (the community name and domain) are still present in the web app and docs.
 
 ---
 
